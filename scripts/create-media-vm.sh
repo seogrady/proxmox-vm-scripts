@@ -5,7 +5,7 @@ set -euo pipefail
 TEMPLATE_ID=9000
 VMID=210
 NAME="media-stack"
-TARGET_NODE="pve"
+TARGET_NODE="mini"
 STORAGE="local-lvm"
 BRIDGE="vmbr0"
 
