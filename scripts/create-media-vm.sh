@@ -14,7 +14,7 @@ MEMORY=16384
 DISK_SIZE="64G"
 
 CIUSER="ubuntu"
-SSHKEY_FILE="/root/.ssh/id_ed25519.pub"
+SSHKEY_FILE="/root/.ssh/media_stack.pub"
 
 IPCONFIG="ip=192.168.1.50/24,gw=192.168.1.1"
 NAMESERVER="1.1.1.1"
@@ -37,6 +37,7 @@ qm set "$VMID" \
   --cores "$CORES" \
   --memory "$MEMORY" \
   --cpu host \
+  --machine q35 \
   --agent enabled=1 \
   --scsihw virtio-scsi-pci \
   --net0 virtio,bridge="$BRIDGE"
