@@ -22,6 +22,8 @@ pub struct BackendConfig {
 pub struct Resource {
     pub name: String,
     pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
     #[serde(default)]
     pub role: Option<String>,
     #[serde(default)]
@@ -38,6 +40,8 @@ pub struct Resource {
 pub struct NormalizedResource {
     pub name: String,
     pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
     pub role: Option<String>,
     pub vmid: Option<u32>,
     pub depends_on: Vec<String>,
@@ -102,10 +106,69 @@ pub struct Expansion {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DesiredState {
     pub backend: BackendConfig,
+    #[serde(default)]
+    pub images: BTreeMap<String, ResolvedImage>,
     pub resources: Vec<Resource>,
     #[serde(default)]
     pub normalized_resources: BTreeMap<String, NormalizedResource>,
     pub expansions: BTreeMap<String, Expansion>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageKind {
+    Vm,
+    Lxc,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageSource {
+    Pveam,
+    Url,
+    Existing,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageConfig {
+    pub kind: ImageKind,
+    pub source: ImageSource,
+    #[serde(default)]
+    pub node: Option<String>,
+    pub storage: String,
+    pub content_type: String,
+    #[serde(default)]
+    pub file_name: Option<String>,
+    #[serde(default)]
+    pub vmid: Option<u32>,
+    #[serde(default)]
+    pub template: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub checksum_algorithm: Option<String>,
+    #[serde(default)]
+    pub checksum: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvedImage {
+    pub name: String,
+    pub kind: ImageKind,
+    pub source: ImageSource,
+    pub node: String,
+    pub storage: String,
+    pub content_type: String,
+    pub file_name: String,
+    pub volume_id: String,
+    #[serde(default)]
+    pub vmid: Option<u32>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub checksum_algorithm: Option<String>,
+    #[serde(default)]
+    pub checksum: Option<String>,
 }
 
 fn default_backend_kind() -> String {

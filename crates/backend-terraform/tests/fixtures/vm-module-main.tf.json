@@ -19,6 +19,7 @@
           {
             "datastore_id": "${var.storage}",
             "discard": "on",
+            "file_id": "${try(var.resource.clone_vmid, null) == null && strcontains(var.template, \":\") ? var.template : null}",
             "interface": "scsi0",
             "iothread": true,
             "size": "${try(var.resource.disk_gb, 8)}"
@@ -82,6 +83,7 @@
           {
             "bridge": "${var.bridge}",
             "disconnected": false,
+            "enabled": true,
             "firewall": "${try(var.resource.network.firewall, false)}",
             "mac_address": "${try(var.resource.network.mac, null)}",
             "model": "virtio",
@@ -118,7 +120,7 @@
     "required_providers": {
       "proxmox": {
         "source": "bpg/proxmox",
-        "version": ">= 0.70.0"
+        "version": ">= 0.70.0, < 0.98.1"
       }
     }
   }

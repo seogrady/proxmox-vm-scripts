@@ -159,9 +159,11 @@ mod tests {
     fn creates_stable_resource_digest_and_backend_address() {
         let desired = DesiredState {
             backend: BackendConfig::default(),
+            images: BTreeMap::new(),
             resources: vec![Resource {
                 name: "media-stack".to_string(),
                 kind: "vm".to_string(),
+                image: None,
                 role: None,
                 vmid: Some(210),
                 depends_on: Vec::new(),
@@ -186,6 +188,7 @@ mod tests {
         let mut first = Resource {
             name: "media-stack".to_string(),
             kind: "vm".to_string(),
+            image: None,
             role: None,
             vmid: Some(210),
             depends_on: Vec::new(),
@@ -237,6 +240,7 @@ mod tests {
     fn generated_at_is_deterministic() {
         let desired = DesiredState {
             backend: BackendConfig::default(),
+            images: BTreeMap::new(),
             resources: vec![],
             normalized_resources: BTreeMap::new(),
             expansions: BTreeMap::new(),

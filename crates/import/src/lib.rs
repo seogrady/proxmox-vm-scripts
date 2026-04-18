@@ -247,18 +247,23 @@ fn digest_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
     use vmctl_domain::{BackendConfig, Resource};
     use vmctl_lockfile::{LockedResource, Lockfile};
 
+    static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
     #[test]
     fn compares_desired_resources_to_lockfile() {
         let desired = DesiredState {
             backend: BackendConfig::default(),
+            images: BTreeMap::new(),
             resources: vec![Resource {
                 name: "media-stack".to_string(),
                 kind: "vm".to_string(),
+                image: None,
                 role: None,
                 vmid: Some(210),
                 depends_on: Vec::new(),
@@ -384,8 +389,9 @@ mod tests {
     fn unique_temp_dir() -> std::path::PathBuf {
         let mut dir = std::env::temp_dir();
         dir.push(format!(
-            "vmctl-import-test-{}-{}",
+            "vmctl-import-test-{}-{}-{}",
             std::process::id(),
+            TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

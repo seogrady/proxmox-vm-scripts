@@ -1,13 +1,13 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use vmctl_backend::{EngineBackend, PlanMode, TargetSelector};
 use vmctl_backend_terraform::TerraformBackend;
 use vmctl_config::{resolve_config_path, Config};
 use vmctl_dependencies::{backend_kind, CommandScope, DependencyPlan};
-use vmctl_domain::{DesiredState, Workspace};
+use vmctl_domain::{DesiredState, ImageKind, ImageSource, ResolvedImage, Workspace};
 use vmctl_lockfile::Lockfile;
 use vmctl_packs::PackRegistry;
 
@@ -36,6 +36,17 @@ enum Command {
         auto_approve: bool,
         #[arg(long)]
         skip_provision: bool,
+        #[arg(long)]
+        no_image_ensure: bool,
+        target: Option<String>,
+    },
+    Up {
+        #[arg(long)]
+        auto_approve: bool,
+        #[arg(long)]
+        skip_provision: bool,
+        #[arg(long)]
+        no_image_ensure: bool,
         target: Option<String>,
     },
     Destroy {
@@ -51,6 +62,10 @@ enum Command {
     Backend {
         #[command(subcommand)]
         command: BackendCommand,
+    },
+    Images {
+        #[command(subcommand)]
+        command: ImagesCommand,
     },
 }
 
@@ -68,6 +83,18 @@ enum BackendCommand {
         #[arg(long)]
         live: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum ImagesCommand {
+    List,
+    Plan,
+    Ensure {
+        #[arg(long)]
+        dry_run: bool,
+        image: Option<String>,
+    },
+    Doctor,
 }
 
 fn main() -> Result<()> {
@@ -95,24 +122,31 @@ fn main() -> Result<()> {
         Command::Apply {
             auto_approve,
             skip_provision,
+            no_image_ensure,
             target,
-        } => {
-            require_auto_approve(auto_approve, "apply")?;
-            let (workspace, desired, registry) =
-                load_workspace(cli.config.as_deref(), &cli.packs, target.as_deref())?;
-            check_dependencies(&desired, CommandScope::Apply)?;
-            if !skip_provision {
-                check_dependencies(&desired, CommandScope::Provision)?;
-            }
-            let result = TerraformBackend.apply(&workspace, &desired, &registry)?;
-            write_lockfile(&workspace, &desired)?;
-            println!("{}; wrote vmctl.lock", result.summary);
-            if !skip_provision {
-                let result = run_provision(&workspace, &desired)?;
-                println!("{}", result.summary);
-            }
-            Ok(())
-        }
+        } => apply_command(
+            cli.config.as_deref(),
+            &cli.packs,
+            auto_approve,
+            skip_provision,
+            no_image_ensure,
+            target.as_deref(),
+            "apply",
+        ),
+        Command::Up {
+            auto_approve,
+            skip_provision,
+            no_image_ensure,
+            target,
+        } => apply_command(
+            cli.config.as_deref(),
+            &cli.packs,
+            auto_approve,
+            skip_provision,
+            no_image_ensure,
+            target.as_deref(),
+            "up",
+        ),
         Command::Destroy {
             auto_approve,
             target,
@@ -230,7 +264,305 @@ fn main() -> Result<()> {
                 Ok(())
             }
         },
+        Command::Images { command } => {
+            let (_workspace, desired, _registry) =
+                load_workspace(cli.config.as_deref(), &cli.packs, None)?;
+            match command {
+                ImagesCommand::List => {
+                    print!("{}", render_images_list(&desired));
+                    Ok(())
+                }
+                ImagesCommand::Plan => {
+                    print!("{}", render_images_plan(&desired));
+                    Ok(())
+                }
+                ImagesCommand::Ensure { dry_run, image } => {
+                    ensure_images(&desired, image.as_deref(), dry_run)
+                }
+                ImagesCommand::Doctor => {
+                    print!("{}", render_images_plan(&desired));
+                    Ok(())
+                }
+            }
+        }
     }
+}
+
+fn apply_command(
+    config_path: Option<&Path>,
+    packs_path: &Path,
+    _auto_approve: bool,
+    skip_provision: bool,
+    no_image_ensure: bool,
+    target: Option<&str>,
+    _command: &str,
+) -> Result<()> {
+    let (workspace, desired, registry) = load_workspace(config_path, packs_path, target)?;
+    check_dependencies(&desired, CommandScope::Apply)?;
+    if !skip_provision {
+        check_dependencies(&desired, CommandScope::Provision)?;
+    }
+
+    println!("config: valid");
+    if no_image_ensure {
+        eprintln!("warning: skipping image ensure; missing images may fail during apply");
+    } else {
+        ensure_images(&desired, None, false)?;
+    }
+
+    let validation = validate_live_backend(&workspace, &desired, &registry)?;
+    println!("{}", validation.summary);
+
+    let result = TerraformBackend.apply(&workspace, &desired, &registry)?;
+    write_lockfile(&workspace, &desired)?;
+    println!("{}; wrote vmctl.lock", result.summary);
+    if !skip_provision {
+        let result = run_provision(&workspace, &desired)?;
+        println!("{}", result.summary);
+    }
+    Ok(())
+}
+
+fn validate_live_backend(
+    workspace: &Workspace,
+    desired: &DesiredState,
+    registry: &PackRegistry,
+) -> Result<vmctl_backend::BackendValidation> {
+    TerraformBackend.render_for_plan(workspace, desired, registry, PlanMode::Online)?;
+    TerraformBackend.validate_rendered(workspace)
+}
+
+fn render_images_list(desired: &DesiredState) -> String {
+    let mut output = String::new();
+    for image in desired.images.values() {
+        output.push_str(&format!(
+            "{}\tkind={:?}\tsource={:?}\tnode={}\tstorage={}\tcontent_type={}\tvolume_id={}\tstatus={}\n",
+            image.name,
+            image.kind,
+            image.source,
+            image.node,
+            image.storage,
+            image.content_type,
+            image.volume_id,
+            image_status_label(image)
+        ));
+    }
+    if output.is_empty() {
+        output.push_str("no images configured\n");
+    }
+    output
+}
+
+fn render_images_plan(desired: &DesiredState) -> String {
+    let mut output = String::new();
+    let required = required_image_names(desired);
+    for image in desired.images.values() {
+        let required_label = if required.contains(&image.name) {
+            "required"
+        } else {
+            "unused"
+        };
+        let action = match (image.source, image.kind) {
+            (ImageSource::Pveam, _) => format!(
+                "ensure pveam template with `pveam download {} {}` if missing",
+                image.storage, image.file_name
+            ),
+            (ImageSource::Url, _) => {
+                "render provider download resource during backend render/apply".to_string()
+            }
+            (ImageSource::Existing, ImageKind::Vm) => image
+                .vmid
+                .map(|vmid| format!("validate existing VM/template with `qm status {vmid}`"))
+                .unwrap_or_else(|| "validate existing VM/template before apply".to_string()),
+            (ImageSource::Existing, ImageKind::Lxc) => {
+                "validate existing Proxmox volume before apply".to_string()
+            }
+        };
+        output.push_str(&format!(
+            "{}\t{}\tstatus={}\taction={}\n",
+            image.name,
+            required_label,
+            image_status_label(image),
+            action
+        ));
+    }
+    if output.is_empty() {
+        output.push_str("no images configured\n");
+    }
+    output
+}
+
+fn ensure_images(desired: &DesiredState, selected: Option<&str>, dry_run: bool) -> Result<()> {
+    let required = required_image_names(desired);
+    for image in desired.images.values() {
+        if let Some(selected) = selected {
+            if image.name != selected {
+                continue;
+            }
+        } else if !required.contains(&image.name) {
+            continue;
+        }
+        ensure_image(image, dry_run)?;
+    }
+    if let Some(selected) = selected {
+        if !desired.images.contains_key(selected) {
+            bail!("image `{selected}` is not configured");
+        }
+    }
+    Ok(())
+}
+
+fn ensure_image(image: &ResolvedImage, dry_run: bool) -> Result<()> {
+    match image.source {
+        ImageSource::Pveam => ensure_pveam_image(image, dry_run),
+        ImageSource::Existing => ensure_existing_image(image, dry_run),
+        ImageSource::Url => {
+            println!(
+                "image `{}` is provider-managed; backend apply will download {}",
+                image.name, image.volume_id
+            );
+            Ok(())
+        }
+    }
+}
+
+fn ensure_pveam_image(image: &ResolvedImage, dry_run: bool) -> Result<()> {
+    if image_is_present_with("pveam", &["list", &image.storage], &image.file_name) {
+        println!("image `{}` present: {}", image.name, image.volume_id);
+        return Ok(());
+    }
+
+    if dry_run {
+        println!("pveam update");
+        println!("pveam download {} {}", image.storage, image.file_name);
+        return Ok(());
+    }
+
+    run_command("pveam", &["update"])?;
+    run_command("pveam", &["download", &image.storage, &image.file_name])?;
+    println!("image `{}` ensured: {}", image.name, image.volume_id);
+    Ok(())
+}
+
+fn ensure_existing_image(image: &ResolvedImage, dry_run: bool) -> Result<()> {
+    if image.kind == ImageKind::Vm {
+        let vmid = image.vmid.with_context(|| {
+            format!(
+                "image `{}` is an existing VM image and requires vmid",
+                image.name
+            )
+        })?;
+        let vmid = vmid.to_string();
+        if dry_run {
+            println!("qm status {vmid}");
+            return Ok(());
+        }
+        if command_succeeds("qm", &["status", &vmid]) {
+            println!("image `{}` present: VMID {}", image.name, vmid);
+            return Ok(());
+        }
+        bail!(
+            "missing image `{}`: expected VM/template with VMID {}. Create the template or configure a different image.",
+            image.name,
+            vmid
+        );
+    }
+
+    if dry_run {
+        println!(
+            "pvesm list {} --content {} | grep {}",
+            image.storage, image.content_type, image.file_name
+        );
+        return Ok(());
+    }
+
+    if image_is_present_with(
+        "pvesm",
+        &["list", &image.storage, "--content", &image.content_type],
+        &image.file_name,
+    ) {
+        println!("image `{}` present: {}", image.name, image.volume_id);
+        Ok(())
+    } else {
+        bail!(
+            "missing image `{}`: expected {}. Run `vmctl images ensure {}` or configure a different image.",
+            image.name,
+            image.volume_id,
+            image.name
+        );
+    }
+}
+
+fn image_status_label(image: &ResolvedImage) -> &'static str {
+    match image.source {
+        ImageSource::Url => "provider-managed",
+        ImageSource::Pveam => {
+            if image_is_present_with("pveam", &["list", &image.storage], &image.file_name) {
+                "present"
+            } else {
+                "missing"
+            }
+        }
+        ImageSource::Existing => {
+            if image.kind == ImageKind::Vm {
+                let Some(vmid) = image.vmid else {
+                    return "missing-vmid";
+                };
+                let vmid = vmid.to_string();
+                return if command_succeeds("qm", &["status", &vmid]) {
+                    "present"
+                } else {
+                    "missing"
+                };
+            }
+            if image_is_present_with(
+                "pvesm",
+                &["list", &image.storage, "--content", &image.content_type],
+                &image.file_name,
+            ) {
+                "present"
+            } else {
+                "missing"
+            }
+        }
+    }
+}
+
+fn command_succeeds(command: &str, args: &[&str]) -> bool {
+    std::process::Command::new(command)
+        .args(args)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn image_is_present_with(command: &str, args: &[&str], file_name: &str) -> bool {
+    std::process::Command::new(command)
+        .args(args)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).contains(file_name))
+        .unwrap_or(false)
+}
+
+fn run_command(command: &str, args: &[&str]) -> Result<()> {
+    let status = std::process::Command::new(command)
+        .args(args)
+        .status()
+        .with_context(|| format!("failed to run `{command} {}`", args.join(" ")))?;
+    if !status.success() {
+        bail!("`{command} {}` failed", args.join(" "));
+    }
+    Ok(())
+}
+
+fn required_image_names(desired: &DesiredState) -> BTreeSet<String> {
+    desired
+        .resources
+        .iter()
+        .filter_map(|resource| resource.image.clone())
+        .collect()
 }
 
 fn load_workspace(
@@ -416,11 +748,21 @@ mod tests {
     }
 
     #[test]
-    fn apply_requires_auto_approve() {
-        let err = require_auto_approve(false, "apply").unwrap_err();
+    fn destroy_requires_auto_approve() {
+        let err = require_auto_approve(false, "destroy").unwrap_err();
 
         assert!(err.to_string().contains("requires --auto-approve"));
-        assert!(require_auto_approve(true, "apply").is_ok());
+        assert!(require_auto_approve(true, "destroy").is_ok());
+    }
+
+    #[test]
+    fn apply_and_up_accept_default_approval_behavior() {
+        Cli::command().debug_assert();
+        let apply = Cli::try_parse_from(["vmctl", "apply"]).unwrap();
+        let up = Cli::try_parse_from(["vmctl", "up"]).unwrap();
+
+        assert!(matches!(apply.command, Command::Apply { .. }));
+        assert!(matches!(up.command, Command::Up { .. }));
     }
 
     #[test]
@@ -439,9 +781,11 @@ mod tests {
         };
         let desired = DesiredState {
             backend: BackendConfig::default(),
+            images: BTreeMap::new(),
             resources: vec![Resource {
                 name: "media-stack".to_string(),
                 kind: "vm".to_string(),
+                image: None,
                 role: None,
                 vmid: Some(210),
                 depends_on: Vec::new(),

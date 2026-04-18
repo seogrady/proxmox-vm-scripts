@@ -130,7 +130,7 @@ impl PackRegistry {
             }
         }
 
-        for service_name in service_names_from_role(role) {
+        for service_name in service_names_for_resource(role, resource) {
             if !self.services.contains_key(&service_name) {
                 bail!(
                     "role pack `{}` references missing service pack `{service_name}`",
@@ -297,14 +297,38 @@ fn tailscale_auth_key(resource: &Resource) -> Option<String> {
         .map(str::to_string)
 }
 
+fn service_names_for_resource(role: &RolePack, resource: &Resource) -> Vec<String> {
+    let resource_services = resource
+        .features
+        .values()
+        .filter_map(Value::as_table)
+        .filter_map(service_names_from_feature)
+        .next();
+
+    resource_services.unwrap_or_else(|| service_names_from_role(role))
+}
+
 fn service_names_from_role(role: &RolePack) -> Vec<String> {
     role.features
         .values()
         .filter_map(Value::as_table)
-        .filter_map(|feature| feature.get("services"))
-        .filter_map(Value::as_array)
-        .flat_map(|items| items.iter().filter_map(Value::as_str).map(str::to_string))
-        .collect()
+        .filter_map(service_names_from_feature)
+        .next()
+        .unwrap_or_default()
+}
+
+fn service_names_from_feature(feature: &toml::map::Map<String, Value>) -> Option<Vec<String>> {
+    feature
+        .get("services")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .filter(|items: &Vec<String>| !items.is_empty())
 }
 
 #[cfg(test)]
@@ -328,6 +352,46 @@ mod tests {
         assert_eq!(
             service_names_from_role(&role),
             vec!["jellyfin".to_string(), "sonarr".to_string()]
+        );
+    }
+
+    #[test]
+    fn resource_service_names_override_role_defaults() {
+        let role: RolePack = toml::from_str(
+            r#"
+            name = "media_stack"
+            kind = "vm"
+
+            [features.media_services]
+            enabled = true
+            services = ["jellyfin", "sonarr", "radarr"]
+            "#,
+        )
+        .unwrap();
+        let mut resource = Resource {
+            name: "media-stack".to_string(),
+            kind: "vm".to_string(),
+            image: None,
+            role: Some("media_stack".to_string()),
+            vmid: None,
+            depends_on: Vec::new(),
+            features: BTreeMap::new(),
+            settings: BTreeMap::new(),
+        };
+        resource.features.insert(
+            "media_services".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([(
+                "services".to_string(),
+                toml::Value::Array(vec![
+                    toml::Value::String("jellyfin".to_string()),
+                    toml::Value::String("prowlarr".to_string()),
+                ]),
+            )])),
+        );
+
+        assert_eq!(
+            service_names_for_resource(&role, &resource),
+            vec!["jellyfin".to_string(), "prowlarr".to_string()]
         );
     }
 
@@ -375,6 +439,7 @@ mod tests {
         let resource = Resource {
             name: "guest".to_string(),
             kind: "vm".to_string(),
+            image: None,
             role: Some("example".to_string()),
             vmid: None,
             depends_on: Vec::new(),

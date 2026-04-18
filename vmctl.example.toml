@@ -42,12 +42,30 @@ TAILSCALE_AUTH_KEY = "${TAILSCALE_AUTH_KEY}"
 DEFAULT_SSH_KEY_FILE = "${DEFAULT_SSH_KEY_FILE}"
 DEFAULT_SSH_PRIVATE_KEY_FILE = "${DEFAULT_SSH_PRIVATE_KEY_FILE}"
 
+[images.debian_12_lxc]
+kind = "lxc"
+source = "pveam"
+node = "mini"
+storage = "local"
+content_type = "vztmpl"
+template = "debian-12-standard_12.7-1_amd64.tar.zst"
+file_name = "debian-12-standard_12.7-1_amd64.tar.zst"
+
+[images.ubuntu_24_cloudinit_template]
+kind = "vm"
+source = "existing"
+node = "mini"
+storage = "local-lvm"
+content_type = "vm-template"
+file_name = "ubuntu-24-04-cloudinit-template"
+vmid = 9000
+
 [[resources]]
 name = "tailscale-gateway"
 kind = "lxc"
+image = "debian_12_lxc"
 role = "tailscale_gateway"
 vmid = 101
-template = "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst"
 rootfs_gb = 8
 memory = 1024
 cores = 1
@@ -72,10 +90,9 @@ tags = ["${default_tailnet_tag}"]
 [[resources]]
 name = "media-stack"
 kind = "vm"
+image = "ubuntu_24_cloudinit_template"
 role = "media_stack"
 vmid = 210
-template = "ubuntu-24-04-cloudinit-template"
-clone_vmid = 9000
 cores = 6
 memory = 16384
 disk_gb = 64

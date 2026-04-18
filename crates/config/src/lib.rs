@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use toml::Value;
-use vmctl_domain::{BackendConfig, Resource};
+use vmctl_domain::{BackendConfig, ImageConfig, ImageKind, ImageSource, Resource};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -17,6 +17,8 @@ pub struct Config {
     pub consts: BTreeMap<String, Value>,
     #[serde(default)]
     pub env: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub images: BTreeMap<String, ImageConfig>,
     #[serde(default)]
     pub resources: Vec<Resource>,
 }
@@ -99,6 +101,75 @@ impl Config {
             }
             if !names.insert(resource.name.clone()) {
                 bail!("duplicate resource name `{}`", resource.name);
+            }
+        }
+        self.validate_images()?;
+        Ok(())
+    }
+
+    fn validate_images(&self) -> Result<()> {
+        for (name, image) in &self.images {
+            if name.trim().is_empty() {
+                bail!("image name cannot be empty");
+            }
+            if image.storage.trim().is_empty() {
+                bail!("image `{name}` requires storage");
+            }
+            if image.content_type.trim().is_empty() {
+                bail!("image `{name}` requires content_type");
+            }
+            if image.checksum_algorithm.is_some() != image.checksum.is_some() {
+                bail!("image `{name}` requires checksum and checksum_algorithm together");
+            }
+            match image.source {
+                ImageSource::Pveam => {
+                    if image.kind != ImageKind::Lxc {
+                        bail!("image `{name}` source pveam requires kind = \"lxc\"");
+                    }
+                    if image.content_type != "vztmpl" {
+                        bail!("image `{name}` source pveam requires content_type = \"vztmpl\"");
+                    }
+                    if image
+                        .template
+                        .as_deref()
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty()
+                    {
+                        bail!("image `{name}` source pveam requires template");
+                    }
+                }
+                ImageSource::Url => {
+                    if image.node.as_deref().unwrap_or_default().trim().is_empty() {
+                        bail!("image `{name}` source url requires node");
+                    }
+                    if image
+                        .file_name
+                        .as_deref()
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty()
+                    {
+                        bail!("image `{name}` source url requires file_name");
+                    }
+                    if image.url.as_deref().unwrap_or_default().trim().is_empty() {
+                        bail!("image `{name}` source url requires url");
+                    }
+                }
+                ImageSource::Existing => {
+                    if image.kind == ImageKind::Vm && image.vmid.is_some() {
+                        continue;
+                    }
+                    if image
+                        .file_name
+                        .as_deref()
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty()
+                    {
+                        bail!("image `{name}` source existing requires file_name");
+                    }
+                }
             }
         }
         Ok(())
@@ -383,6 +454,44 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("cyclic interpolation"));
+    }
+
+    #[test]
+    fn parses_image_catalog_entries() {
+        let cfg = Config::from_toml(
+            r#"
+            [images.debian_12_lxc]
+            kind = "lxc"
+            source = "pveam"
+            storage = "local"
+            content_type = "vztmpl"
+            template = "debian-12-standard_12.7-1_amd64.tar.zst"
+            "#,
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        let image = cfg.images.get("debian_12_lxc").unwrap();
+        assert_eq!(image.kind, ImageKind::Lxc);
+        assert_eq!(image.source, ImageSource::Pveam);
+    }
+
+    #[test]
+    fn rejects_invalid_pveam_vm_image() {
+        let err = Config::from_toml(
+            r#"
+            [images.bad]
+            kind = "vm"
+            source = "pveam"
+            storage = "local"
+            content_type = "vztmpl"
+            template = "debian-12-standard_12.7-1_amd64.tar.zst"
+            "#,
+            &BTreeMap::new(),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("source pveam requires kind"));
     }
 
     #[test]

@@ -2,5 +2,19 @@ services:
 {{#each service_packs}}
   {{name}}:
     image: "{{image.name}}:{{image.tag}}"
+    env_file:
+      - .env
     restart: unless-stopped
+{{#if ports.published}}
+    ports:
+{{#each ports.published}}
+      - "{{this}}"
+{{/each}}
+{{/if}}
+{{#if volumes.mounts}}
+    volumes:
+{{#each volumes.mounts}}
+      - "{{this}}"
+{{/each}}
+{{/if}}
 {{/each}}

@@ -15,6 +15,8 @@ pub struct ProvisionStep {
     pub host: String,
     pub user: String,
     pub private_key_file: String,
+    pub local_resource_dir: PathBuf,
+    pub remote_resource_dir: String,
     pub local_script: PathBuf,
     pub remote_script: String,
     pub retries: u32,
@@ -36,7 +38,29 @@ pub struct SystemSshExecutor;
 
 impl SshExecutor for SystemSshExecutor {
     fn upload(&self, step: &ProvisionStep) -> Result<()> {
-        let destination = format!("{}@{}:{}", step.user, step.host, step.remote_script);
+        let target = format!("{}@{}", step.user, step.host);
+        let mkdir = format!("mkdir -p {}", step.remote_resource_dir);
+        let status = std::process::Command::new("ssh")
+            .args([
+                "-i",
+                &step.private_key_file,
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                &target,
+                &mkdir,
+            ])
+            .status()
+            .with_context(|| format!("failed to prepare remote directory for {}", step.resource))?;
+        if !status.success() {
+            bail!(
+                "failed to prepare remote provisioning directory for {}",
+                step.resource
+            );
+        }
+
+        let destination = format!("{target}:{}", step.remote_resource_dir);
         let status = std::process::Command::new("scp")
             .args([
                 "-i",
@@ -45,13 +69,14 @@ impl SshExecutor for SystemSshExecutor {
                 "BatchMode=yes",
                 "-o",
                 "StrictHostKeyChecking=accept-new",
+                "-r",
             ])
-            .arg(&step.local_script)
+            .arg(format!("{}/.", step.local_resource_dir.display()))
             .arg(&destination)
             .status()
             .with_context(|| format!("failed to run scp for {}", step.resource))?;
         if !status.success() {
-            bail!("failed to upload provisioning script for {}", step.resource);
+            bail!("failed to upload provisioning files for {}", step.resource);
         }
         Ok(())
     }
@@ -156,20 +181,22 @@ fn resource_steps(
     let retry_delay = Duration::from_secs(provision.retry_delay_seconds.unwrap_or(15));
 
     let mut steps = Vec::new();
+    let local_resource_dir = workspace
+        .root
+        .join(&workspace.generated_dir)
+        .join("resources")
+        .join(&resource.name);
+    let remote_resource_dir = format!("/tmp/vmctl-{}", resource.name);
     for script in &expansion.bootstrap_steps {
-        let local_script = workspace
-            .root
-            .join(&workspace.generated_dir)
-            .join("resources")
-            .join(&resource.name)
-            .join("scripts")
-            .join(script);
+        let local_script = local_resource_dir.join("scripts").join(script);
         steps.push(ProvisionStep {
             resource: resource.name.clone(),
             host: host.to_string(),
             user: user.to_string(),
             private_key_file: private_key_file.to_string(),
-            remote_script: format!("/tmp/vmctl-{}-{script}", resource.name),
+            local_resource_dir: local_resource_dir.clone(),
+            remote_script: format!("{remote_resource_dir}/scripts/{script}"),
+            remote_resource_dir: remote_resource_dir.clone(),
             local_script,
             retries,
             retry_delay,
@@ -215,9 +242,11 @@ mod tests {
         };
         let desired = DesiredState {
             backend: BackendConfig::default(),
+            images: BTreeMap::new(),
             resources: vec![Resource {
                 name: "media-stack".to_string(),
                 kind: "vm".to_string(),
+                image: None,
                 role: Some("media_stack".to_string()),
                 vmid: Some(210),
                 depends_on: Vec::new(),
@@ -252,6 +281,10 @@ mod tests {
         assert_eq!(plan.steps.len(), 1);
         assert_eq!(plan.steps[0].host, "media-stack.home.arpa");
         assert_eq!(plan.steps[0].user, "ubuntu");
+        assert_eq!(
+            plan.steps[0].local_resource_dir,
+            PathBuf::from("/repo/backend/generated/workspace/resources/media-stack")
+        );
         assert_eq!(
             plan.steps[0].local_script,
             PathBuf::from("/repo/backend/generated/workspace/resources/media-stack/scripts/bootstrap-media.sh")
@@ -289,6 +322,8 @@ mod tests {
                 host: "media-stack.home.arpa".to_string(),
                 user: "ubuntu".to_string(),
                 private_key_file: "/home/me/.ssh/id_ed25519".to_string(),
+                local_resource_dir: PathBuf::from("."),
+                remote_resource_dir: "/tmp/vmctl-media-stack".to_string(),
                 local_script: PathBuf::from("bootstrap-media.sh"),
                 remote_script: "/tmp/bootstrap-media.sh".to_string(),
                 retries: 1,

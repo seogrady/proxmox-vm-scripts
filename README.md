@@ -150,6 +150,28 @@ Generated backend files are written to `backend/generated/workspace/`, and
 
 Recommended workflow:
 
+For the normal path, edit `vmctl.toml` and run one command:
+
+```bash
+vmctl apply
+```
+
+or:
+
+```bash
+vmctl up
+```
+
+`apply` and `up` run the required operational pipeline: config resolution and
+validation, command-scoped dependency checks, image/template ensure, live
+OpenTofu/Terraform render validation, deployment, lockfile update, and
+post-boot provisioning. Use `--skip-provision` only when you want to create or
+update Proxmox resources without running pack bootstrap scripts. Use
+`--no-image-ensure` only when the required Proxmox templates are known to exist
+and you want to skip host-side image checks.
+
+The lower-level commands are useful for inspection and troubleshooting:
+
 1. `vmctl validate` parses config, resolves interpolation/defaults, and expands
    packs.
 2. `vmctl plan` prints the high-level domain plan.
@@ -162,12 +184,15 @@ Recommended workflow:
    the generated OpenTofu graph and prints the plan body, but it is not a live
    Proxmox change preview. It may still use network access to install OpenTofu
    providers or modules if they are not already cached.
-6. `vmctl backend render` writes the live OpenTofu/Terraform workspace.
-7. `vmctl apply --auto-approve` renders the live workspace and runs
-   `tofu apply` by default. If `tofu` is unavailable, `terraform` is accepted as
-   a compatibility fallback. This requires reachable Proxmox and
-   `TF_VAR_proxmox_api_token`.
-8. `vmctl provision` uploads and executes pack-generated bootstrap scripts over
+6. `vmctl images plan` prints the image/template actions needed by resources.
+7. `vmctl images ensure` downloads missing `pveam` LXC templates and validates
+   `existing` VM/LXC images before resource creation.
+8. `vmctl backend render` writes the live OpenTofu/Terraform workspace.
+9. `vmctl apply` ensures required images, validates the live rendered
+   workspace, and runs `tofu apply` by default. If `tofu` is unavailable,
+   `terraform` is accepted as a compatibility fallback. This requires reachable
+   Proxmox and `TF_VAR_proxmox_api_token`.
+10. `vmctl provision` uploads and executes pack-generated bootstrap scripts over
    SSH using each resource's `[resources.provision]` settings.
 
 The default backend is `tofu`, with `terraform` still accepted as a config
@@ -183,6 +208,74 @@ receives the Proxmox token via the sensitive `TF_VAR_proxmox_api_token`
 variable.
 `vmctl.lock` stores resource digests and generated artifact digests, excluding
 secret-valued fields from resource digests.
+
+The generated provider constraint currently pins `bpg/proxmox` below `0.98.1`.
+That release deprecated `network_device.enabled`, but the provider schema still
+requires the attribute for configured VM network devices. The pin keeps plans
+valid and quiet until the provider supports network devices without that field.
+
+Proxmox VM/LXC base images are declared once in `[images]` and referenced by
+logical name from resources. For Proxmox appliance templates,
+`vmctl images ensure` uses `pveam` on the host to download the template only
+when it is missing:
+
+```toml
+[images.debian_12_lxc]
+kind = "lxc"
+source = "pveam"
+node = "mini"
+storage = "local"
+content_type = "vztmpl"
+template = "debian-12-standard_12.7-1_amd64.tar.zst"
+file_name = "debian-12-standard_12.7-1_amd64.tar.zst"
+
+[[resources]]
+name = "tailscale-gateway"
+kind = "lxc"
+image = "debian_12_lxc"
+```
+
+URL images use provider-managed `proxmox_virtual_environment_download_file`
+resources in the generated OpenTofu workspace. Existing LXC volumes are
+validated with Proxmox storage metadata before apply. Existing VM templates are
+validated by VMID with `qm status`:
+
+```toml
+[images.ubuntu_24_cloudinit_template]
+kind = "vm"
+source = "existing"
+node = "mini"
+storage = "local-lvm"
+content_type = "vm-template"
+file_name = "ubuntu-24-04-cloudinit-template"
+vmid = 9000
+
+[[resources]]
+name = "media-stack"
+kind = "vm"
+image = "ubuntu_24_cloudinit_template"
+```
+
+Direct `template` values still work as a compatibility escape hatch.
+
+Docker service images are separate from Proxmox base images. Entries in
+`resources.features.media_services.services` reference service packs under
+`packs/services/`; those packs define container images such as
+`lscr.io/linuxserver/jellyfin:latest`. The media role renders
+`docker-compose.media` and `media.env`, then `bootstrap-media.sh` uploads those
+artifacts to the guest, copies them to `/opt/media`, runs
+`docker compose pull`, and starts the stack with `docker compose up -d`.
+
+Image commands:
+
+```bash
+vmctl images list
+vmctl images plan
+vmctl images ensure --dry-run
+vmctl images ensure debian_12_lxc
+vmctl up --auto-approve
+vmctl up --auto-approve --no-image-ensure
+```
 
 LXC feature flags are explicit because Proxmox restricts most container feature
 changes to `root@pam`. The example enables only nesting for the Tailscale
@@ -202,17 +295,20 @@ generated OpenTofu/Terraform workspace is also useful for inspection or manual
 execution elsewhere, but artifact-copy deployment is not yet a first-class
 workflow.
 
-Live operations require explicit approval at the `vmctl` layer. `vmctl apply`
-and `vmctl destroy` fail unless `--auto-approve` is supplied, and the live
-renderer checks for the Proxmox endpoint, node, VMID, bridge, storage, template,
-and VM clone VMID before it writes provider-backed artifacts. Dependency checks
-are command scoped: OpenTofu/Terraform is required only for backend commands
-that run the backend, while SSH/SCP are required only for provisioning.
+Destructive destroy operations require explicit approval at the `vmctl` layer:
+`vmctl destroy` fails unless `--auto-approve` is supplied. `vmctl apply` and
+`vmctl up` are intended to be the normal one-command deployment path. The live
+renderer checks for the Proxmox endpoint, node, VMID, bridge, storage,
+template/image, and VM clone VMID before it writes provider-backed artifacts.
+Dependency checks are command scoped: OpenTofu/Terraform is required only for
+backend commands that run the backend, while SSH/SCP are required only for
+provisioning.
 
 Provisioning is pack driven. OpenTofu/Terraform creates VM/LXC resources and
 cloud-init handles first boot identity. Post-boot, `vmctl provision` uploads
-scripts from `backend/generated/workspace/resources/<name>/scripts/` and runs
-them with SSH.
+the full generated resource directory from
+`backend/generated/workspace/resources/<name>/` and runs bootstrap scripts from
+that directory with SSH.
 Provisioning supports retries, logs failed attempts, and uses generated scripts
 from role packs.
 

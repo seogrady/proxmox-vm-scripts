@@ -7,7 +7,7 @@ use vmctl_backend::{
     ApplyResult, BackendPlan, BackendValidation, EngineBackend, PlanMode, RenderResult,
     TargetSelector,
 };
-use vmctl_domain::{DesiredState, NormalizedResource, Resource, Workspace};
+use vmctl_domain::{DesiredState, ImageSource, NormalizedResource, Resource, Workspace};
 use vmctl_packs::PackRegistry;
 
 #[derive(Debug, Default)]
@@ -171,7 +171,7 @@ fn render_workspace(
     }
     write_json(
         &generated.join("main.tf.json"),
-        &main_json(desired),
+        &main_json(desired, include_proxmox_resources),
         &mut files,
     )?;
     write_json(
@@ -258,9 +258,9 @@ fn validate_live_inputs(desired: &DesiredState) -> Result<()> {
                 resource.name
             );
         }
-        if normalized.kind == "vm" && normalized.clone_vmid.is_none() {
+        if normalized.kind == "vm" && normalized.clone_vmid.is_none() && resource.image.is_none() {
             bail!(
-                "vm resource `{}` requires clone_vmid for live clone operations",
+                "vm resource `{}` requires clone_vmid or image for live operations",
                 resource.name
             );
         }
@@ -329,7 +329,7 @@ fn provider_json(desired: &DesiredState) -> serde_json::Value {
             "required_providers": {
                 "proxmox": {
                     "source": "bpg/proxmox",
-                    "version": ">= 0.70.0"
+                    "version": ">= 0.70.0, < 0.98.1"
                 }
             }
         },
@@ -343,13 +343,24 @@ fn provider_json(desired: &DesiredState) -> serde_json::Value {
     })
 }
 
-fn main_json(desired: &DesiredState) -> serde_json::Value {
+fn main_json(desired: &DesiredState, include_proxmox_resources: bool) -> serde_json::Value {
     let mut modules = Map::new();
     for resource in &desired.resources {
         modules.insert(module_name(resource), module_json(resource, desired));
     }
 
-    json!({
+    let mut root = Map::new();
+    if include_proxmox_resources {
+        let download_resources = image_download_resources_json(desired);
+        if !download_resources.is_empty() {
+            root.insert(
+                "proxmox_virtual_environment_download_file".to_string(),
+                Value::Object(download_resources),
+            );
+        }
+    }
+
+    let mut document = json!({
         "terraform": {
             "required_version": ">= 1.6.0"
         },
@@ -358,7 +369,49 @@ fn main_json(desired: &DesiredState) -> serde_json::Value {
             "vmctl_resource_count": "${length(var.resources)}"
         },
         "module": modules
-    })
+    });
+    if !root.is_empty() {
+        document["resource"] = Value::Object(root);
+    }
+    document
+}
+
+fn image_download_resources_json(desired: &DesiredState) -> Map<String, Value> {
+    desired
+        .images
+        .values()
+        .filter(|image| image.source == ImageSource::Url)
+        .map(|image| {
+            let mut body = Map::new();
+            body.insert("node_name".to_string(), Value::String(image.node.clone()));
+            body.insert(
+                "datastore_id".to_string(),
+                Value::String(image.storage.clone()),
+            );
+            body.insert(
+                "content_type".to_string(),
+                Value::String(image.content_type.clone()),
+            );
+            body.insert(
+                "file_name".to_string(),
+                Value::String(image.file_name.clone()),
+            );
+            body.insert(
+                "url".to_string(),
+                Value::String(image.url.clone().unwrap_or_default()),
+            );
+            if let Some(algorithm) = &image.checksum_algorithm {
+                body.insert(
+                    "checksum_algorithm".to_string(),
+                    Value::String(algorithm.clone()),
+                );
+            }
+            if let Some(checksum) = &image.checksum {
+                body.insert("checksum".to_string(), Value::String(checksum.clone()));
+            }
+            (image_resource_name(&image.name), Value::Object(body))
+        })
+        .collect()
 }
 
 fn outputs_json() -> serde_json::Value {
@@ -414,22 +467,66 @@ fn module_json(resource: &Resource, desired: &DesiredState) -> Value {
     );
     module.insert(
         "template".to_string(),
-        normalized
-            .and_then(|resource| resource.template.clone())
-            .map(Value::String)
-            .unwrap_or_else(|| Value::String(String::new())),
+        module_template_value(resource, desired, normalized),
     );
 
-    let depends_on = resource
+    let mut depends_on = resource
         .depends_on
         .iter()
         .map(|dependency| format!("module.{}", sanitize_module_name(dependency)))
         .collect::<Vec<_>>();
+    if let Some(image_dependency) = image_dependency(resource, desired) {
+        depends_on.push(image_dependency);
+    }
     if !depends_on.is_empty() {
         module.insert("depends_on".to_string(), json!(depends_on));
     }
 
     Value::Object(module)
+}
+
+fn module_template_value(
+    resource: &Resource,
+    desired: &DesiredState,
+    normalized: Option<&NormalizedResource>,
+) -> Value {
+    if let Some(image_ref) = image_ref(resource, desired) {
+        return image_ref;
+    }
+    normalized
+        .and_then(|resource| resource.template.clone())
+        .map(Value::String)
+        .unwrap_or_else(|| Value::String(String::new()))
+}
+
+fn image_ref(resource: &Resource, desired: &DesiredState) -> Option<Value> {
+    let image = resource
+        .image
+        .as_ref()
+        .and_then(|name| desired.images.get(name))?;
+    if image.source == ImageSource::Url {
+        Some(Value::String(format!(
+            "${{proxmox_virtual_environment_download_file.{}.id}}",
+            image_resource_name(&image.name)
+        )))
+    } else {
+        Some(Value::String(image.volume_id.clone()))
+    }
+}
+
+fn image_dependency(resource: &Resource, desired: &DesiredState) -> Option<String> {
+    let image = resource
+        .image
+        .as_ref()
+        .and_then(|name| desired.images.get(name))?;
+    if image.source == ImageSource::Url {
+        Some(format!(
+            "proxmox_virtual_environment_download_file.{}",
+            image_resource_name(&image.name)
+        ))
+    } else {
+        None
+    }
 }
 
 fn write_base_modules(generated: &Path, include_proxmox_resources: bool) -> Result<Vec<PathBuf>> {
@@ -527,7 +624,7 @@ fn base_module_main_json(kind: &str, include_proxmox_resources: bool) -> Value {
             "required_providers": {
                 "proxmox": {
                     "source": "bpg/proxmox",
-                    "version": ">= 0.70.0"
+                    "version": ">= 0.70.0, < 0.98.1"
                 }
             }
         },
@@ -560,6 +657,7 @@ fn vm_resource_json() -> (String, Value) {
                 }],
                 "disk": [{
                     "datastore_id": "${var.storage}",
+                    "file_id": "${try(var.resource.clone_vmid, null) == null && strcontains(var.template, \":\") ? var.template : null}",
                     "interface": "scsi0",
                     "iothread": true,
                     "discard": "on",
@@ -568,6 +666,7 @@ fn vm_resource_json() -> (String, Value) {
                 "network_device": [{
                     "bridge": "${var.bridge}",
                     "disconnected": false,
+                    "enabled": true,
                     "firewall": "${try(var.resource.network.firewall, false)}",
                     "mac_address": "${try(var.resource.network.mac, null)}",
                     "model": "virtio",
@@ -698,6 +797,10 @@ fn module_name(resource: &Resource) -> String {
     sanitize_module_name(&resource.name)
 }
 
+fn image_resource_name(name: &str) -> String {
+    format!("image_{}", sanitize_module_name(name))
+}
+
 fn backend_proxmox_string(desired: &DesiredState, key: &str) -> Option<Value> {
     desired
         .backend
@@ -713,6 +816,7 @@ fn normalize_fallback(resource: &Resource) -> NormalizedResource {
     NormalizedResource {
         name: resource.name.clone(),
         kind: resource.kind.clone(),
+        image: resource.image.clone(),
         role: resource.role.clone(),
         vmid: resource.vmid,
         depends_on: resource.depends_on.clone(),
@@ -843,10 +947,12 @@ mod tests {
     fn renders_module_blocks_for_resources_and_dependencies() {
         let desired = DesiredState {
             backend: BackendConfig::default(),
+            images: BTreeMap::new(),
             resources: vec![
                 Resource {
                     name: "gateway".to_string(),
                     kind: "lxc".to_string(),
+                    image: None,
                     role: None,
                     vmid: Some(101),
                     depends_on: Vec::new(),
@@ -856,6 +962,7 @@ mod tests {
                 Resource {
                     name: "media-stack".to_string(),
                     kind: "vm".to_string(),
+                    image: None,
                     role: None,
                     vmid: Some(210),
                     depends_on: vec!["gateway".to_string()],
@@ -867,7 +974,7 @@ mod tests {
             expansions: BTreeMap::new(),
         };
 
-        let rendered = main_json(&desired);
+        let rendered = main_json(&desired, true);
         let modules = rendered.get("module").and_then(Value::as_object).unwrap();
 
         assert_eq!(modules["gateway"]["source"], "./modules/lxc");
@@ -900,9 +1007,11 @@ mod tests {
                     ])),
                 )]),
             },
+            images: BTreeMap::new(),
             resources: vec![Resource {
                 name: "media-stack".to_string(),
                 kind: "vm".to_string(),
+                image: None,
                 role: None,
                 vmid: Some(210),
                 depends_on: Vec::new(),
@@ -939,7 +1048,7 @@ mod tests {
         };
 
         let provider = provider_json(&desired);
-        let rendered = main_json(&desired);
+        let rendered = main_json(&desired, true);
         let module = &rendered["module"]["media_stack"];
 
         assert_eq!(
@@ -954,6 +1063,69 @@ mod tests {
         assert_eq!(module["bridge"], "vmbr0");
         assert_eq!(module["storage"], "local-lvm");
         assert_eq!(module["template"], "ubuntu-template");
+    }
+
+    #[test]
+    fn renders_url_image_download_resource_and_dependency() {
+        let desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::from([(
+                "debian_12_lxc_url".to_string(),
+                vmctl_domain::ResolvedImage {
+                    name: "debian_12_lxc_url".to_string(),
+                    kind: vmctl_domain::ImageKind::Lxc,
+                    source: ImageSource::Url,
+                    node: "mini".to_string(),
+                    storage: "local".to_string(),
+                    content_type: "vztmpl".to_string(),
+                    file_name: "debian-12-rootfs.tar.zst".to_string(),
+                    volume_id: "local:vztmpl/debian-12-rootfs.tar.zst".to_string(),
+                    vmid: None,
+                    url: Some("https://example.invalid/debian-12-rootfs.tar.zst".to_string()),
+                    checksum_algorithm: Some("sha256".to_string()),
+                    checksum: Some("abc123".to_string()),
+                },
+            )]),
+            resources: vec![Resource {
+                name: "gateway".to_string(),
+                kind: "lxc".to_string(),
+                image: Some("debian_12_lxc_url".to_string()),
+                role: None,
+                vmid: Some(101),
+                depends_on: Vec::new(),
+                features: BTreeMap::new(),
+                settings: BTreeMap::new(),
+            }],
+            normalized_resources: BTreeMap::from([(
+                "gateway".to_string(),
+                NormalizedResource {
+                    name: "gateway".to_string(),
+                    kind: "lxc".to_string(),
+                    image: Some("debian_12_lxc_url".to_string()),
+                    template: Some("local:vztmpl/debian-12-rootfs.tar.zst".to_string()),
+                    ..NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::new(),
+        };
+
+        let rendered = main_json(&desired, true);
+        let download = &rendered["resource"]["proxmox_virtual_environment_download_file"]
+            ["image_debian_12_lxc_url"];
+        let module = &rendered["module"]["gateway"];
+
+        assert_eq!(
+            download["url"],
+            "https://example.invalid/debian-12-rootfs.tar.zst"
+        );
+        assert_eq!(
+            module["template"],
+            "${proxmox_virtual_environment_download_file.image_debian_12_lxc_url.id}"
+        );
+        assert_eq!(
+            module["depends_on"][0],
+            "proxmox_virtual_environment_download_file.image_debian_12_lxc_url"
+        );
     }
 
     #[test]
@@ -982,9 +1154,11 @@ mod tests {
                     ])),
                 )]),
             },
+            images: BTreeMap::new(),
             resources: vec![Resource {
                 name: "media-stack".to_string(),
                 kind: "vm".to_string(),
+                image: None,
                 role: None,
                 vmid: Some(210),
                 depends_on: Vec::new(),
@@ -1046,9 +1220,11 @@ mod tests {
                     ])),
                 )]),
             },
+            images: BTreeMap::new(),
             resources: vec![Resource {
                 name: "media-stack".to_string(),
                 kind: "vm".to_string(),
+                image: None,
                 role: None,
                 vmid: Some(210),
                 depends_on: Vec::new(),
@@ -1144,6 +1320,12 @@ mod tests {
         assert_file_fixture(
             &root.join("generated/resources/media-stack/media.env"),
             include_str!("../tests/fixtures/example-workspace/resources/media-stack/media.env"),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/media-stack/scripts/bootstrap-media.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-media.sh"
+            ),
         );
         assert_file_fixture(
             &root.join("generated/resources/tailscale-gateway/tailscale-setup.sh"),

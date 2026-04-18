@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{bail, Result};
 use vmctl_config::Config;
 use vmctl_domain::{
-    CloudInitConfig, DesiredState, NetworkConfig, NormalizedResource, ProvisionConfig, Resource,
+    CloudInitConfig, DesiredState, ImageConfig, ImageKind, NetworkConfig, NormalizedResource,
+    ProvisionConfig, ResolvedImage, Resource,
 };
 use vmctl_packs::PackRegistry;
 
@@ -12,6 +13,7 @@ pub fn build_desired_state(
     registry: &PackRegistry,
     target: Option<&str>,
 ) -> Result<DesiredState> {
+    let images = resolve_images(&config)?;
     let resources = config
         .resources
         .into_iter()
@@ -29,13 +31,19 @@ pub fn build_desired_state(
         .collect::<Result<_>>()?;
     let normalized_resources = resources
         .iter()
-        .map(|resource| (resource.name.clone(), normalize_resource(resource)))
-        .collect::<BTreeMap<_, _>>();
+        .map(|resource| {
+            normalize_resource(resource, &images)
+                .map(|normalized| (resource.name.clone(), normalized))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+
+    validate_image_references(&resources, &images)?;
 
     validate_normalized_resources(&normalized_resources)?;
 
     Ok(DesiredState {
         backend: config.backend,
+        images,
         resources,
         normalized_resources,
         expansions,
@@ -103,19 +111,128 @@ fn select_resources(resources: Vec<Resource>, target: Option<&str>) -> Result<Ve
         .collect())
 }
 
-fn normalize_resource(resource: &Resource) -> NormalizedResource {
-    NormalizedResource {
+fn resolve_images(config: &Config) -> Result<BTreeMap<String, ResolvedImage>> {
+    let default_node = config
+        .backend
+        .settings
+        .get("proxmox")
+        .and_then(toml::Value::as_table)
+        .and_then(|settings| settings.get("node"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or_default();
+
+    config
+        .images
+        .iter()
+        .map(|(name, image)| resolve_image(name, image, default_node))
+        .collect()
+}
+
+fn resolve_image(
+    name: &str,
+    image: &ImageConfig,
+    default_node: &str,
+) -> Result<(String, ResolvedImage)> {
+    let file_name = image
+        .file_name
+        .as_deref()
+        .or(image.template.as_deref())
+        .unwrap_or_default()
+        .trim();
+    if file_name.is_empty() && image.vmid.is_none() {
+        bail!("image `{name}` requires file_name or template");
+    }
+    let file_name = if file_name.is_empty() {
+        image.vmid.map(|vmid| vmid.to_string()).unwrap_or_default()
+    } else {
+        file_name.to_string()
+    };
+    let node = image.node.as_deref().unwrap_or(default_node).trim();
+    let volume_id = format!("{}:{}/{}", image.storage, image.content_type, file_name);
+    Ok((
+        name.to_string(),
+        ResolvedImage {
+            name: name.to_string(),
+            kind: image.kind,
+            source: image.source,
+            node: node.to_string(),
+            storage: image.storage.clone(),
+            content_type: image.content_type.clone(),
+            file_name,
+            volume_id,
+            vmid: image.vmid,
+            url: image.url.clone(),
+            checksum_algorithm: image.checksum_algorithm.clone(),
+            checksum: image.checksum.clone(),
+        },
+    ))
+}
+
+fn validate_image_references(
+    resources: &[Resource],
+    images: &BTreeMap<String, ResolvedImage>,
+) -> Result<()> {
+    for resource in resources {
+        let Some(image_name) = &resource.image else {
+            continue;
+        };
+        let image = images.get(image_name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "resource `{}` references missing image `{}`",
+                resource.name,
+                image_name
+            )
+        })?;
+        let expected_kind = match resource.kind.as_str() {
+            "vm" => ImageKind::Vm,
+            "lxc" => ImageKind::Lxc,
+            _ => continue,
+        };
+        if image.kind != expected_kind {
+            bail!(
+                "resource `{}` kind `{}` cannot use {:?} image `{}`",
+                resource.name,
+                resource.kind,
+                image.kind,
+                image.name
+            );
+        }
+    }
+    Ok(())
+}
+
+fn normalize_resource(
+    resource: &Resource,
+    images: &BTreeMap<String, ResolvedImage>,
+) -> Result<NormalizedResource> {
+    let image = resource.image.clone();
+    let resolved_image = image.as_ref().and_then(|name| images.get(name));
+    let template = resolved_image
+        .map(|image| image.volume_id.clone())
+        .or_else(|| string_setting(resource, "template"));
+    let clone_vmid = u32_setting(resource, "clone_vmid")
+        .or_else(|| resolved_image.and_then(|image| image.vmid))
+        .or_else(|| {
+            if resolved_image.is_some() {
+                None
+            } else {
+                template_as_vmid(resource)
+            }
+        });
+
+    Ok(NormalizedResource {
         name: resource.name.clone(),
         kind: resource.kind.clone(),
+        image,
         role: resource.role.clone(),
         vmid: resource.vmid,
         depends_on: resource.depends_on.clone(),
         node: string_setting(resource, "node"),
         bridge: string_setting(resource, "bridge"),
         storage: string_setting(resource, "storage"),
-        template: string_setting(resource, "template"),
+        template,
         template_storage: string_setting(resource, "template_storage"),
-        clone_vmid: u32_setting(resource, "clone_vmid").or_else(|| template_as_vmid(resource)),
+        clone_vmid,
         cores: u32_setting(resource, "cores"),
         memory: u32_setting(resource, "memory"),
         disk_gb: u32_setting(resource, "disk_gb"),
@@ -131,7 +248,7 @@ fn normalize_resource(resource: &Resource) -> NormalizedResource {
         cloud_init: cloud_init_config(resource),
         provision: provision_config(resource),
         features: resource.features.clone(),
-    }
+    })
 }
 
 fn string_setting(resource: &Resource, key: &str) -> Option<String> {
@@ -445,7 +562,7 @@ mod tests {
             ])),
         );
 
-        let normalized = normalize_resource(&input);
+        let normalized = normalize_resource(&input, &BTreeMap::new()).unwrap();
 
         assert_eq!(normalized.vmid, Some(210));
         assert_eq!(normalized.cores, Some(6));
@@ -474,7 +591,7 @@ mod tests {
 
         let err = validate_normalized_resources(&BTreeMap::from([(
             input.name.clone(),
-            normalize_resource(&input),
+            normalize_resource(&input, &BTreeMap::new()).unwrap(),
         )]))
         .unwrap_err();
 
@@ -497,7 +614,8 @@ mod tests {
         );
 
         assert_eq!(
-            normalize_resource(&input)
+            normalize_resource(&input, &BTreeMap::new())
+                .unwrap()
                 .cloud_init
                 .and_then(|cloud_init| cloud_init.ssh_key_file),
             Some(key_path.to_string_lossy().to_string())
@@ -521,7 +639,10 @@ mod tests {
             )])),
         );
 
-        let provision = normalize_resource(&input).provision.unwrap();
+        let provision = normalize_resource(&input, &BTreeMap::new())
+            .unwrap()
+            .provision
+            .unwrap();
 
         assert_eq!(
             provision.private_key_file,
@@ -539,10 +660,38 @@ mod tests {
         assert!(err.to_string().contains("depends on missing resource"));
     }
 
+    #[test]
+    fn resolves_lxc_image_reference_to_volume_id() {
+        let image = ImageConfig {
+            kind: ImageKind::Lxc,
+            source: vmctl_domain::ImageSource::Pveam,
+            node: Some("mini".to_string()),
+            storage: "local".to_string(),
+            content_type: "vztmpl".to_string(),
+            file_name: None,
+            vmid: None,
+            template: Some("debian-12-standard_12.7-1_amd64.tar.zst".to_string()),
+            url: None,
+            checksum_algorithm: None,
+            checksum: None,
+        };
+        let images = BTreeMap::from([resolve_image("debian_12_lxc", &image, "mini").unwrap()]);
+        let mut input = resource("gateway", "lxc", vec![]);
+        input.image = Some("debian_12_lxc".to_string());
+
+        let normalized = normalize_resource(&input, &images).unwrap();
+
+        assert_eq!(
+            normalized.template,
+            Some("local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst".to_string())
+        );
+    }
+
     fn resource(name: &str, kind: &str, depends_on: Vec<&str>) -> Resource {
         Resource {
             name: name.to_string(),
             kind: kind.to_string(),
+            image: None,
             role: None,
             vmid: None,
             depends_on: depends_on.into_iter().map(str::to_string).collect(),
@@ -568,6 +717,7 @@ mod tests {
     fn desired(resources: Vec<Resource>) -> DesiredState {
         DesiredState {
             backend: BackendConfig::default(),
+            images: BTreeMap::new(),
             resources,
             normalized_resources: BTreeMap::new(),
             expansions: BTreeMap::new(),
