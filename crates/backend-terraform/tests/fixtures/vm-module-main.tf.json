@@ -1,0 +1,102 @@
+{
+  "resource": {
+    "proxmox_virtual_environment_vm": {
+      "this": {
+        "agent": [
+          {
+            "enabled": "${try(var.resource.agent, true)}"
+          }
+        ],
+        "count": "${var.proxmox_resource_enabled ? 1 : 0}",
+        "cpu": [
+          {
+            "cores": "${try(var.resource.cores, 1)}",
+            "type": "host"
+          }
+        ],
+        "disk": [
+          {
+            "datastore_id": "${var.storage}",
+            "interface": "scsi0",
+            "size": "${try(var.resource.disk_gb, 8)}"
+          }
+        ],
+        "dynamic": {
+          "clone": {
+            "content": {
+              "full": true,
+              "vm_id": "${clone.value}"
+            },
+            "for_each": "${can(tonumber(var.template)) ? [tonumber(var.template)] : []}"
+          },
+          "initialization": {
+            "content": {
+              "ip_config": [
+                {
+                  "ipv4": [
+                    {
+                      "address": "${try(var.resource.network.mode, \"dhcp\") == \"dhcp\" ? \"dhcp\" : try(var.resource.network.address, \"dhcp\")}"
+                    }
+                  ]
+                }
+              ],
+              "user_account": [
+                {
+                  "keys": "${try(var.resource.cloud_init.ssh_key_file, null) == null ? [] : [file(var.resource.cloud_init.ssh_key_file)]}",
+                  "username": "${try(var.resource.cloud_init.user, null)}"
+                }
+              ]
+            },
+            "for_each": "${try(var.resource.cloud_init, null) == null && try(var.resource.network, null) == null ? [] : [1]}"
+          }
+        },
+        "memory": [
+          {
+            "dedicated": "${try(var.resource.memory, 1024)}"
+          }
+        ],
+        "name": "${var.resource.name}",
+        "network_device": [
+          {
+            "bridge": "${var.bridge}",
+            "disconnected": false,
+            "enabled": true,
+            "firewall": false,
+            "mac_address": "${try(var.resource.network.mac, null)}",
+            "model": "virtio",
+            "mtu": 0,
+            "queues": 0,
+            "rate_limit": 0,
+            "trunks": "",
+            "vlan_id": null
+          }
+        ],
+        "node_name": "${var.node_name}",
+        "started": "${try(var.resource.start_on_boot, true)}",
+        "vm_id": "${try(var.resource.vmid, null)}"
+      }
+    },
+    "terraform_data": {
+      "this": {
+        "input": {
+          "bridge": "${var.bridge}",
+          "kind": "vm",
+          "name": "${var.resource.name}",
+          "node_name": "${var.node_name}",
+          "resource": "${var.resource}",
+          "storage": "${var.storage}",
+          "template": "${var.template}",
+          "vmid": "${try(var.resource.vmid, null)}"
+        }
+      }
+    }
+  },
+  "terraform": {
+    "required_providers": {
+      "proxmox": {
+        "source": "bpg/proxmox",
+        "version": ">= 0.70.0"
+      }
+    }
+  }
+}

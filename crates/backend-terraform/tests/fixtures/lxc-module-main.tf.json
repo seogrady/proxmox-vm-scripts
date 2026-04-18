@@ -1,0 +1,69 @@
+{
+  "resource": {
+    "proxmox_virtual_environment_container": {
+      "this": {
+        "count": "${var.proxmox_resource_enabled ? 1 : 0}",
+        "description": "managed by vmctl",
+        "disk": [
+          {
+            "datastore_id": "${var.storage}",
+            "size": "${try(var.resource.rootfs_gb, 8)}"
+          }
+        ],
+        "initialization": [
+          {
+            "hostname": "${var.resource.name}",
+            "ip_config": [
+              {
+                "ipv4": [
+                  {
+                    "address": "${try(var.resource.network.mode, \"dhcp\") == \"dhcp\" ? \"dhcp\" : try(var.resource.network.address, \"dhcp\")}"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "network_interface": [
+          {
+            "bridge": "${var.bridge}",
+            "mac_address": "${try(var.resource.network.mac, null)}",
+            "name": "veth0"
+          }
+        ],
+        "node_name": "${var.node_name}",
+        "operating_system": [
+          {
+            "template_file_id": "${var.template}",
+            "type": "debian"
+          }
+        ],
+        "started": "${try(var.resource.start_on_boot, true)}",
+        "unprivileged": true,
+        "vm_id": "${try(var.resource.vmid, null)}"
+      }
+    },
+    "terraform_data": {
+      "this": {
+        "input": {
+          "bridge": "${var.bridge}",
+          "kind": "lxc",
+          "name": "${var.resource.name}",
+          "node_name": "${var.node_name}",
+          "resource": "${var.resource}",
+          "storage": "${var.storage}",
+          "template": "${var.template}",
+          "vmid": "${try(var.resource.vmid, null)}"
+        }
+      }
+    }
+  },
+  "terraform": {
+    "required_providers": {
+      "proxmox": {
+        "source": "bpg/proxmox",
+        "version": ">= 0.70.0"
+      }
+    }
+  }
+}

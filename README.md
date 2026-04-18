@@ -10,6 +10,7 @@ and service packs, and deterministic backend artifact rendering.
 ```bash
 cargo run -q -p vmctl -- --config vmctl.example.toml validate
 cargo run -q -p vmctl -- --config vmctl.example.toml plan
+cargo run -q -p vmctl -- --config vmctl.example.toml backend plan --dry-run
 cargo run -q -p vmctl -- --config vmctl.example.toml backend render
 cargo run -q -p vmctl -- --config vmctl.example.toml backend show-state
 ```
@@ -21,6 +22,7 @@ rendering:
 export PROXMOX_TOKEN_ID=...
 export PROXMOX_TOKEN_SECRET=...
 export TAILSCALE_AUTH_KEY=...
+export TF_VAR_proxmox_api_token="${PROXMOX_TOKEN_ID}=${PROXMOX_TOKEN_SECRET}"
 ```
 
 Generated backend files are written to `backend/generated/workspace/`, and
@@ -29,6 +31,19 @@ Generated backend files are written to `backend/generated/workspace/`, and
 `vmctl plan` is the high-level domain plan. `vmctl backend render` writes the
 Terraform/OpenTofu working directory. `vmctl apply` renders that directory and
 then runs `tofu apply` or `terraform apply` if a backend binary is installed.
+`vmctl backend plan --dry-run` runs `tofu init`, `tofu validate`, and
+`tofu plan -refresh=false` against a provider-free validation workspace, so it
+does not contact Proxmox. It may still use network access to install OpenTofu
+providers or modules if they are not already cached.
+
+The current Terraform backend generates deterministic scaffold modules under
+`backend/generated/workspace/modules/` and maps each `vmctl` resource to a
+backend module with `depends_on` preserved from the domain model. It also emits
+`provider.tf.json` for the `bpg/proxmox` provider from `[backend.proxmox]`,
+threads resolved node, bridge, storage, and template values into each module,
+and emits `proxmox_virtual_environment_vm` / `proxmox_virtual_environment_container`
+resources. Secrets are redacted from generated debug JSON; Terraform receives
+the Proxmox token via the sensitive `TF_VAR_proxmox_api_token` variable.
 
 ## Workspace crates
 

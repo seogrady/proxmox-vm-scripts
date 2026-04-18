@@ -1,8 +1,9 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use vmctl_domain::{DesiredState, Resource};
 
@@ -12,6 +13,8 @@ pub struct Lockfile {
     pub backend: String,
     pub generated_at: String,
     pub resources: Vec<LockedResource>,
+    #[serde(default)]
+    pub artifacts: Vec<LockedArtifact>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,12 +27,31 @@ pub struct LockedResource {
     pub exists: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LockedArtifact {
+    pub path: String,
+    pub digest: String,
+}
+
 impl Lockfile {
     pub fn from_desired(desired: &DesiredState) -> Result<Self> {
+        Self::from_desired_with_artifacts(desired, Path::new("."), &[])
+    }
+
+    pub fn from_desired_with_artifacts(
+        desired: &DesiredState,
+        artifact_root: &Path,
+        artifact_paths: &[PathBuf],
+    ) -> Result<Self> {
         let resources = desired
             .resources
             .iter()
             .map(locked_resource)
+            .collect::<Result<Vec<_>>>()?;
+        let artifacts = artifact_paths
+            .iter()
+            .filter(|path| path.is_file())
+            .map(|path| locked_artifact(artifact_root, path))
             .collect::<Result<Vec<_>>>()?;
 
         Ok(Self {
@@ -37,6 +59,7 @@ impl Lockfile {
             backend: desired.backend.kind.clone(),
             generated_at: generated_at(),
             resources,
+            artifacts,
         })
     }
 
@@ -44,10 +67,14 @@ impl Lockfile {
         std::fs::write(path, toml::to_string_pretty(self)?)?;
         Ok(())
     }
+
+    pub fn read_from_path(path: &Path) -> Result<Self> {
+        Ok(toml::from_str(&std::fs::read_to_string(path)?)?)
+    }
 }
 
 fn locked_resource(resource: &Resource) -> Result<LockedResource> {
-    let serialized = serde_json::to_vec(resource)?;
+    let serialized = serde_json::to_vec(&redacted_value(serde_json::to_value(resource)?))?;
     let digest = Sha256::digest(serialized);
     Ok(LockedResource {
         name: resource.name.clone(),
@@ -56,6 +83,20 @@ fn locked_resource(resource: &Resource) -> Result<LockedResource> {
         backend_address: backend_address(resource),
         digest: format!("sha256:{digest:x}"),
         exists: true,
+    })
+}
+
+fn locked_artifact(root: &Path, path: &Path) -> Result<LockedArtifact> {
+    let bytes = std::fs::read(path)?;
+    let digest = Sha256::digest(bytes);
+    let artifact_path = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string();
+    Ok(LockedArtifact {
+        path: artifact_path,
+        digest: format!("sha256:{digest:x}"),
     })
 }
 
@@ -78,6 +119,30 @@ fn generated_at() -> String {
     format!("unix:{seconds}")
 }
 
+fn redacted_value(value: Value) -> Value {
+    match value {
+        Value::Object(object) => Value::Object(
+            object
+                .into_iter()
+                .filter_map(|(key, value)| {
+                    if is_secret_key(&key) {
+                        None
+                    } else {
+                        Some((key, redacted_value(value)))
+                    }
+                })
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.into_iter().map(redacted_value).collect()),
+        other => other,
+    }
+}
+
+fn is_secret_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    key.contains("secret") || key.contains("token") || key.contains("auth_key")
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -98,6 +163,7 @@ mod tests {
                 features: BTreeMap::new(),
                 settings: BTreeMap::new(),
             }],
+            normalized_resources: BTreeMap::new(),
             expansions: BTreeMap::new(),
         };
 
@@ -108,5 +174,43 @@ mod tests {
             "module.media_stack.proxmox_virtual_environment_vm.this"
         );
         assert!(lockfile.resources[0].digest.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn resource_digest_ignores_secret_values() {
+        let mut first = Resource {
+            name: "media-stack".to_string(),
+            kind: "vm".to_string(),
+            role: None,
+            vmid: Some(210),
+            depends_on: Vec::new(),
+            features: BTreeMap::from([(
+                "tailscale".to_string(),
+                toml::Value::Table(toml::map::Map::from_iter([(
+                    "auth_key".to_string(),
+                    toml::Value::String("secret-one".to_string()),
+                )])),
+            )]),
+            settings: BTreeMap::new(),
+        };
+        let mut second = first.clone();
+        second.features = BTreeMap::from([(
+            "tailscale".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([(
+                "auth_key".to_string(),
+                toml::Value::String("secret-two".to_string()),
+            )])),
+        )]);
+
+        assert_eq!(
+            locked_resource(&first).unwrap().digest,
+            locked_resource(&second).unwrap().digest
+        );
+
+        first.vmid = Some(211);
+        assert_ne!(
+            locked_resource(&first).unwrap().digest,
+            locked_resource(&second).unwrap().digest
+        );
     }
 }

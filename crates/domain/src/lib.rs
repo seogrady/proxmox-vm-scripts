@@ -35,6 +35,40 @@ pub struct Resource {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NormalizedResource {
+    pub name: String,
+    pub kind: String,
+    pub role: Option<String>,
+    pub vmid: Option<u32>,
+    pub depends_on: Vec<String>,
+    pub node: Option<String>,
+    pub bridge: Option<String>,
+    pub storage: Option<String>,
+    pub template: Option<String>,
+    pub cores: Option<u32>,
+    pub memory: Option<u32>,
+    pub disk_gb: Option<u32>,
+    pub rootfs_gb: Option<u32>,
+    pub start_on_boot: Option<bool>,
+    pub agent: Option<bool>,
+    pub network: Option<NetworkConfig>,
+    pub cloud_init: Option<CloudInitConfig>,
+    pub features: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NetworkConfig {
+    pub mode: Option<String>,
+    pub mac: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CloudInitConfig {
+    pub user: Option<String>,
+    pub ssh_key_file: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Expansion {
     pub files: Vec<String>,
     pub service_defs: Vec<String>,
@@ -47,6 +81,8 @@ pub struct Expansion {
 pub struct DesiredState {
     pub backend: BackendConfig,
     pub resources: Vec<Resource>,
+    #[serde(default)]
+    pub normalized_resources: BTreeMap<String, NormalizedResource>,
     pub expansions: BTreeMap<String, Expansion>,
 }
 

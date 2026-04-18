@@ -17,6 +17,17 @@ pub struct BackendPlan {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackendValidation {
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlanMode {
+    Online,
+    DryRun,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplyResult {
     pub summary: String,
 }
@@ -50,8 +61,17 @@ pub trait EngineBackend {
         registry: &PackRegistry,
     ) -> Result<RenderResult>;
 
-    fn plan(&self, _workspace: &Workspace, _desired: &DesiredState) -> Result<BackendPlan> {
+    fn plan(
+        &self,
+        _workspace: &Workspace,
+        _desired: &DesiredState,
+        _mode: PlanMode,
+    ) -> Result<BackendPlan> {
         bail!("backend plan execution is not implemented")
+    }
+
+    fn validate_rendered(&self, _workspace: &Workspace) -> Result<BackendValidation> {
+        bail!("backend rendered validation is not implemented")
     }
 
     fn apply(

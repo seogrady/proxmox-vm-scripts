@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use vmctl_backend::{EngineBackend, TargetSelector};
+use vmctl_backend::{EngineBackend, PlanMode, TargetSelector};
 use vmctl_backend_terraform::TerraformBackend;
 use vmctl_config::Config;
 use vmctl_domain::{DesiredState, Workspace};
@@ -46,8 +46,14 @@ enum Command {
 #[derive(Debug, Subcommand)]
 enum BackendCommand {
     Doctor,
+    Plan {
+        #[arg(long)]
+        dry_run: bool,
+        target: Option<String>,
+    },
     Render,
     ShowState,
+    Validate,
 }
 
 fn main() -> Result<()> {
@@ -73,7 +79,12 @@ fn main() -> Result<()> {
             let (workspace, desired, registry) =
                 load_workspace(&cli.config, &cli.packs, target.as_deref())?;
             let result = TerraformBackend.apply(&workspace, &desired, &registry)?;
-            let lockfile = Lockfile::from_desired(&desired)?;
+            let generated = workspace.root.join(&workspace.generated_dir);
+            let lockfile = Lockfile::from_desired_with_artifacts(
+                &desired,
+                &generated,
+                &list_absolute_files(&generated)?,
+            )?;
             lockfile.write_to_path(&workspace.root.join("vmctl.lock"))?;
             println!("{}; wrote vmctl.lock", result.summary);
             Ok(())
@@ -84,22 +95,83 @@ fn main() -> Result<()> {
             println!("{}", result.summary);
             Ok(())
         }
-        Command::Import => vmctl_import::import_workspace(),
-        Command::Sync => anyhow::bail!("sync is not implemented yet"),
+        Command::Import => {
+            let workspace = default_workspace()?;
+            print!(
+                "{}",
+                vmctl_import::summarize_lockfile(&workspace.root.join("vmctl.lock"))?
+            );
+            let state_path = workspace
+                .root
+                .join(&workspace.generated_dir)
+                .join("terraform.tfstate");
+            if state_path.exists() {
+                print!("{}", vmctl_import::summarize_terraform_state(&state_path)?);
+            }
+            Ok(())
+        }
+        Command::Sync => {
+            let (workspace, desired, _registry) = load_workspace(&cli.config, &cli.packs, None)?;
+            let lockfile = Lockfile::read_from_path(&workspace.root.join("vmctl.lock"))?;
+            let summary = vmctl_import::compare_desired_to_lockfile(&desired, &lockfile);
+            print!("{}", vmctl_import::render_sync_summary(&summary));
+            Ok(())
+        }
         Command::Backend { command } => match command {
             BackendCommand::Doctor => {
                 let workspace = default_workspace()?;
                 TerraformBackend.validate_backend(&workspace)
             }
+            BackendCommand::Plan { dry_run, target } => {
+                let (workspace, desired, registry) =
+                    load_workspace(&cli.config, &cli.packs, target.as_deref())?;
+                TerraformBackend.render_for_plan(
+                    &workspace,
+                    &desired,
+                    &registry,
+                    if dry_run {
+                        PlanMode::DryRun
+                    } else {
+                        PlanMode::Online
+                    },
+                )?;
+                let result = TerraformBackend.plan(
+                    &workspace,
+                    &desired,
+                    if dry_run {
+                        PlanMode::DryRun
+                    } else {
+                        PlanMode::Online
+                    },
+                )?;
+                println!("{}", result.summary);
+                Ok(())
+            }
             BackendCommand::Render => {
                 let (workspace, desired, registry) = load_workspace(&cli.config, &cli.packs, None)?;
                 let result = TerraformBackend.render(&workspace, &desired, &registry)?;
-                let lockfile = Lockfile::from_desired(&desired)?;
+                let lockfile = Lockfile::from_desired_with_artifacts(
+                    &desired,
+                    &workspace.root.join(&workspace.generated_dir),
+                    &result.files,
+                )?;
                 lockfile.write_to_path(&workspace.root.join("vmctl.lock"))?;
                 println!("{}; wrote vmctl.lock", result.summary);
                 Ok(())
             }
             BackendCommand::ShowState => show_backend_state(&default_workspace()?),
+            BackendCommand::Validate => {
+                let (workspace, desired, registry) = load_workspace(&cli.config, &cli.packs, None)?;
+                TerraformBackend.render_for_plan(
+                    &workspace,
+                    &desired,
+                    &registry,
+                    PlanMode::DryRun,
+                )?;
+                let result = TerraformBackend.validate_rendered(&workspace)?;
+                println!("{}", result.summary);
+                Ok(())
+            }
         },
     }
 }
@@ -161,6 +233,28 @@ fn list_files(root: &Path) -> Result<Vec<PathBuf>> {
     collect_files(root, root, &mut files)?;
     files.sort();
     Ok(files)
+}
+
+fn list_absolute_files(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    collect_absolute_files(root, &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+fn collect_absolute_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in
+        std::fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            collect_absolute_files(&path, files)?;
+        } else {
+            files.push(path);
+        }
+    }
+    Ok(())
 }
 
 fn collect_files(root: &Path, dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
