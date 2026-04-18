@@ -1,7 +1,7 @@
 # Copy to `vmctl.toml` for local overrides.
 
 [backend]
-kind = "terraform"
+kind = "tofu"
 
 [backend.proxmox]
 endpoint = "https://mini:8006/api2/json"

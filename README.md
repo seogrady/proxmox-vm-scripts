@@ -115,10 +115,10 @@ Prefer a dedicated Proxmox user and token for normal operation. The token needs
 permission to manage the target VM/LXC resources, storage, networking, and any
 clone or template resources used by the config.
 
-`TF_VAR_proxmox_api_token` is required by Terraform/OpenTofu. Terraform maps
-environment variables named `TF_VAR_<terraform_variable_name>` into Terraform
-input variables. The generated provider config defines a Terraform variable
-named `proxmox_api_token`, so the matching environment variable is:
+`TF_VAR_proxmox_api_token` is required by OpenTofu/Terraform. OpenTofu and
+Terraform map environment variables named `TF_VAR_<terraform_variable_name>`
+into input variables. The generated provider config defines a variable named
+`proxmox_api_token`, so the matching environment variable is:
 
 ```bash
 export TF_VAR_proxmox_api_token="${PROXMOX_TOKEN_ID}=${PROXMOX_TOKEN_SECRET}"
@@ -132,7 +132,7 @@ USER@REALM!TOKEN_NAME=SECRET
 ```
 
 `vmctl` keeps `PROXMOX_TOKEN_ID` and `PROXMOX_TOKEN_SECRET` separate for config
-resolution, while Terraform/OpenTofu receives the combined token through
+resolution, while OpenTofu/Terraform receives the combined token through
 `TF_VAR_proxmox_api_token` so the secret is not written into generated
 Terraform JSON.
 
@@ -160,27 +160,31 @@ Recommended workflow:
 5. `vmctl backend plan --dry-run` additionally runs `tofu plan -refresh=false`
    without contacting Proxmox. It may still use network access to install
    OpenTofu providers or modules if they are not already cached.
-6. `vmctl backend render` writes the live Terraform/OpenTofu workspace.
+6. `vmctl backend render` writes the live OpenTofu/Terraform workspace.
 7. `vmctl apply --auto-approve` renders the live workspace and runs
-   `tofu apply` or `terraform apply`; this requires reachable Proxmox and
+   `tofu apply` by default. If `tofu` is unavailable, `terraform` is accepted as
+   a compatibility fallback. This requires reachable Proxmox and
    `TF_VAR_proxmox_api_token`.
 8. `vmctl provision` uploads and executes pack-generated bootstrap scripts over
    SSH using each resource's `[resources.provision]` settings.
 
-The current Terraform backend generates deterministic scaffold modules under
+The default backend is `tofu`, with `terraform` still accepted as a config
+compatibility alias for the same renderer. The current OpenTofu/Terraform
+backend generates deterministic scaffold modules under
 `backend/generated/workspace/modules/` and maps each `vmctl` resource to a
 backend module with `depends_on` preserved from the domain model. It also emits
 `provider.tf.json` for the `bpg/proxmox` provider from `[backend.proxmox]`,
 threads resolved node, bridge, storage, and template values into each module,
 and emits `proxmox_virtual_environment_vm` / `proxmox_virtual_environment_container`
-resources. Secrets are redacted from generated debug JSON; Terraform receives
-the Proxmox token via the sensitive `TF_VAR_proxmox_api_token` variable.
+resources. Secrets are redacted from generated debug JSON; OpenTofu/Terraform
+receives the Proxmox token via the sensitive `TF_VAR_proxmox_api_token`
+variable.
 `vmctl.lock` stores resource digests and generated artifact digests, excluding
 secret-valued fields from resource digests.
 
 Current deployment assumption: `vmctl apply` runs on the local machine that
 invokes the CLI and talks directly to the configured Proxmox API endpoint. The
-generated Terraform/OpenTofu workspace is also useful for inspection or manual
+generated OpenTofu/Terraform workspace is also useful for inspection or manual
 execution elsewhere, but artifact-copy deployment is not yet a first-class
 workflow.
 
@@ -188,12 +192,13 @@ Live operations require explicit approval at the `vmctl` layer. `vmctl apply`
 and `vmctl destroy` fail unless `--auto-approve` is supplied, and the live
 renderer checks for the Proxmox endpoint, node, VMID, bridge, storage, template,
 and VM clone VMID before it writes provider-backed artifacts. Dependency checks
-are command scoped: Terraform/OpenTofu is required only for Terraform commands
+are command scoped: OpenTofu/Terraform is required only for backend commands
 that run the backend, while SSH/SCP are required only for provisioning.
 
-Provisioning is pack driven. Terraform creates VM/LXC resources and cloud-init
-handles first boot identity. Post-boot, `vmctl provision` uploads scripts from
-`backend/generated/workspace/resources/<name>/scripts/` and runs them with SSH.
+Provisioning is pack driven. OpenTofu/Terraform creates VM/LXC resources and
+cloud-init handles first boot identity. Post-boot, `vmctl provision` uploads
+scripts from `backend/generated/workspace/resources/<name>/scripts/` and runs
+them with SSH.
 Provisioning supports retries, logs failed attempts, and uses generated scripts
 from role packs.
 
@@ -207,8 +212,8 @@ The implementation follows the crate layout in `plans/vmctl-hybrid-plan-packs.md
   desired-state construction, pack expansion, and command-scoped dependency
   checks.
 - `crates/backend/`, `crates/backend-terraform/`, and `crates/backend-native/`
-  define the backend interface, the Terraform renderer, and the future native
-  engine placeholder.
+  define the backend interface, the OpenTofu/Terraform renderer, and the future
+  native engine placeholder.
 - `crates/lockfile/`, `crates/import/`, `crates/provision/`, `crates/render/`,
   and `crates/util/` own lockfile persistence, import/reconciliation,
   SSH-based provisioning, human-facing rendering, and shared helpers.

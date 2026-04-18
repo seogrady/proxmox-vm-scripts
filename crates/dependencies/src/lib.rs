@@ -91,10 +91,9 @@ impl DependencyPlan {
 }
 
 pub fn backend_kind(value: &str) -> BackendKind {
-    if value == "terraform" {
-        BackendKind::Terraform
-    } else {
-        BackendKind::Other
+    match value {
+        "tofu" | "opentofu" | "terraform" => BackendKind::Terraform,
+        _ => BackendKind::Other,
     }
 }
 
@@ -118,13 +117,34 @@ mod tests {
     #[test]
     fn terraform_required_for_terraform_plan() {
         let plan = DependencyPlan::for_command(
-            BackendKind::Terraform,
+            backend_kind("terraform"),
             CommandScope::Plan { dry_run: true },
         );
 
         assert_eq!(plan.checks().len(), 1);
         assert_eq!(plan.checks()[0].alternatives, vec!["tofu", "terraform"]);
         assert!(plan.verify(Some("")).is_err());
+    }
+
+    #[test]
+    fn tofu_required_for_tofu_plan() {
+        let plan =
+            DependencyPlan::for_command(backend_kind("tofu"), CommandScope::Plan { dry_run: true });
+
+        assert_eq!(plan.checks().len(), 1);
+        assert_eq!(plan.checks()[0].alternatives, vec!["tofu", "terraform"]);
+        assert!(plan.verify(Some("")).is_err());
+    }
+
+    #[test]
+    fn opentofu_is_treated_as_terraform_compatible_backend() {
+        let plan = DependencyPlan::for_command(
+            backend_kind("opentofu"),
+            CommandScope::Plan { dry_run: true },
+        );
+
+        assert_eq!(plan.checks().len(), 1);
+        assert_eq!(plan.checks()[0].alternatives, vec!["tofu", "terraform"]);
     }
 
     #[test]

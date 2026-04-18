@@ -109,7 +109,7 @@ pub struct DesiredState {
 }
 
 fn default_backend_kind() -> String {
-    "terraform".to_string()
+    "tofu".to_string()
 }
 
 impl Default for BackendConfig {
@@ -118,5 +118,15 @@ impl Default for BackendConfig {
             kind: default_backend_kind(),
             settings: BTreeMap::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_defaults_to_tofu() {
+        assert_eq!(BackendConfig::default().kind, "tofu");
     }
 }
