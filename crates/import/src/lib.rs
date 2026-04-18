@@ -139,6 +139,7 @@ mod tests {
             version: 1,
             backend: "terraform".to_string(),
             generated_at: "test".to_string(),
+            artifacts: Vec::new(),
             resources: vec![LockedResource {
                 name: "old".to_string(),
                 kind: "vm".to_string(),

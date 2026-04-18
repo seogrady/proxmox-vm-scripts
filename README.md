@@ -10,6 +10,7 @@ and service packs, and deterministic backend artifact rendering.
 ```bash
 cargo run -q -p vmctl -- --config vmctl.example.toml validate
 cargo run -q -p vmctl -- --config vmctl.example.toml plan
+cargo run -q -p vmctl -- --config vmctl.example.toml backend validate
 cargo run -q -p vmctl -- --config vmctl.example.toml backend plan --dry-run
 cargo run -q -p vmctl -- --config vmctl.example.toml backend render
 cargo run -q -p vmctl -- --config vmctl.example.toml backend show-state
@@ -28,13 +29,20 @@ export TF_VAR_proxmox_api_token="${PROXMOX_TOKEN_ID}=${PROXMOX_TOKEN_SECRET}"
 Generated backend files are written to `backend/generated/workspace/`, and
 `vmctl.lock` is written at the workspace root.
 
-`vmctl plan` is the high-level domain plan. `vmctl backend render` writes the
-Terraform/OpenTofu working directory. `vmctl apply` renders that directory and
-then runs `tofu apply` or `terraform apply` if a backend binary is installed.
-`vmctl backend plan --dry-run` runs `tofu init`, `tofu validate`, and
-`tofu plan -refresh=false` against a provider-free validation workspace, so it
-does not contact Proxmox. It may still use network access to install OpenTofu
-providers or modules if they are not already cached.
+Recommended workflow:
+
+1. `vmctl validate` parses config, resolves interpolation/defaults, and expands
+   packs.
+2. `vmctl plan` prints the high-level domain plan.
+3. `vmctl backend validate` renders a provider-free validation workspace and
+   runs `tofu init` + `tofu validate`.
+4. `vmctl backend plan --dry-run` additionally runs `tofu plan -refresh=false`
+   without contacting Proxmox. It may still use network access to install
+   OpenTofu providers or modules if they are not already cached.
+5. `vmctl backend render` writes the live Terraform/OpenTofu workspace.
+6. `vmctl apply` renders the live workspace and runs `tofu apply` or
+   `terraform apply`; this requires reachable Proxmox and
+   `TF_VAR_proxmox_api_token`.
 
 The current Terraform backend generates deterministic scaffold modules under
 `backend/generated/workspace/modules/` and maps each `vmctl` resource to a
@@ -44,6 +52,8 @@ threads resolved node, bridge, storage, and template values into each module,
 and emits `proxmox_virtual_environment_vm` / `proxmox_virtual_environment_container`
 resources. Secrets are redacted from generated debug JSON; Terraform receives
 the Proxmox token via the sensitive `TF_VAR_proxmox_api_token` variable.
+`vmctl.lock` stores resource digests and generated artifact digests, excluding
+secret-valued fields from resource digests.
 
 ## Workspace crates
 

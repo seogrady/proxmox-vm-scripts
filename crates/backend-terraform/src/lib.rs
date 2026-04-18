@@ -890,7 +890,8 @@ mod tests {
     #[test]
     fn lxc_module_matches_fixture() {
         let expected: Value =
-            serde_json::from_str(include_str!("../tests/fixtures/lxc-module-main.tf.json")).unwrap();
+            serde_json::from_str(include_str!("../tests/fixtures/lxc-module-main.tf.json"))
+                .unwrap();
         assert_eq!(base_module_main_json("lxc", true), expected);
     }
 
