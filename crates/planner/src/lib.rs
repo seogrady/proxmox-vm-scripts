@@ -214,7 +214,7 @@ fn cloud_init_config(resource: &Resource) -> Option<CloudInitConfig> {
         ssh_key: table
             .get("ssh_key")
             .and_then(toml::Value::as_str)
-            .map(str::to_string),
+            .map(resolve_optional_key_material),
     })
 }
 
@@ -232,7 +232,11 @@ fn provision_config(resource: &Resource) -> Option<ProvisionConfig> {
         private_key: table
             .get("private_key")
             .and_then(toml::Value::as_str)
-            .map(str::to_string),
+            .map(resolve_optional_key_material),
+        private_key_file: table
+            .get("private_key")
+            .and_then(toml::Value::as_str)
+            .map(resolve_private_key_file),
         retries: table
             .get("retries")
             .and_then(toml::Value::as_integer)
@@ -262,6 +266,29 @@ fn validate_normalized_resources(resources: &BTreeMap<String, NormalizedResource
         }
     }
     Ok(())
+}
+
+fn resolve_optional_key_material(value: &str) -> String {
+    read_key_file(value).unwrap_or_else(|| value.to_string())
+}
+
+fn resolve_private_key_file(value: &str) -> String {
+    if std::path::Path::new(value).exists() {
+        value.to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn read_key_file(value: &str) -> Option<String> {
+    let path = std::path::Path::new(value);
+    if !path.exists() || !path.is_file() {
+        return None;
+    }
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|key| key.trim().to_string())
+        .filter(|key| !key.is_empty())
 }
 
 fn validate_dependencies(resources: &[Resource]) -> Result<()> {
@@ -482,6 +509,88 @@ mod tests {
     }
 
     #[test]
+    fn cloud_init_ssh_key_accepts_file_path_or_inline_key() {
+        let root = unique_temp_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        let key_path = root.join("id_ed25519.pub");
+        std::fs::write(&key_path, "ssh-ed25519 from-file\n").unwrap();
+        let mut from_file = resource("from-file", "vm", vec![]);
+        from_file.settings.insert(
+            "cloud_init".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([(
+                "ssh_key".to_string(),
+                toml::Value::String(key_path.to_string_lossy().to_string()),
+            )])),
+        );
+        let mut inline = resource("inline", "vm", vec![]);
+        inline.settings.insert(
+            "cloud_init".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([(
+                "ssh_key".to_string(),
+                toml::Value::String("ssh-ed25519 inline".to_string()),
+            )])),
+        );
+
+        assert_eq!(
+            normalize_resource(&from_file)
+                .cloud_init
+                .and_then(|cloud_init| cloud_init.ssh_key),
+            Some("ssh-ed25519 from-file".to_string())
+        );
+        assert_eq!(
+            normalize_resource(&inline)
+                .cloud_init
+                .and_then(|cloud_init| cloud_init.ssh_key),
+            Some("ssh-ed25519 inline".to_string())
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn provision_private_key_accepts_file_path_or_inline_key() {
+        let root = unique_temp_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        let key_path = root.join("id_ed25519");
+        std::fs::write(&key_path, "PRIVATE KEY FROM FILE\n").unwrap();
+        let mut from_file = resource("from-file", "vm", vec![]);
+        from_file.settings.insert(
+            "provision".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([(
+                "private_key".to_string(),
+                toml::Value::String(key_path.to_string_lossy().to_string()),
+            )])),
+        );
+        let mut inline = resource("inline", "vm", vec![]);
+        inline.settings.insert(
+            "provision".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([(
+                "private_key".to_string(),
+                toml::Value::String("-----BEGIN OPENSSH PRIVATE KEY-----\ninline".to_string()),
+            )])),
+        );
+
+        let from_file = normalize_resource(&from_file).provision.unwrap();
+        let inline = normalize_resource(&inline).provision.unwrap();
+
+        assert_eq!(
+            from_file.private_key,
+            Some("PRIVATE KEY FROM FILE".to_string())
+        );
+        assert_eq!(
+            from_file.private_key_file,
+            Some(key_path.to_string_lossy().to_string())
+        );
+        assert_eq!(
+            inline.private_key,
+            Some("-----BEGIN OPENSSH PRIVATE KEY-----\ninline".to_string())
+        );
+        assert_eq!(inline.private_key_file, Some(String::new()));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn rejects_missing_dependencies() {
         let err = select_resources(vec![resource("media-stack", "vm", vec!["gateway"])], None)
             .unwrap_err();
@@ -499,6 +608,19 @@ mod tests {
             features: BTreeMap::new(),
             settings: BTreeMap::new(),
         }
+    }
+
+    fn unique_temp_dir() -> std::path::PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!(
+            "vmctl-planner-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        dir
     }
 
     #[allow(dead_code)]

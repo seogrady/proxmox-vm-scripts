@@ -69,7 +69,8 @@
         "os_type": null,
         "provision": {
           "host": "media-stack.home.arpa",
-          "private_key": "/home/me/.ssh/id_ed25519",
+          "private_key": "<redacted>",
+          "private_key_file": "<redacted>",
           "retries": 20,
           "retry_delay_seconds": 15,
           "user": "ubuntu"
@@ -136,7 +137,8 @@
         "os_type": null,
         "provision": {
           "host": "tailscale-gateway.home.arpa",
-          "private_key": "/home/me/.ssh/id_ed25519",
+          "private_key": "<redacted>",
+          "private_key_file": "<redacted>",
           "retries": 20,
           "retry_delay_seconds": 15,
           "user": "ubuntu"

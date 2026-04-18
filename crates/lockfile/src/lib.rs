@@ -142,7 +142,10 @@ fn redacted_value(value: Value) -> Value {
 
 fn is_secret_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
-    key.contains("secret") || key.contains("token") || key.contains("auth_key")
+    key.contains("secret")
+        || key.contains("token")
+        || key.contains("auth_key")
+        || key.contains("private_key")
 }
 
 #[cfg(test)]

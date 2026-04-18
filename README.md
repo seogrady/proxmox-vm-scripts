@@ -30,6 +30,11 @@ export DEFAULT_SSH_PRIVATE_KEY="$HOME/.ssh/id_ed25519"
 export TF_VAR_proxmox_api_token="${PROXMOX_TOKEN_ID}=${PROXMOX_TOKEN_SECRET}"
 ```
 
+`DEFAULT_SSH_KEY` may be either an inline public key or a path to a public key
+file. `DEFAULT_SSH_PRIVATE_KEY` may be either a private key file path or inline
+private key material; inline private keys are written to a generated `0600` key
+file before SSH provisioning runs.
+
 By default the CLI loads `vmctl.toml`. If `vmctl.toml` is missing, it falls back
 to `vmctl.example.toml` so a fresh checkout can still validate and render. Use
 `--config <path>` for an explicit config file. `vmctl.example.toml` is a
