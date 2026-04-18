@@ -67,6 +67,52 @@ export DEFAULT_SSH_PRIVATE_KEY_FILE="$HOME/.ssh/id_ed25519"
 export TF_VAR_proxmox_api_token="${PROXMOX_TOKEN_ID}=${PROXMOX_TOKEN_SECRET}"
 ```
 
+Create a Proxmox API token in the Proxmox web UI:
+
+1. Open `Datacenter` -> `Permissions` -> `API Tokens`.
+2. Click `Add`.
+3. Choose a user such as `root@pam`, or a dedicated user such as `vmctl@pve`.
+4. Enter a token ID such as `vmctl`.
+5. Save the token secret when Proxmox shows it. The secret is shown only once.
+
+`PROXMOX_TOKEN_ID` uses this format:
+
+```text
+USER@REALM!TOKEN_NAME
+```
+
+For example:
+
+```bash
+export PROXMOX_TOKEN_ID="root@pam!vmctl"
+export PROXMOX_TOKEN_SECRET="your-token-secret"
+```
+
+Prefer a dedicated Proxmox user and token for normal operation. The token needs
+permission to manage the target VM/LXC resources, storage, networking, and any
+clone or template resources used by the config.
+
+`TF_VAR_proxmox_api_token` is required by Terraform/OpenTofu. Terraform maps
+environment variables named `TF_VAR_<terraform_variable_name>` into Terraform
+input variables. The generated provider config defines a Terraform variable
+named `proxmox_api_token`, so the matching environment variable is:
+
+```bash
+export TF_VAR_proxmox_api_token="${PROXMOX_TOKEN_ID}=${PROXMOX_TOKEN_SECRET}"
+```
+
+The lowercase suffix is intentional because it matches the Terraform variable
+name exactly. The combined value has this shape:
+
+```text
+USER@REALM!TOKEN_NAME=SECRET
+```
+
+`vmctl` keeps `PROXMOX_TOKEN_ID` and `PROXMOX_TOKEN_SECRET` separate for config
+resolution, while Terraform/OpenTofu receives the combined token through
+`TF_VAR_proxmox_api_token` so the secret is not written into generated
+Terraform JSON.
+
 SSH key settings are file paths only. Public keys use `ssh_key_file`, private
 keys use `private_key_file`, and the `_file` suffix is intentional so config
 readers can tell the value is a path rather than inline key material.
