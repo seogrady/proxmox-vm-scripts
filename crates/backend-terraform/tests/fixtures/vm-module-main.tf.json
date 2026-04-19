@@ -19,7 +19,7 @@
           {
             "datastore_id": "${var.storage}",
             "discard": "on",
-            "file_id": "${try(var.resource.clone_vmid, null) == null && strcontains(var.template, \":\") ? var.template : null}",
+            "import_from": "${try(var.resource.clone_vmid, null) == null && strcontains(var.template, \"proxmox_virtual_environment_download_file.\") ? var.template : null}",
             "interface": "scsi0",
             "iothread": true,
             "size": "${try(var.resource.disk_gb, 8)}"

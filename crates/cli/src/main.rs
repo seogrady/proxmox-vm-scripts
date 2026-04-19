@@ -673,8 +673,15 @@ fn render_images_plan(desired: &DesiredState) -> String {
             }
             (ImageSource::Existing, ImageKind::Vm) => image
                 .vmid
-                .map(|vmid| format!("validate existing VM/template with `qm status {vmid}`"))
-                .unwrap_or_else(|| "validate existing VM/template before apply".to_string()),
+                .map(|vmid| {
+                    format!(
+                        "validate existing VM/template with `qm status {vmid}`; if missing, restore or recreate the template and update `images.{}` if the VMID changes",
+                        image.name
+                    )
+                })
+                .unwrap_or_else(|| {
+                    "validate existing VM/template before apply; if missing, restore or recreate it and assign a VMID in vmctl.toml".to_string()
+                }),
             (ImageSource::Existing, ImageKind::Lxc) => {
                 "validate existing Proxmox volume before apply".to_string()
             }
@@ -770,11 +777,7 @@ fn ensure_existing_image(image: &ResolvedImage, dry_run: bool) -> Result<()> {
             println!("image `{}` present: VMID {}", image.name, vmid);
             return Ok(());
         }
-        bail!(
-            "missing image `{}`: expected VM/template with VMID {}. Create the template or configure a different image.",
-            image.name,
-            vmid
-        );
+        bail!("{}", missing_existing_vm_image_error(image, &vmid));
     }
 
     if dry_run {
@@ -800,6 +803,13 @@ fn ensure_existing_image(image: &ResolvedImage, dry_run: bool) -> Result<()> {
             image.name
         );
     }
+}
+
+fn missing_existing_vm_image_error(image: &ResolvedImage, vmid: &str) -> String {
+    format!(
+        "missing image `{}`: expected VM/template with VMID {}. `source = \"existing\"` only validates that the VM/template already exists. Use `source = \"url\"` for a provider-downloaded image, or restore/recreate the template and keep the VMID.",
+        image.name, vmid
+    )
 }
 
 fn image_status_label(image: &ResolvedImage) -> &'static str {
@@ -1909,6 +1919,29 @@ mod tests {
             token_principal_from_api_token("vmctl@pve!automation=0123456789abcdef"),
             Some("vmctl@pve!automation".to_string())
         );
+    }
+
+    #[test]
+    fn missing_existing_vm_image_error_mentions_recovery_steps() {
+        let image = ResolvedImage {
+            name: "ubuntu_24_cloudinit_template".to_string(),
+            kind: ImageKind::Vm,
+            source: ImageSource::Existing,
+            node: "mini".to_string(),
+            storage: "local-lvm".to_string(),
+            content_type: "vm-template".to_string(),
+            file_name: "ubuntu-24-04-cloudinit-template".to_string(),
+            volume_id: "local-lvm:vm-template/ubuntu-24-04-cloudinit-template".to_string(),
+            vmid: Some(9000),
+            url: None,
+            checksum_algorithm: None,
+            checksum: None,
+        };
+
+        let err = missing_existing_vm_image_error(&image, "9000");
+
+        assert!(err.contains("source = \"existing\""));
+        assert!(err.contains("source = \"url\""));
     }
 
     #[test]

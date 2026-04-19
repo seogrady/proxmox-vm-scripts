@@ -52,14 +52,14 @@ content_type = "vztmpl"
 template = "debian-12-standard_12.12-1_amd64.tar.zst"
 file_name = "debian-12-standard_12.12-1_amd64.tar.zst"
 
-[images.ubuntu_24_cloudinit_template]
+[images.ubuntu_24_cloud_image]
 kind = "vm"
-source = "existing"
+source = "url"
 node = "mini"
 storage = "local-lvm"
-content_type = "vm-template"
-file_name = "ubuntu-24-04-cloudinit-template"
-vmid = 9000
+content_type = "import"
+file_name = "noble-server-cloudimg-amd64.qcow2"
+url = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
 
 [[resources]]
 name = "tailscale-gateway"
@@ -96,7 +96,7 @@ tags = ["${default_tailnet_tag}"]
 [[resources]]
 name = "media-stack"
 kind = "vm"
-image = "ubuntu_24_cloudinit_template"
+image = "ubuntu_24_cloud_image"
 role = "media_stack"
 hostname = "media"
 vmid = 210
@@ -127,11 +127,11 @@ auth_key = "${TAILSCALE_AUTH_KEY}"
 tags = ["${default_tailnet_tag}"]
 
 [resources.features.intel_igpu]
-enabled = false
+enabled = true
 # Raw PCI devices such as "00:02.0" require root@pam. Prefer a Proxmox PCI
 # resource mapping when using an API token.
-# mapping = "intel-igpu"
-# pci_device = "00:02.0"
+mapping = "intel-igpu"
+pci_device = "00:02.0"
 
 [resources.features.media_services]
 enabled = true

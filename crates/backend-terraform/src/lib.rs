@@ -691,7 +691,7 @@ fn vm_resource_json() -> (String, Value) {
                 }],
                 "disk": [{
                     "datastore_id": "${var.storage}",
-                    "file_id": "${try(var.resource.clone_vmid, null) == null && strcontains(var.template, \":\") ? var.template : null}",
+                    "import_from": "${try(var.resource.clone_vmid, null) == null && strcontains(var.template, \"proxmox_virtual_environment_download_file.\") ? var.template : null}",
                     "interface": "scsi0",
                     "iothread": true,
                     "discard": "on",
@@ -1223,6 +1223,74 @@ mod tests {
         assert_eq!(
             module["depends_on"][0],
             "proxmox_virtual_environment_download_file.image_debian_12_lxc_url"
+        );
+    }
+
+    #[test]
+    fn renders_url_vm_image_download_resource_and_dependency() {
+        let desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::from([(
+                "ubuntu_24_cloud_image".to_string(),
+                vmctl_domain::ResolvedImage {
+                    name: "ubuntu_24_cloud_image".to_string(),
+                    kind: vmctl_domain::ImageKind::Vm,
+                    source: ImageSource::Url,
+                    node: "mini".to_string(),
+                    storage: "local-lvm".to_string(),
+                    content_type: "import".to_string(),
+                    file_name: "noble-server-cloudimg-amd64.qcow2".to_string(),
+                    volume_id: "local-lvm:import/noble-server-cloudimg-amd64.qcow2".to_string(),
+                    vmid: None,
+                    url: Some(
+                        "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+                            .to_string(),
+                    ),
+                    checksum_algorithm: None,
+                    checksum: None,
+                },
+            )]),
+            resources: vec![Resource {
+                name: "media-stack".to_string(),
+                kind: "vm".to_string(),
+                image: Some("ubuntu_24_cloud_image".to_string()),
+                role: None,
+                vmid: Some(210),
+                depends_on: Vec::new(),
+                features: BTreeMap::new(),
+                settings: BTreeMap::new(),
+            }],
+            normalized_resources: BTreeMap::from([(
+                "media-stack".to_string(),
+                NormalizedResource {
+                    name: "media-stack".to_string(),
+                    kind: "vm".to_string(),
+                    image: Some("ubuntu_24_cloud_image".to_string()),
+                    template: Some("local-lvm:import/noble-server-cloudimg-amd64.qcow2".to_string()),
+                    ..NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::new(),
+        };
+
+        let rendered = main_json(&desired, true);
+        let download = &rendered["resource"]["proxmox_virtual_environment_download_file"]
+            ["image_ubuntu_24_cloud_image"];
+        let module = &rendered["module"]["media_stack"];
+        let vm_module = base_module_main_json("vm", true);
+        let vm = &vm_module["resource"]["proxmox_virtual_environment_vm"]["this"];
+
+        assert_eq!(
+            download["url"],
+            "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+        );
+        assert_eq!(
+            module["template"],
+            "${proxmox_virtual_environment_download_file.image_ubuntu_24_cloud_image.id}"
+        );
+        assert_eq!(
+            vm["disk"][0]["import_from"],
+            "${try(var.resource.clone_vmid, null) == null && strcontains(var.template, \"proxmox_virtual_environment_download_file.\") ? var.template : null}"
         );
     }
 

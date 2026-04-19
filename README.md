@@ -260,26 +260,67 @@ image = "debian_12_lxc"
 
 URL images use provider-managed `proxmox_virtual_environment_download_file`
 resources in the generated OpenTofu workspace. Existing LXC volumes are
-validated with Proxmox storage metadata before apply. Existing VM templates are
-validated by VMID with `qm status`:
+validated with Proxmox storage metadata before apply. URL-backed VM images are
+downloaded by the provider and imported directly into new VMs:
 
 ```toml
-[images.ubuntu_24_cloudinit_template]
+[images.ubuntu_24_cloud_image]
+kind = "vm"
+source = "url"
+node = "mini"
+storage = "local-lvm"
+content_type = "import"
+file_name = "noble-server-cloudimg-amd64.qcow2"
+url = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+
+[[resources]]
+name = "media-stack"
+kind = "vm"
+image = "ubuntu_24_cloud_image"
+```
+
+Direct `template` values still work as a compatibility escape hatch.
+
+Image source choices:
+
+- `source = "pveam"`: for LXC appliance templates. vmctl can download missing
+  templates with `vmctl images ensure`.
+- `source = "url"`: for reproducible images that vmctl or the provider can
+  download again. Use this when you do not want to depend on a manually
+  managed Proxmox VM/template ID.
+- `source = "existing"`: for images or templates already present in Proxmox.
+  vmctl only validates presence here; it does not rebuild the image.
+
+Examples:
+
+```toml
+[images.debian_12_lxc]
+kind = "lxc"
+source = "pveam"
+node = "mini"
+storage = "local"
+content_type = "vztmpl"
+template = "debian-12-standard_12.12-1_amd64.tar.zst"
+file_name = "debian-12-standard_12.12-1_amd64.tar.zst"
+
+[images.ubuntu_24_cloud_image]
+kind = "vm"
+source = "url"
+node = "mini"
+storage = "local-lvm"
+content_type = "import"
+file_name = "noble-server-cloudimg-amd64.qcow2"
+url = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+
+[images.custom_template]
 kind = "vm"
 source = "existing"
 node = "mini"
 storage = "local-lvm"
 content_type = "vm-template"
-file_name = "ubuntu-24-04-cloudinit-template"
+file_name = "custom-template"
 vmid = 9000
-
-[[resources]]
-name = "media-stack"
-kind = "vm"
-image = "ubuntu_24_cloudinit_template"
 ```
-
-Direct `template` values still work as a compatibility escape hatch.
 
 Docker service images are separate from Proxmox base images. Entries in
 `resources.features.media_services.services` reference service packs under
