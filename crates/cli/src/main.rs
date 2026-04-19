@@ -354,6 +354,7 @@ fn apply_command(
     } else {
         ensure_images(&desired, None, false)?;
     }
+    prepare_passthrough_inner(&desired, false, false)?;
     ensure_passthrough_ready(&desired)?;
 
     let validation = validate_live_backend(&workspace, &desired, &registry)?;
@@ -890,9 +891,19 @@ fn ensure_passthrough_ready(desired: &DesiredState) -> Result<()> {
 }
 
 fn prepare_passthrough(desired: &DesiredState, dry_run: bool) -> Result<()> {
+    prepare_passthrough_inner(desired, dry_run, true)
+}
+
+fn prepare_passthrough_inner(
+    desired: &DesiredState,
+    dry_run: bool,
+    announce_empty: bool,
+) -> Result<()> {
     let requests = passthrough_requests(desired);
     if requests.is_empty() {
-        println!("passthrough: no enabled PCI passthrough features");
+        if announce_empty {
+            println!("passthrough: no enabled PCI passthrough features");
+        }
         return Ok(());
     }
 
@@ -909,11 +920,6 @@ fn prepare_passthrough(desired: &DesiredState, dry_run: bool) -> Result<()> {
                 request.resource
             );
         };
-        if pci_mapping_exists(mapping) {
-            println!("passthrough mapping `{mapping}` already exists");
-            continue;
-        }
-
         let node = request
             .node
             .clone()
@@ -924,20 +930,43 @@ fn prepare_passthrough(desired: &DesiredState, dry_run: bool) -> Result<()> {
                     request.resource
                 )
             })?;
-        let pci_device = request.pci_device.as_deref().with_context(|| {
-            format!(
+        let Some(pci_device) = request.pci_device.as_deref() else {
+            if pci_mapping_exists(mapping) {
+                println!("passthrough mapping `{mapping}` already exists");
+                continue;
+            }
+            bail!(
                 "resource `{}` passthrough mapping `{mapping}` requires `pci_device` so vmctl can create the Proxmox PCI mapping",
                 request.resource
-            )
-        })?;
+            );
+        };
         let pci_path = proxmox_pci_path(pci_device);
         let hardware_id = pci_hardware_id(pci_device).with_context(|| {
             format!("failed to resolve PCI vendor/device id for `{pci_device}` with lspci")
         })?;
-        let map = format!("node={node},path={pci_path},id={hardware_id}");
+        let iommu_group = pci_iommu_group(&pci_path).with_context(|| {
+            format!("failed to resolve IOMMU group for PCI device `{pci_path}`")
+        })?;
+        let Some(iommu_group) = iommu_group else {
+            bail!(
+                "PCI device `{pci_path}` has no IOMMU group symlink at /sys/bus/pci/devices/{pci_path}/iommu_group. Enable IOMMU/VT-d in BIOS and reboot before preparing passthrough."
+            );
+        };
+        let map = proxmox_pci_mapping_value(&node, &pci_path, &hardware_id, Some(&iommu_group));
 
         if dry_run {
-            println!("pvesh create /cluster/mapping/pci --id {mapping} --map {map}");
+            if pci_mapping_exists(mapping) {
+                println!("pvesh set /cluster/mapping/pci/{mapping} --map {map}");
+            } else {
+                println!("pvesh create /cluster/mapping/pci --id {mapping} --map {map}");
+            }
+        } else if pci_mapping_exists(mapping) {
+            run_command_with_context(
+                "pvesh",
+                &["set", &format!("/cluster/mapping/pci/{mapping}"), "--map", &map],
+                "failed to update Proxmox PCI resource mapping. You need Mapping.Modify on /mapping/pci/<name>, and the device path/id/iommugroup must match the host hardware.",
+            )?;
+            println!("updated passthrough mapping `{mapping}` for {pci_path} on {node}");
         } else {
             run_command_with_context(
                 "pvesh",
@@ -1003,12 +1032,32 @@ fn check_passthrough_ready(requests: &[PassthroughRequest]) -> Result<()> {
 
     for request in requests {
         match (&request.mapping, &request.pci_device) {
-            (Some(mapping), _) => {
+            (Some(mapping), pci_device) => {
                 if !pci_mapping_exists(mapping) {
                     failures.push(format!(
                         "resource `{}` requires PCI mapping `{mapping}`, but it was not found. Create it in Proxmox Datacenter -> Resource Mappings -> PCI Devices, or with pvesh, then grant the API token Mapping.Use on /mapping/pci/{mapping}.",
                         request.resource
                     ));
+                } else if let Some(pci_device) = pci_device {
+                    let pci_path = proxmox_pci_path(pci_device);
+                    match pci_iommu_group(&pci_path) {
+                        Ok(Some(iommu_group)) => {
+                            if !pci_mapping_has_iommu_group(mapping, &iommu_group) {
+                                failures.push(format!(
+                                    "resource `{}` requires PCI mapping `{mapping}`, but the mapping is missing expected iommugroup `{iommu_group}` for `{pci_path}`. Run `vmctl passthrough prepare` to update the mapping, then rerun `vmctl apply`.",
+                                    request.resource
+                                ));
+                            }
+                        }
+                        Ok(None) => failures.push(format!(
+                            "resource `{}` requires PCI device `{pci_path}`, but no IOMMU group symlink was found under /sys/bus/pci/devices/{pci_path}/iommu_group. Enable IOMMU/VT-d in BIOS and reboot.",
+                            request.resource
+                        )),
+                        Err(error) => failures.push(format!(
+                            "resource `{}` failed to inspect IOMMU group for `{pci_path}`: {error}",
+                            request.resource
+                        )),
+                    }
                 }
             }
             (None, Some(pci_device)) => failures.push(format!(
@@ -1044,6 +1093,21 @@ fn pci_mapping_exists(mapping: &str) -> bool {
     ) || command_output_contains("pvesh", &["get", "/cluster/mapping/pci"], mapping)
 }
 
+fn pci_mapping_has_iommu_group(mapping: &str, iommu_group: &str) -> bool {
+    let Some(output) = command_output(
+        "pvesh",
+        &["get", &format!("/cluster/mapping/pci/{mapping}")],
+    ) else {
+        return false;
+    };
+    output.contains("iommugroup")
+        && (output.contains(&format!("iommugroup={iommu_group}"))
+            || output.contains(&format!("iommugroup: {iommu_group}"))
+            || output.contains(&format!("\"iommugroup\":{iommu_group}"))
+            || output.contains(&format!("\"iommugroup\":\"{iommu_group}\""))
+            || output.contains(&format!("iommugroup {iommu_group}")))
+}
+
 fn default_proxmox_node(desired: &DesiredState) -> Option<String> {
     desired
         .backend
@@ -1061,6 +1125,38 @@ fn proxmox_pci_path(pci_device: &str) -> String {
     } else {
         format!("0000:{pci_device}")
     }
+}
+
+fn proxmox_pci_mapping_value(
+    node: &str,
+    pci_path: &str,
+    hardware_id: &str,
+    iommu_group: Option<&str>,
+) -> String {
+    let mut fields = vec![
+        format!("node={node}"),
+        format!("path={pci_path}"),
+        format!("id={hardware_id}"),
+    ];
+    if let Some(iommu_group) = iommu_group {
+        fields.push(format!("iommugroup={iommu_group}"));
+    }
+    fields.join(",")
+}
+
+fn pci_iommu_group(pci_path: &str) -> Result<Option<String>> {
+    let path = Path::new("/sys/bus/pci/devices")
+        .join(pci_path)
+        .join("iommu_group");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let target = std::fs::read_link(&path)
+        .with_context(|| format!("failed to read IOMMU group symlink {}", path.display()))?;
+    Ok(target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string))
 }
 
 fn pci_hardware_id(pci_device: &str) -> Result<String> {
@@ -1085,16 +1181,24 @@ fn parse_lspci_hardware_id(output: &str) -> Option<&str> {
 }
 
 fn command_output_contains(command: &str, args: &[&str], needle: &str) -> bool {
+    command_output(command, args)
+        .map(|output| output.contains(needle))
+        .unwrap_or(false)
+}
+
+fn command_output(command: &str, args: &[&str]) -> Option<String> {
     std::process::Command::new(command)
         .args(args)
         .output()
         .ok()
         .filter(|output| output.status.success())
         .map(|output| {
-            String::from_utf8_lossy(&output.stdout).contains(needle)
-                || String::from_utf8_lossy(&output.stderr).contains(needle)
+            format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
         })
-        .unwrap_or(false)
 }
 
 fn required_image_names(desired: &DesiredState) -> BTreeSet<String> {
@@ -1445,6 +1549,14 @@ mod tests {
                 "00:02.0 VGA compatible controller [0300]: Intel Corporation Alder Lake-P GT2 [Iris Xe Graphics] [8086:46a6] (rev 0c)"
             ),
             Some("8086:46a6")
+        );
+    }
+
+    #[test]
+    fn proxmox_pci_mapping_includes_iommu_group_when_known() {
+        assert_eq!(
+            proxmox_pci_mapping_value("mini", "0000:00:02.0", "8086:46a6", Some("0")),
+            "node=mini,path=0000:00:02.0,id=8086:46a6,iommugroup=0"
         );
     }
 

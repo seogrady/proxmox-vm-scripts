@@ -396,7 +396,8 @@ device to the VM.
    ```
 
    `doctor` checks whether passthrough is enabled in config, whether IOMMU
-   groups exist, and whether the configured Proxmox PCI mapping exists.
+   groups exist, whether the configured Proxmox PCI mapping exists, and whether
+   the mapping includes the expected `iommugroup` for the physical device.
 
 6. Create the Proxmox PCI mapping from config.
 
@@ -412,13 +413,17 @@ device to the VM.
    vmctl passthrough prepare
    ```
 
-   `prepare` resolves the vendor/device ID with `lspci` and creates a mapping
-   similar to:
+   `prepare` resolves the vendor/device ID with `lspci`, reads the device IOMMU
+   group from `/sys/bus/pci/devices/<device>/iommu_group`, and creates or
+   updates a mapping similar to:
 
    ```bash
    pvesh create /cluster/mapping/pci --id intel-igpu \
-     --map node=mini,path=0000:00:02.0,id=8086:46a6
+     --map node=mini,path=0000:00:02.0,id=8086:46a6,iommugroup=0
    ```
+
+   `vmctl apply` also runs this preparation step automatically for enabled
+   passthrough resources that include both `mapping` and `pci_device`.
 
    If you create the mapping manually instead, use the Proxmox UI:
    `Datacenter` -> `Resource Mappings` -> `PCI Devices` -> `Add`.
