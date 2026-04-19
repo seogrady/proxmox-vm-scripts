@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -119,6 +120,12 @@ enum PassthroughCommand {
     Prepare {
         #[arg(long)]
         dry_run: bool,
+    },
+    Grant {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        token: Option<String>,
     },
 }
 
@@ -334,6 +341,9 @@ fn main() -> Result<()> {
                     Ok(())
                 }
                 PassthroughCommand::Prepare { dry_run } => prepare_passthrough(&desired, dry_run),
+                PassthroughCommand::Grant { dry_run, token } => {
+                    grant_passthrough_permissions(&desired, dry_run, token.as_deref())
+                }
             }
         }
     }
@@ -911,6 +921,58 @@ fn prepare_passthrough(desired: &DesiredState, dry_run: bool) -> Result<()> {
     prepare_passthrough_inner(desired, dry_run, true)
 }
 
+fn grant_passthrough_permissions(
+    desired: &DesiredState,
+    dry_run: bool,
+    token: Option<&str>,
+) -> Result<()> {
+    let requests = passthrough_requests(desired);
+    if requests.is_empty() {
+        println!("passthrough: no enabled PCI passthrough features");
+        return Ok(());
+    }
+
+    let token = token
+        .map(str::to_string)
+        .or_else(default_proxmox_token_principal)
+        .with_context(|| {
+            "pass `--token USER@REALM!TOKENID` or set TF_VAR_proxmox_api_token so vmctl can grant mapping permissions".to_string()
+        })?;
+
+    let mut granted = BTreeSet::new();
+    for request in requests {
+        let Some(mapping) = request.mapping.as_deref() else {
+            continue;
+        };
+        if !granted.insert(mapping.to_string()) {
+            continue;
+        }
+
+        let path = format!("/mapping/pci/{mapping}");
+        if dry_run {
+            println!("pveum acl modify {path} --tokens {token} --roles PVEMappingUser");
+            continue;
+        }
+
+        run_command_with_context(
+            "pveum",
+            &[
+                "acl",
+                "modify",
+                &path,
+                "--tokens",
+                &token,
+                "--roles",
+                "PVEMappingUser",
+            ],
+            "failed to grant Proxmox mapping permission. You need permission to modify ACLs, and the token path must be valid.",
+        )?;
+        println!("granted mapping permission on `{path}` to `{token}`");
+    }
+
+    Ok(())
+}
+
 fn prepare_passthrough_inner(
     desired: &DesiredState,
     dry_run: bool,
@@ -1274,6 +1336,21 @@ fn command_output(command: &str, args: &[&str]) -> Option<String> {
                 String::from_utf8_lossy(&output.stderr)
             )
         })
+}
+
+fn default_proxmox_token_principal() -> Option<String> {
+    env::var("TF_VAR_proxmox_api_token")
+        .ok()
+        .and_then(|value| token_principal_from_api_token(&value))
+}
+
+fn token_principal_from_api_token(value: &str) -> Option<String> {
+    let principal = value.split_once('=')?.0.trim();
+    if principal.is_empty() {
+        None
+    } else {
+        Some(principal.to_string())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1800,6 +1877,38 @@ mod tests {
                 command: PassthroughCommand::Prepare { dry_run: true }
             }
         ));
+    }
+
+    #[test]
+    fn passthrough_grant_command_parses() {
+        Cli::command().debug_assert();
+        let cli = Cli::try_parse_from([
+            "vmctl",
+            "passthrough",
+            "grant",
+            "--dry-run",
+            "--token",
+            "vmctl@pve!automation",
+        ])
+        .unwrap();
+
+        assert!(matches!(
+            cli.command,
+            Command::Passthrough {
+                command: PassthroughCommand::Grant {
+                    dry_run: true,
+                    token: Some(_)
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_proxmox_token_principal() {
+        assert_eq!(
+            token_principal_from_api_token("vmctl@pve!automation=0123456789abcdef"),
+            Some("vmctl@pve!automation".to_string())
+        );
     }
 
     #[test]

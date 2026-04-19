@@ -232,10 +232,10 @@ variable.
 `vmctl.lock` stores resource digests and generated artifact digests, excluding
 secret-valued fields from resource digests.
 
-The generated provider constraint currently pins `bpg/proxmox` below `0.98.1`.
-That release deprecated `network_device.enabled`, but the provider schema still
-requires the attribute for configured VM network devices. The pin keeps plans
-valid and quiet until the provider supports network devices without that field.
+The generated provider constraint currently pins `bpg/proxmox` below `0.99.0`.
+This keeps vmctl on a known-compatible provider line while Proxmox passthrough
+and VM network schema behavior settle. vmctl still emits the network device
+shape the current provider expects.
 
 Proxmox VM/LXC base images are declared once in `[images]` and referenced by
 logical name from resources. For Proxmox appliance templates,
@@ -449,6 +449,26 @@ device to the VM.
 
    ```text
    Mapping.Use on /mapping/pci/intel-igpu
+   ```
+
+   vmctl can do this for you from a Proxmox shell:
+
+   ```bash
+   vmctl passthrough grant
+   ```
+
+   That command grants the built-in `PVEMappingUser` role on each configured
+   PCI mapping path to the token in `TF_VAR_proxmox_api_token`, or to the token
+   passed with `--token USER@REALM!TOKENID`. In Proxmox, permissions are role
+   based, so `PVEMappingUser` is the closest built-in role for `Mapping.Use`
+   plus `Mapping.Audit`.
+
+   If you prefer to do it manually, the equivalent Proxmox command is:
+
+   ```bash
+   pveum acl modify /mapping/pci/intel-igpu \
+     --tokens vmctl@pve!automation \
+     --roles PVEMappingUser
    ```
 
    It also needs the normal VM configuration permissions used by vmctl.

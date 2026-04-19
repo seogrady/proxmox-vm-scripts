@@ -362,7 +362,7 @@ fn provider_json(desired: &DesiredState) -> serde_json::Value {
             "required_providers": {
                 "proxmox": {
                     "source": "bpg/proxmox",
-                    "version": ">= 0.70.0, < 0.98.1"
+                    "version": ">= 0.70.0, < 0.99.0"
                 }
             }
         },
@@ -657,7 +657,7 @@ fn base_module_main_json(kind: &str, include_proxmox_resources: bool) -> Value {
             "required_providers": {
                 "proxmox": {
                     "source": "bpg/proxmox",
-                    "version": ">= 0.70.0, < 0.98.1"
+                    "version": ">= 0.70.0, < 0.99.0"
                 }
             }
         },
