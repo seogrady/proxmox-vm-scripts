@@ -22,6 +22,7 @@ use vmctl_packs::PackRegistry;
 use vmctl_util::command_runner::{self, CommandOptions, LogPrefix};
 
 const GLOBAL_APPLY_TIMEOUT: Duration = Duration::from_secs(3600);
+const MIN_HOST_MEMORY_RESERVE_MIB: u64 = 2048;
 
 #[derive(Debug, Parser)]
 #[command(name = "vmctl", version, about = "Declarative Proxmox homelab manager")]
@@ -397,7 +398,7 @@ fn apply_command(
     let no_start = no_start || auto_no_start;
     if auto_no_start {
         eprintln!(
-            "warning: PCI passthrough VM detected; vmctl will not start or provision it during apply. Use `vmctl debug <name>` before starting it manually."
+            "warning: PCI passthrough VM detected; vmctl will not start it during apply. Already-running VMs may still be provisioned."
         );
     }
     if no_start {
@@ -406,7 +407,7 @@ fn apply_command(
     if dry_run {
         return inspect_workspace(&workspace, &desired, InspectMode::Inspect);
     }
-    let skip_provision = skip_provision || no_start;
+    let skip_provision = skip_provision || (no_start && !auto_no_start);
     let progress = ApplyProgress::new();
     let guard = ApplyGuard::new(GLOBAL_APPLY_TIMEOUT);
     check_dependencies(&desired, CommandScope::Apply)?;
@@ -425,6 +426,8 @@ fn apply_command(
     guard.checkpoint("passthrough prepare")?;
     prepare_passthrough_inner(&desired, false, false)?;
     ensure_passthrough_ready(&desired)?;
+    guard.checkpoint("existing VM runtime repair")?;
+    repair_existing_vm_runtime_settings(&desired)?;
 
     guard.checkpoint("backend validation")?;
     let validation = progress.run("validating generated OpenTofu workspace", || {
@@ -437,9 +440,20 @@ fn apply_command(
     })?;
 
     guard.checkpoint("terraform apply")?;
-    let result = progress.run("applying OpenTofu plan", || {
-        TerraformBackend.apply_with_output(&workspace, &desired, &registry, verbose)
-    })?;
+    let result = if no_start {
+        progress.run("rendering OpenTofu workspace in no-start mode", || {
+            TerraformBackend.render(&workspace, &desired, &registry)?;
+            Ok(vmctl_backend::ApplyResult {
+                summary: "terraform apply skipped: no-start mode avoids Proxmox VM runtime changes"
+                    .to_string(),
+            })
+        })?
+    } else {
+        progress.run("applying OpenTofu plan", || {
+            TerraformBackend
+                .apply_with_output_refresh(&workspace, &desired, &registry, verbose, true)
+        })?
+    };
     guard.checkpoint("lockfile write")?;
     progress.run("writing vmctl.lock", || {
         write_lockfile(&workspace, &desired)
@@ -454,10 +468,34 @@ fn apply_command(
 }
 
 fn disable_vm_start(desired: &mut DesiredState) {
+    disable_vm_start_with_status(desired, |vmid| current_vm_started(vmid));
+}
+
+fn disable_vm_start_with_status<F>(desired: &mut DesiredState, mut current_status: F)
+where
+    F: FnMut(u32) -> Option<bool>,
+{
     for resource in desired.normalized_resources.values_mut() {
         if resource.kind == "vm" {
-            resource.started = Some(false);
+            resource.started = resource.vmid.and_then(&mut current_status).or(Some(false));
         }
+    }
+}
+
+fn current_vm_started(vmid: u32) -> Option<bool> {
+    let vmid = vmid.to_string();
+    let output = safe_command_output("qm", &["status", &vmid], Duration::from_secs(10))?;
+    parse_qm_started(&output)
+}
+
+fn parse_qm_started(output: &str) -> Option<bool> {
+    let status = output
+        .lines()
+        .find_map(|line| line.strip_prefix("status:").map(str::trim))?;
+    match status {
+        "running" => Some(true),
+        "stopped" => Some(false),
+        _ => None,
     }
 }
 
@@ -628,7 +666,244 @@ fn safe_command_output(command: &str, args: &[&str], timeout: Duration) -> Optio
     .map(|output| output.combined)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VmRuntimeRepair {
+    Memory { desired_mib: u32 },
+    ScsiHardware { value: &'static str },
+}
+
+fn repair_existing_vm_runtime_settings(desired: &DesiredState) -> Result<()> {
+    for resource in desired.normalized_resources.values() {
+        if resource.kind != "vm" && resource.kind != "lxc" {
+            continue;
+        }
+        let Some(vmid) = resource.vmid else {
+            continue;
+        };
+        let vmid_string = vmid.to_string();
+        let Some(config) =
+            safe_command_output("qm", &["config", &vmid_string], Duration::from_secs(20))
+        else {
+            continue;
+        };
+        for repair in vm_runtime_repairs(resource, &config) {
+            match repair {
+                VmRuntimeRepair::Memory { desired_mib } => {
+                    let desired_mib_string = desired_mib.to_string();
+                    run_command_with_context(
+                        "qm",
+                        &["set", &vmid_string, "--memory", &desired_mib_string],
+                        "failed to update existing VM memory before Terraform apply",
+                    )?;
+                    println!(
+                        "[proxmox] repaired `{}` memory to {} MiB before backend apply",
+                        resource.name, desired_mib
+                    );
+                }
+                VmRuntimeRepair::ScsiHardware { value } => {
+                    run_command_with_context(
+                        "qm",
+                        &["set", &vmid_string, "--scsihw", value],
+                        "failed to update SCSI controller for iothread compatibility",
+                    )?;
+                    println!(
+                        "[proxmox] repaired `{}` SCSI controller to {value} for iothread compatibility",
+                        resource.name
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn vm_runtime_repairs(
+    resource: &vmctl_domain::NormalizedResource,
+    config: &str,
+) -> Vec<VmRuntimeRepair> {
+    let mut repairs = Vec::new();
+    if let Some(desired_mib) = resource.memory {
+        if qm_config_memory_mib(config).is_some_and(|current_mib| current_mib != desired_mib) {
+            repairs.push(VmRuntimeRepair::Memory { desired_mib });
+        }
+    }
+    if qm_config_has_scsi_iothread(config) && qm_config_scsihw(config) != Some("virtio-scsi-single")
+    {
+        repairs.push(VmRuntimeRepair::ScsiHardware {
+            value: "virtio-scsi-single",
+        });
+    }
+    repairs
+}
+
+fn qm_config_memory_mib(config: &str) -> Option<u32> {
+    config_value(config, "memory")?.parse().ok()
+}
+
+fn qm_config_scsihw(config: &str) -> Option<&str> {
+    config_value(config, "scsihw")
+}
+
+fn qm_config_has_scsi_iothread(config: &str) -> bool {
+    config.lines().any(|line| {
+        line.split_once(':')
+            .map(|(key, value)| key.starts_with("scsi") && value.contains("iothread=1"))
+            .unwrap_or(false)
+    })
+}
+
+fn ensure_provision_hosts_resolve(desired: &DesiredState) -> Result<()> {
+    for resource in desired.normalized_resources.values() {
+        if resource.kind != "vm" && resource.kind != "lxc" {
+            continue;
+        }
+        let Some(host) = resource
+            .provision
+            .as_ref()
+            .and_then(|provision| provision.host.as_deref())
+            .filter(|host| !host.trim().is_empty())
+        else {
+            continue;
+        };
+        if host_resolves(host) {
+            continue;
+        }
+        let Some(vmid) = resource.vmid else {
+            bail!(
+                "provision host `{host}` for `{}` does not resolve and the resource has no vmid for DHCP discovery",
+                resource.name
+            );
+        };
+        let ip = discover_resource_ipv4(&resource.kind, vmid)?.with_context(|| {
+            format!(
+                "provision host `{host}` for `{}` does not resolve and vmctl could not discover its DHCP address from Proxmox/ARP",
+                resource.name
+            )
+        })?;
+        upsert_hosts_file(host, &ip, &resource.name)?;
+        println!("[vmctl] resolved {host} to {ip} via /etc/hosts for provisioning");
+    }
+    Ok(())
+}
+
+fn host_resolves(host: &str) -> bool {
+    command_runner::run(
+        CommandOptions::new("getent", ["hosts", host])
+            .timeout(Duration::from_secs(10))
+            .prefix(LogPrefix::Vmctl)
+            .stream(false)
+            .fail_on_proxmox_patterns(false),
+    )
+    .ok()
+    .is_some_and(|output| !output.stdout.trim().is_empty())
+}
+
+fn discover_resource_ipv4(kind: &str, vmid: u32) -> Result<Option<String>> {
+    let vmid = vmid.to_string();
+    let config = match kind {
+        "vm" => safe_command_output("qm", &["config", &vmid], Duration::from_secs(20)),
+        "lxc" => safe_command_output("pct", &["config", &vmid], Duration::from_secs(20)),
+        _ => None,
+    };
+    let Some(config) = config else {
+        return Ok(None);
+    };
+    let Some(mac) = primary_config_mac(&config) else {
+        return Ok(None);
+    };
+    let bridge = primary_config_bridge(&config).unwrap_or("vmbr0");
+    if let Some(output) = safe_command_output(
+        "arp-scan",
+        &["--interface", bridge, "--localnet"],
+        Duration::from_secs(30),
+    ) {
+        return Ok(ip_for_mac_from_arp_scan(&output, mac));
+    }
+    Ok(None)
+}
+
+fn upsert_hosts_file(host: &str, ip: &str, resource: &str) -> Result<()> {
+    let path = Path::new("/etc/hosts");
+    let current = std::fs::read_to_string(path).unwrap_or_default();
+    let updated = upsert_hosts_content(&current, host, ip, resource);
+    if updated != current {
+        std::fs::write(path, updated)
+            .with_context(|| format!("failed to update {} so `{host}` resolves", path.display()))?;
+    }
+    Ok(())
+}
+
+fn upsert_hosts_content(content: &str, host: &str, ip: &str, resource: &str) -> String {
+    let marker = format!("# vmctl:{resource}");
+    let entry = format!("{ip}\t{host}\t{marker}");
+    let mut lines: Vec<String> = content
+        .lines()
+        .filter(|line| !line.contains(&marker))
+        .map(str::to_string)
+        .collect();
+    lines.push(entry);
+    let mut output = lines.join("\n");
+    output.push('\n');
+    output
+}
+
+fn primary_config_mac(config: &str) -> Option<&str> {
+    let net0 = config_value(config, "net0")?;
+    if let Some(value) = net0.split(',').find_map(|field| {
+        field
+            .strip_prefix("hwaddr=")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }) {
+        return Some(value);
+    }
+    let (model, _rest) = net0.split_once('=')?;
+    if !["virtio", "e1000", "rtl8139", "vmxnet3"].contains(&model) {
+        return None;
+    }
+    net0.split_once('=')?
+        .1
+        .split(',')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn primary_config_bridge(config: &str) -> Option<&str> {
+    let net0 = config_value(config, "net0")?;
+    net0.split(',').find_map(|field| {
+        let value = field.strip_prefix("bridge=")?;
+        Some(value.trim()).filter(|value| !value.is_empty())
+    })
+}
+
+fn ip_for_mac_from_arp_scan(output: &str, mac: &str) -> Option<String> {
+    let expected = mac.to_ascii_lowercase();
+    output.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        let ip = fields.next()?;
+        let found_mac = fields.next()?.to_ascii_lowercase();
+        if found_mac == expected {
+            Some(ip.to_string())
+        } else {
+            None
+        }
+    })
+}
+
 fn validate_apply_preflight(desired: &DesiredState) -> Result<()> {
+    let host_memory_mib = if is_local_proxmox_host() {
+        host_total_memory_mib()
+    } else {
+        None
+    };
+    validate_apply_preflight_with_host_memory(desired, host_memory_mib)
+}
+
+fn validate_apply_preflight_with_host_memory(
+    desired: &DesiredState,
+    host_memory_mib: Option<u64>,
+) -> Result<()> {
     let mut failures = Vec::new();
     for resource in desired.normalized_resources.values() {
         if resource.kind != "vm" {
@@ -650,6 +925,18 @@ fn validate_apply_preflight(desired: &DesiredState) -> Result<()> {
                 resource.name
             ));
         }
+        if let (Some(memory_mib), Some(host_memory_mib)) = (resource.memory, host_memory_mib) {
+            let memory_mib = u64::from(memory_mib);
+            if memory_mib + MIN_HOST_MEMORY_RESERVE_MIB > host_memory_mib {
+                failures.push(format!(
+                    "resource `{}` memory={} MiB leaves less than {} MiB for the Proxmox host (host MemTotal={} MiB); lower VM memory or use a larger host before starting it",
+                    resource.name,
+                    memory_mib,
+                    MIN_HOST_MEMORY_RESERVE_MIB,
+                    host_memory_mib
+                ));
+            }
+        }
         if let Some(cloud_init) = &resource.cloud_init {
             if cloud_init
                 .ssh_key_file
@@ -670,6 +957,23 @@ fn validate_apply_preflight(desired: &DesiredState) -> Result<()> {
     } else {
         bail!("apply preflight failed:\n- {}", failures.join("\n- "))
     }
+}
+
+fn is_local_proxmox_host() -> bool {
+    vmctl_util::command_exists("qm") || Path::new("/etc/pve").exists()
+}
+
+fn host_total_memory_mib() -> Option<u64> {
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+    parse_memtotal_mib(&meminfo)
+}
+
+fn parse_memtotal_mib(meminfo: &str) -> Option<u64> {
+    let kb = meminfo.lines().find_map(|line| {
+        let rest = line.strip_prefix("MemTotal:")?;
+        rest.split_whitespace().next()?.parse::<u64>().ok()
+    })?;
+    Some(kb / 1024)
 }
 
 struct ApplyGuard {
@@ -1025,14 +1329,75 @@ fn ensure_image(image: &ResolvedImage, dry_run: bool) -> Result<()> {
     match image.source {
         ImageSource::Pveam => ensure_pveam_image(image, dry_run),
         ImageSource::Existing => ensure_existing_image(image, dry_run),
-        ImageSource::Url => {
-            println!(
-                "image `{}` is provider-managed; backend apply will download {}",
-                image.name, image.volume_id
-            );
-            Ok(())
-        }
+        ImageSource::Url => ensure_url_image(image, dry_run),
     }
+}
+
+fn ensure_url_image(image: &ResolvedImage, dry_run: bool) -> Result<()> {
+    if url_image_present(image) {
+        println!("image `{}` present: {}", image.name, image.volume_id);
+        return Ok(());
+    }
+    let url = image
+        .url
+        .as_deref()
+        .filter(|url| !url.trim().is_empty())
+        .with_context(|| format!("image `{}` source=url requires url", image.name))?;
+    let path = url_image_path(image).with_context(|| {
+        format!(
+            "failed to resolve local path for image `{}` ({})",
+            image.name, image.volume_id
+        )
+    })?;
+    if dry_run {
+        println!("curl -L --fail --output {} {}", path.display(), url);
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create image cache directory {}",
+                parent.display()
+            )
+        })?;
+    }
+    let output_path = path.display().to_string();
+    run_command_with_context(
+        "curl",
+        &[
+            "-L",
+            "--fail",
+            "--show-error",
+            "--output",
+            &output_path,
+            url,
+        ],
+        "failed to download URL image for local cache",
+    )?;
+    println!("image `{}` downloaded: {}", image.name, image.volume_id);
+    Ok(())
+}
+
+fn url_image_present(image: &ResolvedImage) -> bool {
+    url_image_path(image).is_some_and(|path| path.is_file())
+        || image_is_present_with(
+            "pvesm",
+            &["list", &image.storage, "--content", &image.content_type],
+            &image.file_name,
+        )
+}
+
+fn url_image_path(image: &ResolvedImage) -> Option<PathBuf> {
+    let output = command_runner::run(
+        CommandOptions::new("pvesm", ["path", &image.volume_id])
+            .timeout(Duration::from_secs(20))
+            .prefix(LogPrefix::Proxmox)
+            .stream(false)
+            .fail_on_proxmox_patterns(false),
+    )
+    .ok()?;
+    let path = output.stdout.trim();
+    (!path.is_empty()).then(|| PathBuf::from(path))
 }
 
 fn ensure_pveam_image(image: &ResolvedImage, dry_run: bool) -> Result<()> {
@@ -1858,6 +2223,7 @@ fn run_provision(
     desired: &DesiredState,
     progress: &ApplyProgress,
 ) -> Result<vmctl_provision::ProvisionResult> {
+    ensure_provision_hosts_resolve(desired)?;
     let plan = vmctl_provision::build_provision_plan(workspace, desired)?;
     if plan.steps.is_empty() {
         return Ok(vmctl_provision::ProvisionResult {
@@ -2080,7 +2446,7 @@ mod tests {
 
     use super::*;
     use clap::CommandFactory;
-    use vmctl_domain::{BackendConfig, Resource};
+    use vmctl_domain::{BackendConfig, ProvisionConfig, Resource};
 
     #[test]
     fn backend_validate_accepts_live_flag() {
@@ -2420,6 +2786,40 @@ mod tests {
     }
 
     #[test]
+    fn disable_vm_start_preserves_existing_running_vm_state() {
+        let mut desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::new(),
+            resources: Vec::new(),
+            normalized_resources: BTreeMap::from([(
+                "media-stack".to_string(),
+                vmctl_domain::NormalizedResource {
+                    name: "media-stack".to_string(),
+                    kind: "vm".to_string(),
+                    vmid: Some(210),
+                    started: Some(false),
+                    ..vmctl_domain::NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::new(),
+        };
+
+        disable_vm_start_with_status(&mut desired, |vmid| (vmid == 210).then_some(true));
+
+        assert_eq!(
+            desired.normalized_resources["media-stack"].started,
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn parses_qm_started_status() {
+        assert_eq!(parse_qm_started("status: running\n"), Some(true));
+        assert_eq!(parse_qm_started("status: stopped\n"), Some(false));
+        assert_eq!(parse_qm_started("status: paused\n"), None);
+    }
+
+    #[test]
     fn passthrough_preflight_rejects_raw_pci() {
         let err = check_passthrough_ready(&[PassthroughRequest {
             resource: "media-stack".to_string(),
@@ -2454,6 +2854,171 @@ mod tests {
         let err = validate_apply_preflight(&desired).unwrap_err();
 
         assert!(err.to_string().contains("iothread=true"));
+    }
+
+    #[test]
+    fn parses_memtotal_from_proc_meminfo() {
+        assert_eq!(
+            parse_memtotal_mib("MemTotal:       16144204 kB\nMemFree:        13306740 kB\n"),
+            Some(15765)
+        );
+    }
+
+    #[test]
+    fn apply_preflight_rejects_vm_memory_that_exhausts_host() {
+        let desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::new(),
+            resources: Vec::new(),
+            normalized_resources: BTreeMap::from([(
+                "media-stack".to_string(),
+                vmctl_domain::NormalizedResource {
+                    name: "media-stack".to_string(),
+                    kind: "vm".to_string(),
+                    memory: Some(16384),
+                    ..vmctl_domain::NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::new(),
+        };
+
+        let err = validate_apply_preflight_with_host_memory(&desired, Some(15765)).unwrap_err();
+
+        assert!(err.to_string().contains("leaves less than"));
+        assert!(err.to_string().contains("Proxmox host"));
+    }
+
+    #[test]
+    fn apply_preflight_accepts_vm_memory_with_host_reserve() {
+        let desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::new(),
+            resources: Vec::new(),
+            normalized_resources: BTreeMap::from([(
+                "media-stack".to_string(),
+                vmctl_domain::NormalizedResource {
+                    name: "media-stack".to_string(),
+                    kind: "vm".to_string(),
+                    memory: Some(8192),
+                    ..vmctl_domain::NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::new(),
+        };
+
+        validate_apply_preflight_with_host_memory(&desired, Some(15765)).unwrap();
+    }
+
+    #[test]
+    fn vm_runtime_repairs_detect_memory_and_iothread_controller_fix() {
+        let resource = vmctl_domain::NormalizedResource {
+            name: "media-stack".to_string(),
+            kind: "vm".to_string(),
+            memory: Some(8192),
+            ..vmctl_domain::NormalizedResource::default()
+        };
+        let config = "\
+memory: 16384
+scsi0: local-lvm:vm-210-disk-0,iothread=1,size=64G
+scsihw: virtio-scsi-pci
+";
+
+        assert_eq!(
+            vm_runtime_repairs(&resource, config),
+            vec![
+                VmRuntimeRepair::Memory { desired_mib: 8192 },
+                VmRuntimeRepair::ScsiHardware {
+                    value: "virtio-scsi-single"
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn vm_runtime_repairs_skip_when_config_already_matches() {
+        let resource = vmctl_domain::NormalizedResource {
+            name: "media-stack".to_string(),
+            kind: "vm".to_string(),
+            memory: Some(8192),
+            ..vmctl_domain::NormalizedResource::default()
+        };
+        let config = "\
+memory: 8192
+scsi0: local-lvm:vm-210-disk-0,iothread=1,size=64G
+scsihw: virtio-scsi-single
+";
+
+        assert!(vm_runtime_repairs(&resource, config).is_empty());
+    }
+
+    #[test]
+    fn parses_primary_vm_mac_and_bridge() {
+        let config = "net0: virtio=BC:24:11:1D:8A:AE,bridge=vmbr0,firewall=0\n";
+
+        assert_eq!(primary_config_mac(config), Some("BC:24:11:1D:8A:AE"));
+        assert_eq!(primary_config_bridge(config), Some("vmbr0"));
+    }
+
+    #[test]
+    fn parses_primary_lxc_mac_and_bridge() {
+        let config = "net0: name=eth0,bridge=vmbr0,hwaddr=BC:24:11:12:7E:8B,ip=dhcp,type=veth\n";
+
+        assert_eq!(primary_config_mac(config), Some("BC:24:11:12:7E:8B"));
+        assert_eq!(primary_config_bridge(config), Some("vmbr0"));
+    }
+
+    #[test]
+    fn finds_ip_for_mac_from_arp_scan_output() {
+        let output = "\
+Interface: vmbr0
+192.168.86.1 b0:e4:d5:6b:bb:08 Google, Inc.
+192.168.86.103 bc:24:11:1d:8a:ae (Unknown)
+";
+
+        assert_eq!(
+            ip_for_mac_from_arp_scan(output, "BC:24:11:1D:8A:AE"),
+            Some("192.168.86.103".to_string())
+        );
+    }
+
+    #[test]
+    fn upsert_hosts_content_replaces_vmctl_marker_entry() {
+        let current = "127.0.0.1 localhost\n192.168.86.10\tmedia.home.arpa\t# vmctl:media-stack\n";
+
+        let updated =
+            upsert_hosts_content(current, "media.home.arpa", "192.168.86.103", "media-stack");
+
+        assert!(updated.contains("127.0.0.1 localhost\n"));
+        assert!(updated.contains("192.168.86.103\tmedia.home.arpa\t# vmctl:media-stack\n"));
+        assert!(!updated.contains("192.168.86.10\tmedia.home.arpa"));
+    }
+
+    #[test]
+    fn provision_host_resolution_requires_discovery_for_unresolved_vm_hosts() {
+        let desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::new(),
+            resources: Vec::new(),
+            normalized_resources: BTreeMap::from([(
+                "media-stack".to_string(),
+                vmctl_domain::NormalizedResource {
+                    name: "media-stack".to_string(),
+                    kind: "vm".to_string(),
+                    vmid: None,
+                    provision: Some(ProvisionConfig {
+                        host: Some("definitely-not-resolvable.vmctl.invalid".to_string()),
+                        ..ProvisionConfig::default()
+                    }),
+                    ..vmctl_domain::NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::new(),
+        };
+
+        let err = ensure_provision_hosts_resolve(&desired).unwrap_err();
+
+        assert!(err.to_string().contains("does not resolve"));
+        assert!(err.to_string().contains("no vmid"));
     }
 
     #[test]

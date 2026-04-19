@@ -115,7 +115,7 @@ impl SshExecutor for SystemSshExecutor {
 
     fn execute(&self, step: &ProvisionStep) -> Result<()> {
         let target = format!("{}@{}", step.user, step.host);
-        let command = format!("chmod +x {0} && sudo {0}", step.remote_script);
+        let command = remote_execute_command(step);
         command_runner::run(
             CommandOptions::new(
                 "ssh",
@@ -136,6 +136,11 @@ impl SshExecutor for SystemSshExecutor {
         .with_context(|| format!("failed to run ssh for {}", step.resource))?;
         Ok(())
     }
+}
+
+fn remote_execute_command(step: &ProvisionStep) -> String {
+    let runner = if step.user == "root" { "" } else { "sudo " };
+    format!("chmod +x {0} && {runner}{0}", step.remote_script)
 }
 
 pub fn build_provision_plan(
@@ -410,6 +415,49 @@ mod tests {
                 "upload:media-stack".to_string(),
                 "execute:media-stack".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn root_execute_command_does_not_require_sudo() {
+        let step = ProvisionStep {
+            resource: "tailscale-gateway".to_string(),
+            host: "tailscale-gateway.home.arpa".to_string(),
+            user: "root".to_string(),
+            private_key_file: "/home/me/.ssh/id_ed25519".to_string(),
+            local_resource_dir: PathBuf::from("."),
+            remote_resource_dir: "/tmp/vmctl-tailscale-gateway".to_string(),
+            local_script: PathBuf::from("bootstrap-tailscale.sh"),
+            remote_script: "/tmp/vmctl-tailscale-gateway/scripts/bootstrap-tailscale.sh"
+                .to_string(),
+            retries: 1,
+            retry_delay: Duration::from_secs(0),
+        };
+
+        assert_eq!(
+            remote_execute_command(&step),
+            "chmod +x /tmp/vmctl-tailscale-gateway/scripts/bootstrap-tailscale.sh && /tmp/vmctl-tailscale-gateway/scripts/bootstrap-tailscale.sh"
+        );
+    }
+
+    #[test]
+    fn non_root_execute_command_uses_sudo() {
+        let step = ProvisionStep {
+            resource: "media-stack".to_string(),
+            host: "media.home.arpa".to_string(),
+            user: "ubuntu".to_string(),
+            private_key_file: "/home/me/.ssh/id_ed25519".to_string(),
+            local_resource_dir: PathBuf::from("."),
+            remote_resource_dir: "/tmp/vmctl-media-stack".to_string(),
+            local_script: PathBuf::from("bootstrap-media.sh"),
+            remote_script: "/tmp/vmctl-media-stack/scripts/bootstrap-media.sh".to_string(),
+            retries: 1,
+            retry_delay: Duration::from_secs(0),
+        };
+
+        assert_eq!(
+            remote_execute_command(&step),
+            "chmod +x /tmp/vmctl-media-stack/scripts/bootstrap-media.sh && sudo /tmp/vmctl-media-stack/scripts/bootstrap-media.sh"
         );
     }
 

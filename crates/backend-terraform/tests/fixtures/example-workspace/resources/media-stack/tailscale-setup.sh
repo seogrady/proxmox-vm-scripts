@@ -11,4 +11,5 @@ args=(--auth-key "tskey-fixture")
 args+=(--hostname "media")
 args+=(--advertise-tags "tag:homelab")
 
+
 tailscale up "${args[@]}"

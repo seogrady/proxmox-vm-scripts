@@ -20,6 +20,15 @@
             "nesting": "${try(var.resource.features.lxc.nesting, false)}"
           }
         ],
+        "dynamic": {
+          "device_passthrough": {
+            "content": {
+              "mode": "0666",
+              "path": "/dev/net/tun"
+            },
+            "for_each": "${try(var.resource.features.tailscale.enabled, false) ? [1] : []}"
+          }
+        },
         "initialization": [
           {
             "dns": [
@@ -53,7 +62,7 @@
             "firewall": "${try(var.resource.network.firewall, false)}",
             "mac_address": "${try(var.resource.network.mac, null)}",
             "mtu": "${try(var.resource.network.mtu, 0)}",
-            "name": "veth0",
+            "name": "eth0",
             "vlan_id": "${try(var.resource.network.vlan_id, null)}"
           }
         ],

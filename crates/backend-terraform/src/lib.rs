@@ -33,17 +33,33 @@ impl TerraformBackend {
         registry: &PackRegistry,
         verbose: bool,
     ) -> Result<ApplyResult> {
+        self.apply_with_output_refresh(workspace, desired, registry, verbose, true)
+    }
+
+    pub fn apply_with_output_refresh(
+        &self,
+        workspace: &Workspace,
+        desired: &DesiredState,
+        registry: &PackRegistry,
+        verbose: bool,
+        refresh: bool,
+    ) -> Result<ApplyResult> {
         self.render(workspace, desired, registry)?;
         run_terraform(workspace, &["init", "-input=false"])?;
-        let output = run_terraform_with_options(
-            workspace,
-            &["apply", "-auto-approve", "-input=false", "-no-color"],
-            verbose,
-        )?;
+        let args = terraform_apply_args(refresh);
+        let output = run_terraform_with_options(workspace, &args, verbose)?;
         Ok(ApplyResult {
             summary: output_summary("terraform apply", &output),
         })
     }
+}
+
+fn terraform_apply_args(refresh: bool) -> Vec<&'static str> {
+    let mut args = vec!["apply", "-auto-approve", "-input=false", "-no-color"];
+    if !refresh {
+        args.push("-refresh=false");
+    }
+    args
 }
 
 impl EngineBackend for TerraformBackend {
@@ -535,6 +551,11 @@ fn module_json(resource: &Resource, desired: &DesiredState) -> Value {
             module_resource.disk_interface = Some(interface);
         }
     }
+    if module_resource.kind == "vm" && module_resource.scsi_hardware.is_none() {
+        if let Some(scsi_hardware) = current_vm_scsi_hardware(module_resource.vmid) {
+            module_resource.scsi_hardware = Some(scsi_hardware);
+        }
+    }
     let mut module = Map::new();
     module.insert(
         "source".to_string(),
@@ -705,6 +726,28 @@ fn current_vm_disk_interface(vmid: Option<u32>) -> Option<String> {
     })
 }
 
+fn current_vm_scsi_hardware(vmid: Option<u32>) -> Option<String> {
+    if cfg!(test) && std::env::var_os("VMCTL_TEST_LIVE_PROXMOX").is_none() {
+        return None;
+    }
+    let vmid = vmid?.to_string();
+    let output = command_runner::run(
+        CommandOptions::new("qm", ["config", &vmid])
+            .timeout(Duration::from_secs(20))
+            .prefix(LogPrefix::Proxmox)
+            .stream(false)
+            .fail_on_proxmox_patterns(false),
+    )
+    .ok()?;
+    scsi_hardware_from_qm_config(&output.combined).map(str::to_string)
+}
+
+fn scsi_hardware_from_qm_config(config: &str) -> Option<&str> {
+    config
+        .lines()
+        .find_map(|line| line.strip_prefix("scsihw:").map(str::trim))
+}
+
 fn looks_like_disk_interface(value: &str) -> bool {
     ["virtio", "scsi", "sata", "ide"]
         .iter()
@@ -868,11 +911,13 @@ fn vm_resource_json() -> (String, Value) {
                     "ignore_changes": ["disk", "initialization"]
                 },
                 "machine": "${try(var.resource.machine, try(var.resource.features.intel_igpu.enabled, false) ? \"q35\" : null)}",
+                "scsi_hardware": "${try(var.resource.scsi_hardware, null)}",
                 "on_boot": "${try(var.resource.start_on_boot, true)}",
                 "started": "${coalesce(try(var.resource.started, null), try(var.resource.start_on_boot, true))}",
                 "tags": "${try(var.resource.tags, [])}",
                 "agent": [{
-                    "enabled": "${try(var.resource.agent, true)}"
+                    "enabled": "${try(var.resource.agent, true)}",
+                    "timeout": "${try(var.resource.agent_timeout, \"15s\")}"
                 }],
                 "cpu": [{
                     "cores": "${try(var.resource.cores, 1)}",
@@ -883,7 +928,7 @@ fn vm_resource_json() -> (String, Value) {
                 }],
                 "disk": [{
                     "datastore_id": "${var.storage}",
-                    "import_from": "${try(var.resource.clone_vmid, null) == null && strcontains(var.template, \"proxmox_virtual_environment_download_file.\") ? var.template : null}",
+                    "import_from": "${try(var.resource.clone_vmid, null) == null && var.template != \"\" ? var.template : null}",
                     "interface": "${coalesce(try(var.resource.disk_interface, null), \"virtio\")}",
                     "iothread": "${coalesce(try(var.resource.iothread, null), true)}",
                     "discard": "on",
@@ -963,6 +1008,15 @@ fn lxc_resource_json() -> (String, Value) {
                 "features": [{
                     "nesting": "${try(var.resource.features.lxc.nesting, false)}"
                 }],
+                "dynamic": {
+                    "device_passthrough": {
+                        "for_each": "${try(var.resource.features.tailscale.enabled, false) ? [1] : []}",
+                        "content": {
+                            "path": "/dev/net/tun",
+                            "mode": "0666"
+                        }
+                    }
+                },
                 "memory": [{
                     "dedicated": "${try(var.resource.memory, 1024)}"
                 }],
@@ -983,7 +1037,7 @@ fn lxc_resource_json() -> (String, Value) {
                     }]
                 }],
                 "network_interface": [{
-                    "name": "veth0",
+                    "name": "eth0",
                     "bridge": "${var.bridge}",
                     "enabled": true,
                     "firewall": "${try(var.resource.network.firewall, false)}",
@@ -1479,7 +1533,7 @@ mod tests {
         );
         assert_eq!(
             vm["disk"][0]["import_from"],
-            "${try(var.resource.clone_vmid, null) == null && strcontains(var.template, \"proxmox_virtual_environment_download_file.\") ? var.template : null}"
+            "${try(var.resource.clone_vmid, null) == null && var.template != \"\" ? var.template : null}"
         );
     }
 
@@ -1488,6 +1542,42 @@ mod tests {
         assert_eq!(disk_bus_from_interface("scsi0"), "scsi");
         assert_eq!(disk_bus_from_interface("virtio12"), "virtio");
         assert_eq!(disk_bus_from_interface("sata1"), "sata");
+    }
+
+    #[test]
+    fn parses_scsi_hardware_from_qm_config() {
+        assert_eq!(
+            scsi_hardware_from_qm_config(
+                "memory: 8192\nscsi0: local-lvm:vm-210-disk-0,iothread=1,size=64G\nscsihw: virtio-scsi-single\n"
+            ),
+            Some("virtio-scsi-single")
+        );
+    }
+
+    #[test]
+    fn vm_module_preserves_scsi_hardware_setting() {
+        let vm_module = base_module_main_json("vm", true);
+        let vm = &vm_module["resource"]["proxmox_virtual_environment_vm"]["this"];
+
+        assert_eq!(
+            vm["scsi_hardware"],
+            "${try(var.resource.scsi_hardware, null)}"
+        );
+    }
+
+    #[test]
+    fn terraform_apply_args_can_disable_refresh_for_safe_apply() {
+        assert_eq!(
+            terraform_apply_args(false),
+            vec![
+                "apply",
+                "-auto-approve",
+                "-input=false",
+                "-no-color",
+                "-refresh=false"
+            ]
+        );
+        assert!(!terraform_apply_args(true).contains(&"-refresh=false"));
     }
 
     #[test]

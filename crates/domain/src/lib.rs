@@ -51,6 +51,7 @@ pub struct NormalizedResource {
     pub template: Option<String>,
     pub template_storage: Option<String>,
     pub machine: Option<String>,
+    pub scsi_hardware: Option<String>,
     pub disk_interface: Option<String>,
     pub iothread: Option<bool>,
     pub clone_vmid: Option<u32>,

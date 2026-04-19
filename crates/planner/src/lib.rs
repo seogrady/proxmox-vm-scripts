@@ -235,6 +235,7 @@ fn normalize_resource(
         template,
         template_storage: string_setting(resource, "template_storage"),
         machine: string_setting(resource, "machine").or_else(|| inferred_machine(resource)),
+        scsi_hardware: string_setting(resource, "scsi_hardware"),
         disk_interface: string_setting(resource, "disk_interface"),
         iothread: bool_setting(resource, "iothread"),
         clone_vmid,
