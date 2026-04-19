@@ -49,8 +49,8 @@ source = "pveam"
 node = "mini"
 storage = "local"
 content_type = "vztmpl"
-template = "debian-12-standard_12.7-1_amd64.tar.zst"
-file_name = "debian-12-standard_12.7-1_amd64.tar.zst"
+template = "debian-12-standard_12.12-1_amd64.tar.zst"
+file_name = "debian-12-standard_12.12-1_amd64.tar.zst"
 
 [images.ubuntu_24_cloudinit_template]
 kind = "vm"

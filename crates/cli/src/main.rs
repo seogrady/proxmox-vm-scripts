@@ -439,7 +439,15 @@ fn ensure_pveam_image(image: &ResolvedImage, dry_run: bool) -> Result<()> {
     }
 
     run_command("pveam", &["update"])?;
-    run_command("pveam", &["download", &image.storage, &image.file_name])?;
+    run_command_with_context(
+        "pveam",
+        &["download", &image.storage, &image.file_name],
+        &format!(
+            "template `{}` is not available from pveam. Run `pveam available --section system | grep {}` on the Proxmox host and update vmctl.toml with the listed template name.",
+            image.file_name,
+            pveam_template_family(&image.file_name)
+        ),
+    )?;
     println!("image `{}` ensured: {}", image.name, image.volume_id);
     Ok(())
 }
@@ -555,6 +563,21 @@ fn run_command(command: &str, args: &[&str]) -> Result<()> {
         bail!("`{command} {}` failed", args.join(" "));
     }
     Ok(())
+}
+
+fn run_command_with_context(command: &str, args: &[&str], help: &str) -> Result<()> {
+    let status = std::process::Command::new(command)
+        .args(args)
+        .status()
+        .with_context(|| format!("failed to run `{command} {}`", args.join(" ")))?;
+    if !status.success() {
+        bail!("`{command} {}` failed: {help}", args.join(" "));
+    }
+    Ok(())
+}
+
+fn pveam_template_family(file_name: &str) -> &str {
+    file_name.split('_').next().unwrap_or(file_name)
 }
 
 fn required_image_names(desired: &DesiredState) -> BTreeSet<String> {
