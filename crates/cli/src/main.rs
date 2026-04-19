@@ -944,6 +944,9 @@ fn prepare_passthrough_inner(
         let hardware_id = pci_hardware_id(pci_device).with_context(|| {
             format!("failed to resolve PCI vendor/device id for `{pci_device}` with lspci")
         })?;
+        let subsystem_id = pci_subsystem_id(pci_device).with_context(|| {
+            format!("failed to resolve PCI subsystem id for `{pci_device}` with lspci")
+        })?;
         let iommu_group = pci_iommu_group(&pci_path).with_context(|| {
             format!("failed to resolve IOMMU group for PCI device `{pci_path}`")
         })?;
@@ -952,7 +955,13 @@ fn prepare_passthrough_inner(
                 "PCI device `{pci_path}` has no IOMMU group symlink at /sys/bus/pci/devices/{pci_path}/iommu_group. Enable IOMMU/VT-d in BIOS and reboot before preparing passthrough."
             );
         };
-        let map = proxmox_pci_mapping_value(&node, &pci_path, &hardware_id, Some(&iommu_group));
+        let map = proxmox_pci_mapping_value(
+            &node,
+            &pci_path,
+            &hardware_id,
+            Some(&iommu_group),
+            subsystem_id.as_deref(),
+        );
 
         if dry_run {
             if pci_mapping_exists(mapping) {
@@ -964,7 +973,7 @@ fn prepare_passthrough_inner(
             run_command_with_context(
                 "pvesh",
                 &["set", &format!("/cluster/mapping/pci/{mapping}"), "--map", &map],
-                "failed to update Proxmox PCI resource mapping. You need Mapping.Modify on /mapping/pci/<name>, and the device path/id/iommugroup must match the host hardware.",
+                "failed to update Proxmox PCI resource mapping. You need Mapping.Modify on /mapping/pci/<name>, and the device path/id/iommugroup/subsystem-id must match the host hardware.",
             )?;
             println!("updated passthrough mapping `{mapping}` for {pci_path} on {node}");
         } else {
@@ -1042,7 +1051,7 @@ fn check_passthrough_ready(requests: &[PassthroughRequest]) -> Result<()> {
                     let pci_path = proxmox_pci_path(pci_device);
                     match pci_iommu_group(&pci_path) {
                         Ok(Some(iommu_group)) => {
-                            if !pci_mapping_has_iommu_group(mapping, &iommu_group) {
+                            if !pci_mapping_has_property(mapping, "iommugroup", &iommu_group) {
                                 failures.push(format!(
                                     "resource `{}` requires PCI mapping `{mapping}`, but the mapping is missing expected iommugroup `{iommu_group}` for `{pci_path}`. Run `vmctl passthrough prepare` to update the mapping, then rerun `vmctl apply`.",
                                     request.resource
@@ -1055,6 +1064,24 @@ fn check_passthrough_ready(requests: &[PassthroughRequest]) -> Result<()> {
                         )),
                         Err(error) => failures.push(format!(
                             "resource `{}` failed to inspect IOMMU group for `{pci_path}`: {error}",
+                            request.resource
+                        )),
+                    }
+                    match pci_subsystem_id(pci_device) {
+                        Ok(Some(subsystem_id)) => {
+                            if !pci_mapping_has_property(mapping, "subsystem-id", &subsystem_id) {
+                                failures.push(format!(
+                                    "resource `{}` requires PCI mapping `{mapping}`, but the mapping is missing expected subsystem-id `{subsystem_id}` for `{pci_path}`. Run `vmctl passthrough prepare` to update the mapping, then rerun `vmctl apply`.",
+                                    request.resource
+                                ));
+                            }
+                        }
+                        Ok(None) => failures.push(format!(
+                            "resource `{}` requires PCI device `{pci_path}`, but no subsystem id was found in `lspci -nnvs {pci_device}` output.",
+                            request.resource
+                        )),
+                        Err(error) => failures.push(format!(
+                            "resource `{}` failed to inspect subsystem id for `{pci_path}`: {error}",
                             request.resource
                         )),
                     }
@@ -1093,19 +1120,19 @@ fn pci_mapping_exists(mapping: &str) -> bool {
     ) || command_output_contains("pvesh", &["get", "/cluster/mapping/pci"], mapping)
 }
 
-fn pci_mapping_has_iommu_group(mapping: &str, iommu_group: &str) -> bool {
+fn pci_mapping_has_property(mapping: &str, key: &str, expected: &str) -> bool {
     let Some(output) = command_output(
         "pvesh",
         &["get", &format!("/cluster/mapping/pci/{mapping}")],
     ) else {
         return false;
     };
-    output.contains("iommugroup")
-        && (output.contains(&format!("iommugroup={iommu_group}"))
-            || output.contains(&format!("iommugroup: {iommu_group}"))
-            || output.contains(&format!("\"iommugroup\":{iommu_group}"))
-            || output.contains(&format!("\"iommugroup\":\"{iommu_group}\""))
-            || output.contains(&format!("iommugroup {iommu_group}")))
+    output.contains(key)
+        && (output.contains(&format!("{key}={expected}"))
+            || output.contains(&format!("{key}: {expected}"))
+            || output.contains(&format!("\"{key}\":{expected}"))
+            || output.contains(&format!("\"{key}\":\"{expected}\""))
+            || output.contains(&format!("{key} {expected}")))
 }
 
 fn default_proxmox_node(desired: &DesiredState) -> Option<String> {
@@ -1132,6 +1159,7 @@ fn proxmox_pci_mapping_value(
     pci_path: &str,
     hardware_id: &str,
     iommu_group: Option<&str>,
+    subsystem_id: Option<&str>,
 ) -> String {
     let mut fields = vec![
         format!("node={node}"),
@@ -1140,6 +1168,9 @@ fn proxmox_pci_mapping_value(
     ];
     if let Some(iommu_group) = iommu_group {
         fields.push(format!("iommugroup={iommu_group}"));
+    }
+    if let Some(subsystem_id) = subsystem_id {
+        fields.push(format!("subsystem-id={subsystem_id}"));
     }
     fields.join(",")
 }
@@ -1173,11 +1204,38 @@ fn pci_hardware_id(pci_device: &str) -> Result<String> {
         .with_context(|| format!("could not parse vendor/device id from lspci output: {stdout}"))
 }
 
+fn pci_subsystem_id(pci_device: &str) -> Result<Option<String>> {
+    let output = std::process::Command::new("lspci")
+        .args(["-nnvs", pci_device])
+        .output()
+        .with_context(|| format!("failed to run `lspci -nnvs {pci_device}`"))?;
+    if !output.status.success() {
+        bail!("`lspci -nnvs {pci_device}` failed");
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_lspci_subsystem_id(&stdout).map(str::to_string))
+}
+
 fn parse_lspci_hardware_id(output: &str) -> Option<&str> {
     output
         .split_whitespace()
         .map(|part| part.trim_matches(&['[', ']'][..]))
         .find(|part| part.len() == 9 && part.as_bytes().get(4) == Some(&b':'))
+}
+
+fn parse_lspci_subsystem_id(output: &str) -> Option<&str> {
+    output
+        .lines()
+        .find(|line| line.trim_start().starts_with("Subsystem:"))
+        .and_then(parse_last_pci_id)
+}
+
+fn parse_last_pci_id(output: &str) -> Option<&str> {
+    output
+        .split_whitespace()
+        .map(|part| part.trim_matches(&['[', ']'][..]))
+        .filter(|part| part.len() == 9 && part.as_bytes().get(4) == Some(&b':'))
+        .last()
 }
 
 fn command_output_contains(command: &str, args: &[&str], needle: &str) -> bool {
@@ -1553,10 +1611,26 @@ mod tests {
     }
 
     #[test]
-    fn proxmox_pci_mapping_includes_iommu_group_when_known() {
+    fn parses_lspci_subsystem_id() {
         assert_eq!(
-            proxmox_pci_mapping_value("mini", "0000:00:02.0", "8086:46a6", Some("0")),
-            "node=mini,path=0000:00:02.0,id=8086:46a6,iommugroup=0"
+            parse_lspci_subsystem_id(
+                "00:02.0 VGA compatible controller [0300]: Intel Corporation Alder Lake-P GT2 [8086:46a6] (rev 0c)\n\tSubsystem: Intel Corporation Device [8086:7270]\n"
+            ),
+            Some("8086:7270")
+        );
+    }
+
+    #[test]
+    fn proxmox_pci_mapping_includes_iommu_group_and_subsystem_id_when_known() {
+        assert_eq!(
+            proxmox_pci_mapping_value(
+                "mini",
+                "0000:00:02.0",
+                "8086:46a6",
+                Some("0"),
+                Some("8086:7270")
+            ),
+            "node=mini,path=0000:00:02.0,id=8086:46a6,iommugroup=0,subsystem-id=8086:7270"
         );
     }
 
