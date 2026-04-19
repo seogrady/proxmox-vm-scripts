@@ -234,12 +234,16 @@ fn normalize_resource(
         storage: string_setting(resource, "storage"),
         template,
         template_storage: string_setting(resource, "template_storage"),
+        machine: string_setting(resource, "machine").or_else(|| inferred_machine(resource)),
+        disk_interface: string_setting(resource, "disk_interface"),
+        iothread: bool_setting(resource, "iothread"),
         clone_vmid,
         cores: u32_setting(resource, "cores"),
         memory: u32_setting(resource, "memory"),
         disk_gb: u32_setting(resource, "disk_gb"),
         rootfs_gb: u32_setting(resource, "rootfs_gb"),
         start_on_boot: bool_setting(resource, "start_on_boot"),
+        started: bool_setting(resource, "started"),
         agent: bool_setting(resource, "agent"),
         nameserver: string_setting(resource, "nameserver"),
         searchdomain: searchdomain.clone(),
@@ -272,6 +276,17 @@ fn u32_setting(resource: &Resource, key: &str) -> Option<u32> {
 
 fn bool_setting(resource: &Resource, key: &str) -> Option<bool> {
     resource.settings.get(key).and_then(toml::Value::as_bool)
+}
+
+fn inferred_machine(resource: &Resource) -> Option<String> {
+    let intel_igpu_enabled = resource
+        .features
+        .get("intel_igpu")
+        .and_then(toml::Value::as_table)
+        .and_then(|feature| feature.get("enabled"))
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false);
+    intel_igpu_enabled.then(|| "q35".to_string())
 }
 
 fn hostname_setting(resource: &Resource) -> Result<Option<String>> {
@@ -615,6 +630,9 @@ mod tests {
         assert_eq!(normalized.cores, Some(6));
         assert_eq!(normalized.memory, Some(16384));
         assert_eq!(normalized.clone_vmid, Some(9000));
+        assert_eq!(normalized.machine, None);
+        assert_eq!(normalized.disk_interface, None);
+        assert_eq!(normalized.iothread, None);
         assert_eq!(normalized.nameserver, Some("1.1.1.1".to_string()));
         let network = normalized.network.unwrap();
         assert_eq!(network.mode, Some("static".to_string()));
@@ -643,6 +661,44 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("cloud_init requires ssh_key_file"));
+    }
+
+    #[test]
+    fn normalizes_vm_hardware_fields() {
+        let mut input = resource("media-stack", "vm", vec![]);
+        input.settings.insert(
+            "machine".to_string(),
+            toml::Value::String("q35".to_string()),
+        );
+        input.settings.insert(
+            "disk_interface".to_string(),
+            toml::Value::String("virtio0".to_string()),
+        );
+        input
+            .settings
+            .insert("iothread".to_string(), toml::Value::Boolean(true));
+
+        let normalized = normalize_resource(&input, &BTreeMap::new()).unwrap();
+
+        assert_eq!(normalized.machine, Some("q35".to_string()));
+        assert_eq!(normalized.disk_interface, Some("virtio0".to_string()));
+        assert_eq!(normalized.iothread, Some(true));
+    }
+
+    #[test]
+    fn infers_q35_for_intel_igpu() {
+        let mut input = resource("media-stack", "vm", vec![]);
+        input.features.insert(
+            "intel_igpu".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([(
+                "enabled".to_string(),
+                toml::Value::Boolean(true),
+            )])),
+        );
+
+        let normalized = normalize_resource(&input, &BTreeMap::new()).unwrap();
+
+        assert_eq!(normalized.machine, Some("q35".to_string()));
     }
 
     #[test]

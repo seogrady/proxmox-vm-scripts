@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use vmctl_domain::{DesiredState, Expansion, NormalizedResource, Resource, Workspace};
+use vmctl_util::command_runner::{self, CommandOptions, LogPrefix};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProvisionPlan {
@@ -70,69 +71,69 @@ impl SshExecutor for SystemSshExecutor {
     fn upload(&self, step: &ProvisionStep) -> Result<()> {
         let target = format!("{}@{}", step.user, step.host);
         let mkdir = format!("mkdir -p {}", step.remote_resource_dir);
-        let status = std::process::Command::new("ssh")
-            .args([
-                "-i",
-                &step.private_key_file,
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "StrictHostKeyChecking=accept-new",
-                &target,
-                &mkdir,
-            ])
-            .status()
-            .with_context(|| format!("failed to prepare remote directory for {}", step.resource))?;
-        if !status.success() {
-            bail!(
-                "failed to prepare remote provisioning directory for {}",
-                step.resource
-            );
-        }
+        command_runner::run(
+            CommandOptions::new(
+                "ssh",
+                [
+                    "-i",
+                    &step.private_key_file,
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "StrictHostKeyChecking=accept-new",
+                    &target,
+                    &mkdir,
+                ],
+            )
+            .timeout(Duration::from_secs(120))
+            .prefix(LogPrefix::Ssh),
+        )
+        .with_context(|| format!("failed to prepare remote directory for {}", step.resource))?;
 
         let destination = format!("{target}:{}", step.remote_resource_dir);
-        let status = std::process::Command::new("scp")
-            .args([
-                "-i",
-                &step.private_key_file,
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "StrictHostKeyChecking=accept-new",
-                "-r",
-            ])
-            .arg(format!("{}/.", step.local_resource_dir.display()))
-            .arg(&destination)
-            .status()
-            .with_context(|| format!("failed to run scp for {}", step.resource))?;
-        if !status.success() {
-            bail!("failed to upload provisioning files for {}", step.resource);
-        }
+        command_runner::run(
+            CommandOptions::new(
+                "scp",
+                [
+                    "-i",
+                    &step.private_key_file,
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "StrictHostKeyChecking=accept-new",
+                    "-r",
+                    &format!("{}/.", step.local_resource_dir.display()),
+                    &destination,
+                ],
+            )
+            .timeout(Duration::from_secs(300))
+            .prefix(LogPrefix::Ssh),
+        )
+        .with_context(|| format!("failed to run scp for {}", step.resource))?;
         Ok(())
     }
 
     fn execute(&self, step: &ProvisionStep) -> Result<()> {
         let target = format!("{}@{}", step.user, step.host);
         let command = format!("chmod +x {0} && sudo {0}", step.remote_script);
-        let status = std::process::Command::new("ssh")
-            .args([
-                "-i",
-                &step.private_key_file,
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "StrictHostKeyChecking=accept-new",
-                &target,
-                &command,
-            ])
-            .status()
-            .with_context(|| format!("failed to run ssh for {}", step.resource))?;
-        if !status.success() {
-            bail!(
-                "failed to execute provisioning script for {}",
-                step.resource
-            );
-        }
+        command_runner::run(
+            CommandOptions::new(
+                "ssh",
+                [
+                    "-i",
+                    &step.private_key_file,
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "StrictHostKeyChecking=accept-new",
+                    &target,
+                    &command,
+                ],
+            )
+            .timeout(Duration::from_secs(900))
+            .prefix(LogPrefix::Ssh),
+        )
+        .with_context(|| format!("failed to run ssh for {}", step.resource))?;
         Ok(())
     }
 }
@@ -173,6 +174,7 @@ pub fn run_provision_plan_with_progress(
         on_event(ProvisionEvent::StepStarted { step, index, total });
         let attempts = step.retries.max(1);
         let mut last_error = None;
+        let mut last_error_text: Option<String> = None;
         for attempt in 1..=attempts {
             let result = (|| {
                 on_event(ProvisionEvent::UploadStarted {
@@ -194,17 +196,25 @@ pub fn run_provision_plan_with_progress(
                     break;
                 }
                 Err(error) => {
+                    let error_text = error.to_string();
+                    if last_error_text.as_deref() == Some(error_text.as_str()) {
+                        bail!(
+                            "provision {} repeated the same failure on attempt {attempt}/{attempts}: {error_text}",
+                            step.resource
+                        );
+                    }
                     on_event(ProvisionEvent::StepRetry {
                         step,
                         attempt,
                         total_attempts: attempts,
-                        error: error.to_string(),
+                        error: error_text.clone(),
                     });
                     eprintln!(
                         "provision {} failed attempt {attempt}/{attempts}: {error}",
                         step.resource
                     );
                     last_error = Some(error);
+                    last_error_text = Some(error_text);
                     if attempt < attempts {
                         std::thread::sleep(step.retry_delay);
                     }

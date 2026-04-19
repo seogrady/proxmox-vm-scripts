@@ -603,6 +603,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "vmctl-domain",
+ "vmctl-util",
 ]
 
 [[package]]

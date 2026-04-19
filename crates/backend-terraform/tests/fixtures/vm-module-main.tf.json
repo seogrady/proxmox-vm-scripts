@@ -20,8 +20,8 @@
             "datastore_id": "${var.storage}",
             "discard": "on",
             "import_from": "${try(var.resource.clone_vmid, null) == null && strcontains(var.template, \"proxmox_virtual_environment_download_file.\") ? var.template : null}",
-            "interface": "scsi0",
-            "iothread": true,
+            "interface": "${coalesce(try(var.resource.disk_interface, null), \"virtio\")}",
+            "iothread": "${coalesce(try(var.resource.iothread, null), true)}",
             "size": "${try(var.resource.disk_gb, 8)}"
           }
         ],
@@ -74,6 +74,12 @@
           }
         },
         "machine": "${try(var.resource.machine, try(var.resource.features.intel_igpu.enabled, false) ? \"q35\" : null)}",
+        "lifecycle": {
+          "ignore_changes": [
+            "disk",
+            "initialization"
+          ]
+        },
         "memory": [
           {
             "dedicated": "${try(var.resource.memory, 1024)}"
@@ -97,7 +103,7 @@
         ],
         "node_name": "${var.node_name}",
         "on_boot": "${try(var.resource.start_on_boot, true)}",
-        "started": "${try(var.resource.start_on_boot, true)}",
+        "started": "${coalesce(try(var.resource.started, null), try(var.resource.start_on_boot, true))}",
         "tags": "${try(var.resource.tags, [])}",
         "vm_id": "${try(var.resource.vmid, null)}"
       }

@@ -7,7 +7,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
@@ -19,6 +19,9 @@ use vmctl_dependencies::{backend_kind, CommandScope, DependencyPlan};
 use vmctl_domain::{DesiredState, ImageKind, ImageSource, ResolvedImage, Workspace};
 use vmctl_lockfile::Lockfile;
 use vmctl_packs::PackRegistry;
+use vmctl_util::command_runner::{self, CommandOptions, LogPrefix};
+
+const GLOBAL_APPLY_TIMEOUT: Duration = Duration::from_secs(3600);
 
 #[derive(Debug, Parser)]
 #[command(name = "vmctl", version, about = "Declarative Proxmox homelab manager")]
@@ -44,12 +47,22 @@ enum Command {
         #[arg(long)]
         auto_approve: bool,
         #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
         verbose: bool,
         #[arg(long)]
         skip_provision: bool,
         #[arg(long)]
         no_image_ensure: bool,
+        #[arg(long)]
+        no_start: bool,
         target: Option<String>,
+    },
+    Inspect {
+        target: Option<String>,
+    },
+    Debug {
+        name: String,
     },
     Up {
         #[arg(long)]
@@ -153,19 +166,35 @@ fn main() -> Result<()> {
         }
         Command::Apply {
             auto_approve,
+            dry_run,
             verbose,
             skip_provision,
             no_image_ensure,
+            no_start,
             target,
         } => apply_command(
             cli.config.as_deref(),
             &cli.packs,
             auto_approve,
+            dry_run,
             verbose,
             skip_provision,
             no_image_ensure,
+            no_start,
             target.as_deref(),
             "apply",
+        ),
+        Command::Inspect { target } => inspect_command(
+            cli.config.as_deref(),
+            &cli.packs,
+            target.as_deref(),
+            InspectMode::Inspect,
+        ),
+        Command::Debug { name } => inspect_command(
+            cli.config.as_deref(),
+            &cli.packs,
+            Some(&name),
+            InspectMode::Debug,
         ),
         Command::Up {
             auto_approve,
@@ -177,9 +206,11 @@ fn main() -> Result<()> {
             cli.config.as_deref(),
             &cli.packs,
             auto_approve,
+            false,
             verbose,
             skip_provision,
             no_image_ensure,
+            false,
             target.as_deref(),
             "up",
         ),
@@ -353,39 +384,63 @@ fn apply_command(
     config_path: Option<&Path>,
     packs_path: &Path,
     _auto_approve: bool,
+    dry_run: bool,
     verbose: bool,
     skip_provision: bool,
     no_image_ensure: bool,
+    no_start: bool,
     target: Option<&str>,
     _command: &str,
 ) -> Result<()> {
-    let (workspace, desired, registry) = load_workspace(config_path, packs_path, target)?;
+    let (workspace, mut desired, registry) = load_workspace(config_path, packs_path, target)?;
+    let auto_no_start = !no_start && has_vm_passthrough(&desired);
+    let no_start = no_start || auto_no_start;
+    if auto_no_start {
+        eprintln!(
+            "warning: PCI passthrough VM detected; vmctl will not start or provision it during apply. Use `vmctl debug <name>` before starting it manually."
+        );
+    }
+    if no_start {
+        disable_vm_start(&mut desired);
+    }
+    if dry_run {
+        return inspect_workspace(&workspace, &desired, InspectMode::Inspect);
+    }
+    let skip_provision = skip_provision || no_start;
     let progress = ApplyProgress::new();
+    let guard = ApplyGuard::new(GLOBAL_APPLY_TIMEOUT);
     check_dependencies(&desired, CommandScope::Apply)?;
     if !skip_provision {
         check_dependencies(&desired, CommandScope::Provision)?;
     }
 
     println!("config: valid");
+    validate_apply_preflight(&desired)?;
     if no_image_ensure {
         eprintln!("warning: skipping image ensure; missing images may fail during apply");
     } else {
+        guard.checkpoint("image ensure")?;
         ensure_images(&desired, None, false)?;
     }
+    guard.checkpoint("passthrough prepare")?;
     prepare_passthrough_inner(&desired, false, false)?;
     ensure_passthrough_ready(&desired)?;
 
+    guard.checkpoint("backend validation")?;
     let validation = progress.run("validating generated OpenTofu workspace", || {
         validate_live_backend(&workspace, &desired, &registry)
     })?;
     println!("{}", validation.summary);
+    guard.checkpoint("state recovery")?;
     progress.run("checking interrupted-apply recovery", || {
         auto_recover_backend_state(&workspace, &desired)
     })?;
 
+    guard.checkpoint("terraform apply")?;
     let result = progress.run("applying OpenTofu plan", || {
         TerraformBackend.apply_with_output(&workspace, &desired, &registry, verbose)
     })?;
+    guard.checkpoint("lockfile write")?;
     progress.run("writing vmctl.lock", || {
         write_lockfile(&workspace, &desired)
     })?;
@@ -396,6 +451,249 @@ fn apply_command(
     }
     println!("vmctl apply complete");
     Ok(())
+}
+
+fn disable_vm_start(desired: &mut DesiredState) {
+    for resource in desired.normalized_resources.values_mut() {
+        if resource.kind == "vm" {
+            resource.started = Some(false);
+        }
+    }
+}
+
+fn has_vm_passthrough(desired: &DesiredState) -> bool {
+    desired.normalized_resources.values().any(|resource| {
+        resource.kind == "vm"
+            && resource
+                .features
+                .get("intel_igpu")
+                .and_then(Value::as_table)
+                .and_then(|feature| feature.get("enabled"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InspectMode {
+    Inspect,
+    Debug,
+}
+
+fn inspect_command(
+    config_path: Option<&Path>,
+    packs_path: &Path,
+    target: Option<&str>,
+    mode: InspectMode,
+) -> Result<()> {
+    let (workspace, desired, _registry) = load_workspace(config_path, packs_path, target)?;
+    inspect_workspace(&workspace, &desired, mode)
+}
+
+fn inspect_workspace(
+    _workspace: &Workspace,
+    desired: &DesiredState,
+    mode: InspectMode,
+) -> Result<()> {
+    println!("[vmctl] inspect mode: no qm create/start or Terraform apply will be executed");
+    validate_apply_preflight(desired)?;
+    println!("[vmctl] desired resources: {}", desired.resources.len());
+    print!("{}", render_inspect_summary(desired));
+
+    if let Some(output) = safe_command_output("qm", &["list"], Duration::from_secs(20)) {
+        println!("[proxmox] qm list\n{}", output.trim());
+    } else {
+        println!("[proxmox] qm list unavailable; run inspect on a Proxmox host for live VM state");
+    }
+
+    for resource in desired.normalized_resources.values() {
+        let Some(vmid) = resource.vmid else {
+            continue;
+        };
+        let vmid = vmid.to_string();
+        println!("[vmctl] resource `{}` vmid={vmid}", resource.name);
+        match resource.kind.as_str() {
+            "vm" => inspect_vm(resource, &vmid, mode),
+            "lxc" => inspect_lxc(resource, &vmid),
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn inspect_vm(resource: &vmctl_domain::NormalizedResource, vmid: &str, mode: InspectMode) {
+    let config = safe_command_output("qm", &["config", vmid], Duration::from_secs(20));
+    let status = safe_command_output("qm", &["status", vmid], Duration::from_secs(10));
+    if let Some(status) = status {
+        println!("[proxmox] qm status {vmid}\n{}", status.trim());
+    }
+    if let Some(config) = config {
+        println!("[proxmox] qm config {vmid}\n{}", config.trim());
+        print_vm_diagnostics(resource, &config);
+        if mode == InspectMode::Debug {
+            print_recent_failure_hints(&config);
+        }
+    } else {
+        println!("[proxmox] qm config {vmid} unavailable");
+    }
+}
+
+fn inspect_lxc(resource: &vmctl_domain::NormalizedResource, vmid: &str) {
+    let status = safe_command_output("pct", &["status", vmid], Duration::from_secs(10));
+    if let Some(status) = status {
+        println!("[proxmox] pct status {vmid}\n{}", status.trim());
+    }
+    if let Some(config) = safe_command_output("pct", &["config", vmid], Duration::from_secs(20)) {
+        println!("[proxmox] pct config {vmid}\n{}", config.trim());
+    } else {
+        println!(
+            "[proxmox] pct config {vmid} unavailable for `{}`",
+            resource.name
+        );
+    }
+}
+
+fn render_inspect_summary(desired: &DesiredState) -> String {
+    let mut output = String::new();
+    for resource in desired.normalized_resources.values() {
+        output.push_str(&format!(
+            "[vmctl] desired {} `{}` vmid={} machine={} disk_interface={} iothread={} cloud_init={}\n",
+            resource.kind,
+            resource.name,
+            resource
+                .vmid
+                .map(|vmid| vmid.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            resource.machine.as_deref().unwrap_or("default"),
+            resource
+                .disk_interface
+                .as_deref()
+                .unwrap_or("virtio"),
+            resource.iothread.unwrap_or(true),
+            if resource.cloud_init.is_some() { "enabled" } else { "none" }
+        ));
+    }
+    output
+}
+
+fn print_vm_diagnostics(resource: &vmctl_domain::NormalizedResource, config: &str) {
+    let machine = config_value(config, "machine").unwrap_or("default");
+    let desired_machine = resource.machine.as_deref().unwrap_or("default");
+    if machine != desired_machine && desired_machine != "default" {
+        println!("[vmctl] mismatch: desired machine={desired_machine}, current machine={machine}");
+    }
+
+    let desired_disk = resource.disk_interface.as_deref().unwrap_or("virtio");
+    if !config.lines().any(|line| line.starts_with(desired_disk)) {
+        println!(
+            "[vmctl] hint: desired disk interface `{desired_disk}` was not found in qm config"
+        );
+    }
+    if resource.iothread.unwrap_or(true) && !desired_disk.starts_with("virtio") {
+        println!("[vmctl] error: iothread=true requires a virtio disk interface");
+    }
+    if resource.cloud_init.is_some() && !config.lines().any(|line| line.starts_with("ide2:")) {
+        println!("[vmctl] hint: cloud-init is desired but no ide2 cloud-init drive was found");
+    }
+}
+
+fn print_recent_failure_hints(config: &str) {
+    for line in config.lines() {
+        if line.contains("q35") {
+            println!("[vmctl] q35 hint: if start fails with `q35 machine model is not enabled`, verify q35 support on the Proxmox node");
+        }
+        if line.contains("iothread=1") && !line.starts_with("virtio") {
+            println!("[vmctl] disk hint: Proxmox only accepts iothread on virtio disks or virtio-scsi-single");
+        }
+    }
+}
+
+fn config_value<'a>(config: &'a str, key: &str) -> Option<&'a str> {
+    let prefix = format!("{key}:");
+    config
+        .lines()
+        .find_map(|line| line.strip_prefix(&prefix).map(str::trim))
+}
+
+fn safe_command_output(command: &str, args: &[&str], timeout: Duration) -> Option<String> {
+    command_runner::run(
+        CommandOptions::new(command, args.iter().copied())
+            .timeout(timeout)
+            .prefix(LogPrefix::Proxmox)
+            .stream(false)
+            .fail_on_proxmox_patterns(false),
+    )
+    .ok()
+    .map(|output| output.combined)
+}
+
+fn validate_apply_preflight(desired: &DesiredState) -> Result<()> {
+    let mut failures = Vec::new();
+    for resource in desired.normalized_resources.values() {
+        if resource.kind != "vm" {
+            continue;
+        }
+        if resource.machine.as_deref() == Some("q35")
+            && vmctl_util::command_exists("qm")
+            && !Path::new("/usr/share/qemu-server/pve-q35.cfg").exists()
+        {
+            failures.push(format!(
+                "resource `{}` requests machine=q35 but local Proxmox q35 config is missing",
+                resource.name
+            ));
+        }
+        let disk_interface = resource.disk_interface.as_deref().unwrap_or("virtio");
+        if resource.iothread.unwrap_or(true) && !disk_interface.starts_with("virtio") {
+            failures.push(format!(
+                "resource `{}` sets iothread=true with disk_interface={disk_interface}; use virtio or set iothread=false",
+                resource.name
+            ));
+        }
+        if let Some(cloud_init) = &resource.cloud_init {
+            if cloud_init
+                .ssh_key_file
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .is_empty()
+            {
+                failures.push(format!(
+                    "resource `{}` cloud_init requires ssh_key_file",
+                    resource.name
+                ));
+            }
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        bail!("apply preflight failed:\n- {}", failures.join("\n- "))
+    }
+}
+
+struct ApplyGuard {
+    started: Instant,
+    timeout: Duration,
+}
+
+impl ApplyGuard {
+    fn new(timeout: Duration) -> Self {
+        Self {
+            started: Instant::now(),
+            timeout,
+        }
+    }
+
+    fn checkpoint(&self, phase: &str) -> Result<()> {
+        if self.started.elapsed() > self.timeout {
+            bail!(
+                "apply exceeded global timeout of {}s before {phase}",
+                self.timeout.as_secs()
+            );
+        }
+        Ok(())
+    }
 }
 
 fn validate_live_backend(
@@ -512,40 +810,39 @@ fn sanitize_backend_module_name(name: &str) -> String {
 fn terraform_state_addresses(workspace: &Workspace) -> Result<BTreeSet<String>> {
     let generated = workspace.root.join(&workspace.generated_dir);
     let binary = terraform_binary_name();
-    let output = std::process::Command::new(&binary)
-        .args(["state", "list"])
-        .current_dir(&generated)
-        .output()
-        .with_context(|| format!("failed to run `{binary} state list`"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if output.status.success() {
-        return Ok(stdout.lines().map(str::to_string).collect());
-    }
-    let combined = format!("{stdout}\n{stderr}");
-    if combined.contains("No state file was found")
-        || combined.contains("does not have a state")
-        || combined.contains("No state file")
+    let result = command_runner::run(
+        CommandOptions::new(&binary, ["state", "list"])
+            .cwd(generated)
+            .timeout(Duration::from_secs(120))
+            .prefix(LogPrefix::Terraform),
+    );
+    let error = match result {
+        Ok(output) => return Ok(output.stdout.lines().map(str::to_string).collect()),
+        Err(error) => error.to_string(),
+    };
+    if error.contains("No state file was found")
+        || error.contains("does not have a state")
+        || error.contains("No state file")
     {
         return Ok(BTreeSet::new());
     }
-    bail!("`{binary} state list` failed:\n{combined}")
+    bail!("`{binary} state list` failed:\n{error}")
 }
 
 fn terraform_import(workspace: &Workspace, address: &str, import_id: &str) -> Result<()> {
     let generated = workspace.root.join(&workspace.generated_dir);
     let binary = terraform_binary_name();
-    let output = std::process::Command::new(&binary)
-        .args(["import", "-input=false", "-no-color", address, import_id])
-        .current_dir(&generated)
-        .output()
-        .with_context(|| format!("failed to run `{binary} import {address} {import_id}`"))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    bail!("{stdout}\n{stderr}")
+    command_runner::run(
+        CommandOptions::new(
+            &binary,
+            ["import", "-input=false", "-no-color", address, import_id],
+        )
+        .cwd(generated)
+        .timeout(Duration::from_secs(600))
+        .prefix(LogPrefix::Terraform),
+    )
+    .with_context(|| format!("failed to run `{binary} import {address} {import_id}`"))?;
+    Ok(())
 }
 
 fn confirm_destroy_existing_resource(resource: &UnmanagedBackendResource) -> Result<bool> {
@@ -568,9 +865,11 @@ fn destroy_existing_resource(resource: &UnmanagedBackendResource) -> Result<()> 
     let vmid = resource.vmid.to_string();
     match resource.kind.as_str() {
         "vm" => {
-            let _ = std::process::Command::new("qm")
-                .args(["stop", &vmid])
-                .status();
+            let _ = command_runner::run(
+                CommandOptions::new("qm", ["stop", &vmid])
+                    .timeout(Duration::from_secs(60))
+                    .prefix(LogPrefix::Proxmox),
+            );
             run_command_with_context(
                 "qm",
                 &["destroy", &vmid, "--purge"],
@@ -578,9 +877,11 @@ fn destroy_existing_resource(resource: &UnmanagedBackendResource) -> Result<()> 
             )
         }
         "lxc" => {
-            let _ = std::process::Command::new("pct")
-                .args(["stop", &vmid])
-                .status();
+            let _ = command_runner::run(
+                CommandOptions::new("pct", ["stop", &vmid])
+                    .timeout(Duration::from_secs(60))
+                    .prefix(LogPrefix::Proxmox),
+            );
             run_command_with_context(
                 "pct",
                 &["destroy", &vmid, "--purge"],
@@ -848,42 +1149,46 @@ fn image_status_label(image: &ResolvedImage) -> &'static str {
 }
 
 fn command_succeeds(command: &str, args: &[&str]) -> bool {
-    std::process::Command::new(command)
-        .args(args)
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    command_runner::run(
+        CommandOptions::new(command, args.iter().copied())
+            .timeout(Duration::from_secs(20))
+            .prefix(LogPrefix::Proxmox)
+            .stream(false)
+            .fail_on_proxmox_patterns(false),
+    )
+    .is_ok()
 }
 
 fn image_is_present_with(command: &str, args: &[&str], file_name: &str) -> bool {
-    std::process::Command::new(command)
-        .args(args)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).contains(file_name))
-        .unwrap_or(false)
+    command_runner::run(
+        CommandOptions::new(command, args.iter().copied())
+            .timeout(Duration::from_secs(30))
+            .prefix(LogPrefix::Proxmox)
+            .stream(false)
+            .fail_on_proxmox_patterns(false),
+    )
+    .ok()
+    .map(|output| output.stdout.contains(file_name))
+    .unwrap_or(false)
 }
 
 fn run_command(command: &str, args: &[&str]) -> Result<()> {
-    let status = std::process::Command::new(command)
-        .args(args)
-        .status()
-        .with_context(|| format!("failed to run `{command} {}`", args.join(" ")))?;
-    if !status.success() {
-        bail!("`{command} {}` failed", args.join(" "));
-    }
+    command_runner::run(
+        CommandOptions::new(command, args.iter().copied())
+            .timeout(Duration::from_secs(600))
+            .prefix(LogPrefix::Proxmox),
+    )
+    .with_context(|| format!("failed to run `{command} {}`", args.join(" ")))?;
     Ok(())
 }
 
 fn run_command_with_context(command: &str, args: &[&str], help: &str) -> Result<()> {
-    let status = std::process::Command::new(command)
-        .args(args)
-        .status()
-        .with_context(|| format!("failed to run `{command} {}`", args.join(" ")))?;
-    if !status.success() {
-        bail!("`{command} {}` failed: {help}", args.join(" "));
-    }
+    command_runner::run(
+        CommandOptions::new(command, args.iter().copied())
+            .timeout(Duration::from_secs(600))
+            .prefix(LogPrefix::Proxmox),
+    )
+    .with_context(|| format!("`{command} {}` failed: {help}", args.join(" ")))?;
     Ok(())
 }
 
@@ -1280,29 +1585,32 @@ fn pci_iommu_group(pci_path: &str) -> Result<Option<String>> {
 }
 
 fn pci_hardware_id(pci_device: &str) -> Result<String> {
-    let output = std::process::Command::new("lspci")
-        .args(["-nns", pci_device])
-        .output()
-        .with_context(|| format!("failed to run `lspci -nns {pci_device}`"))?;
-    if !output.status.success() {
-        bail!("`lspci -nns {pci_device}` failed");
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_lspci_hardware_id(&stdout)
+    let output = command_runner::run(
+        CommandOptions::new("lspci", ["-nns", pci_device])
+            .timeout(Duration::from_secs(20))
+            .prefix(LogPrefix::Vmctl)
+            .fail_on_proxmox_patterns(false),
+    )
+    .with_context(|| format!("failed to run `lspci -nns {pci_device}`"))?;
+    parse_lspci_hardware_id(&output.stdout)
         .map(str::to_string)
-        .with_context(|| format!("could not parse vendor/device id from lspci output: {stdout}"))
+        .with_context(|| {
+            format!(
+                "could not parse vendor/device id from lspci output: {}",
+                output.stdout
+            )
+        })
 }
 
 fn pci_subsystem_id(pci_device: &str) -> Result<Option<String>> {
-    let output = std::process::Command::new("lspci")
-        .args(["-nnvs", pci_device])
-        .output()
-        .with_context(|| format!("failed to run `lspci -nnvs {pci_device}`"))?;
-    if !output.status.success() {
-        bail!("`lspci -nnvs {pci_device}` failed");
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(parse_lspci_subsystem_id(&stdout).map(str::to_string))
+    let output = command_runner::run(
+        CommandOptions::new("lspci", ["-nnvs", pci_device])
+            .timeout(Duration::from_secs(20))
+            .prefix(LogPrefix::Vmctl)
+            .fail_on_proxmox_patterns(false),
+    )
+    .with_context(|| format!("failed to run `lspci -nnvs {pci_device}`"))?;
+    Ok(parse_lspci_subsystem_id(&output.stdout).map(str::to_string))
 }
 
 fn parse_lspci_hardware_id(output: &str) -> Option<&str> {
@@ -1334,18 +1642,15 @@ fn command_output_contains(command: &str, args: &[&str], needle: &str) -> bool {
 }
 
 fn command_output(command: &str, args: &[&str]) -> Option<String> {
-    std::process::Command::new(command)
-        .args(args)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| {
-            format!(
-                "{}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            )
-        })
+    command_runner::run(
+        CommandOptions::new(command, args.iter().copied())
+            .timeout(Duration::from_secs(20))
+            .prefix(LogPrefix::Proxmox)
+            .stream(false)
+            .fail_on_proxmox_patterns(false),
+    )
+    .ok()
+    .map(|output| output.combined)
 }
 
 fn default_proxmox_token_principal() -> Option<String> {
@@ -1825,6 +2130,69 @@ mod tests {
     }
 
     #[test]
+    fn apply_accepts_no_start_flag() {
+        Cli::command().debug_assert();
+        let cli = Cli::try_parse_from(["vmctl", "apply", "--no-start"]).unwrap();
+
+        assert!(matches!(cli.command, Command::Apply { no_start: true, .. }));
+    }
+
+    #[test]
+    fn apply_accepts_dry_run_flag() {
+        Cli::command().debug_assert();
+        let cli = Cli::try_parse_from(["vmctl", "apply", "--dry-run", "media-stack"]).unwrap();
+
+        assert!(matches!(
+            cli.command,
+            Command::Apply {
+                dry_run: true,
+                target: Some(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn inspect_and_debug_commands_parse() {
+        Cli::command().debug_assert();
+        let inspect = Cli::try_parse_from(["vmctl", "inspect", "media-stack"]).unwrap();
+        let debug = Cli::try_parse_from(["vmctl", "debug", "media-stack"]).unwrap();
+
+        assert!(matches!(
+            inspect.command,
+            Command::Inspect { target: Some(_) }
+        ));
+        assert!(matches!(debug.command, Command::Debug { name } if name == "media-stack"));
+    }
+
+    #[test]
+    fn inspect_workspace_is_safe_without_proxmox_commands() {
+        let desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::new(),
+            resources: Vec::new(),
+            normalized_resources: BTreeMap::from([(
+                "media-stack".to_string(),
+                vmctl_domain::NormalizedResource {
+                    name: "media-stack".to_string(),
+                    kind: "vm".to_string(),
+                    vmid: Some(210),
+                    disk_interface: Some("virtio".to_string()),
+                    iothread: Some(true),
+                    ..vmctl_domain::NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::new(),
+        };
+        let workspace = Workspace {
+            root: PathBuf::from("/tmp/nonexistent-vmctl-test"),
+            generated_dir: PathBuf::from("generated"),
+        };
+
+        inspect_workspace(&workspace, &desired, InspectMode::Inspect).unwrap();
+    }
+
+    #[test]
     fn backend_resource_addresses_match_generated_modules() {
         assert_eq!(
             backend_resource_address("media-stack", "vm").as_deref(),
@@ -1985,6 +2353,73 @@ mod tests {
     }
 
     #[test]
+    fn passthrough_vm_triggers_safe_no_start_guard() {
+        let mut features = BTreeMap::new();
+        features.insert(
+            "intel_igpu".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([(
+                "enabled".to_string(),
+                toml::Value::Boolean(true),
+            )])),
+        );
+        let desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::new(),
+            resources: Vec::new(),
+            normalized_resources: BTreeMap::from([(
+                "media-stack".to_string(),
+                vmctl_domain::NormalizedResource {
+                    name: "media-stack".to_string(),
+                    kind: "vm".to_string(),
+                    features,
+                    ..vmctl_domain::NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::new(),
+        };
+
+        assert!(has_vm_passthrough(&desired));
+    }
+
+    #[test]
+    fn disable_vm_start_only_mutates_vms() {
+        let mut desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::new(),
+            resources: Vec::new(),
+            normalized_resources: BTreeMap::from([
+                (
+                    "media-stack".to_string(),
+                    vmctl_domain::NormalizedResource {
+                        name: "media-stack".to_string(),
+                        kind: "vm".to_string(),
+                        started: Some(true),
+                        ..vmctl_domain::NormalizedResource::default()
+                    },
+                ),
+                (
+                    "gateway".to_string(),
+                    vmctl_domain::NormalizedResource {
+                        name: "gateway".to_string(),
+                        kind: "lxc".to_string(),
+                        started: Some(true),
+                        ..vmctl_domain::NormalizedResource::default()
+                    },
+                ),
+            ]),
+            expansions: BTreeMap::new(),
+        };
+
+        disable_vm_start(&mut desired);
+
+        assert_eq!(
+            desired.normalized_resources["media-stack"].started,
+            Some(false)
+        );
+        assert_eq!(desired.normalized_resources["gateway"].started, Some(true));
+    }
+
+    #[test]
     fn passthrough_preflight_rejects_raw_pci() {
         let err = check_passthrough_ready(&[PassthroughRequest {
             resource: "media-stack".to_string(),
@@ -1995,6 +2430,30 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("Raw hostpci requires"));
+    }
+
+    #[test]
+    fn apply_preflight_rejects_iothread_on_scsi_disk() {
+        let desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::new(),
+            resources: Vec::new(),
+            normalized_resources: BTreeMap::from([(
+                "media-stack".to_string(),
+                vmctl_domain::NormalizedResource {
+                    name: "media-stack".to_string(),
+                    kind: "vm".to_string(),
+                    disk_interface: Some("scsi0".to_string()),
+                    iothread: Some(true),
+                    ..vmctl_domain::NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::new(),
+        };
+
+        let err = validate_apply_preflight(&desired).unwrap_err();
+
+        assert!(err.to_string().contains("iothread=true"));
     }
 
     #[test]

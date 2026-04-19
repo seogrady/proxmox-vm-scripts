@@ -3,12 +3,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Map, Value};
+use std::time::Duration;
 use vmctl_backend::{
     ApplyResult, BackendPlan, BackendValidation, EngineBackend, PlanMode, RenderResult,
     TargetSelector,
 };
 use vmctl_domain::{DesiredState, ImageSource, NormalizedResource, Resource, Workspace};
 use vmctl_packs::PackRegistry;
+use vmctl_util::command_runner::{self, CommandOptions, LogPrefix};
 
 #[derive(Debug, Default)]
 pub struct TerraformBackend;
@@ -297,9 +299,64 @@ fn validate_live_inputs(desired: &DesiredState) -> Result<()> {
                 resource.name
             );
         }
+        validate_vm_preflight(&normalized)?;
     }
 
     Ok(())
+}
+
+fn validate_vm_preflight(resource: &NormalizedResource) -> Result<()> {
+    if resource.kind != "vm" {
+        return Ok(());
+    }
+
+    if resource.machine.as_deref() == Some("q35") && vmctl_util::command_exists("qm") {
+        let q35_config = Path::new("/usr/share/qemu-server/pve-q35.cfg");
+        if !q35_config.exists() {
+            bail!(
+                "vm resource `{}` requests machine=q35, but local Proxmox q35 config was not found at {}. Enable q35 support on the Proxmox host or use machine=\"i440fx\".",
+                resource.name,
+                q35_config.display()
+            );
+        }
+    }
+
+    let iothread = resource.iothread.unwrap_or(true);
+    let disk_interface = resource
+        .disk_interface
+        .as_deref()
+        .unwrap_or(default_vm_disk_interface());
+    if iothread && !iothread_compatible_disk(disk_interface) {
+        bail!(
+            "vm resource `{}` sets iothread=true with disk_interface={disk_interface}; use a virtio disk interface or set iothread=false",
+            resource.name
+        );
+    }
+
+    if let Some(cloud_init) = &resource.cloud_init {
+        if cloud_init
+            .ssh_key_file
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        {
+            bail!(
+                "vm resource `{}` cloud_init requires ssh_key_file before apply",
+                resource.name
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn iothread_compatible_disk(interface: &str) -> bool {
+    interface.starts_with("virtio") || interface == "virtio-scsi-single"
+}
+
+fn default_vm_disk_interface() -> &'static str {
+    "virtio"
 }
 
 fn write_json<T: serde::Serialize>(
@@ -413,7 +470,11 @@ fn image_download_resources_json(desired: &DesiredState) -> Map<String, Value> {
     desired
         .images
         .values()
-        .filter(|image| image.source == ImageSource::Url)
+        .filter(|image| {
+            image.source == ImageSource::Url
+                && !image_cached_locally(image)
+                && image_needed_for_new_resource(image, desired)
+        })
         .map(|image| {
             let mut body = Map::new();
             body.insert("node_name".to_string(), Value::String(image.node.clone()));
@@ -433,6 +494,8 @@ fn image_download_resources_json(desired: &DesiredState) -> Map<String, Value> {
                 "url".to_string(),
                 Value::String(image.url.clone().unwrap_or_default()),
             );
+            body.insert("overwrite".to_string(), Value::Bool(true));
+            body.insert("overwrite_unmanaged".to_string(), Value::Bool(true));
             if let Some(algorithm) = &image.checksum_algorithm {
                 body.insert(
                     "checksum_algorithm".to_string(),
@@ -464,9 +527,14 @@ fn outputs_json() -> serde_json::Value {
 
 fn module_json(resource: &Resource, desired: &DesiredState) -> Value {
     let normalized = desired.normalized_resources.get(&resource.name);
-    let module_resource = normalized
+    let mut module_resource = normalized
         .cloned()
         .unwrap_or_else(|| normalize_fallback(resource));
+    if module_resource.kind == "vm" && module_resource.disk_interface.is_none() {
+        if let Some(interface) = current_vm_disk_interface(module_resource.vmid) {
+            module_resource.disk_interface = Some(interface);
+        }
+    }
     let mut module = Map::new();
     module.insert(
         "source".to_string(),
@@ -538,6 +606,12 @@ fn image_ref(resource: &Resource, desired: &DesiredState) -> Option<Value> {
         .as_ref()
         .and_then(|name| desired.images.get(name))?;
     if image.source == ImageSource::Url {
+        if resource_exists_locally(resource, desired) {
+            return Some(Value::String(image.volume_id.clone()));
+        }
+        if image_cached_locally(image) {
+            return Some(Value::String(image.volume_id.clone()));
+        }
         Some(Value::String(format!(
             "${{proxmox_virtual_environment_download_file.{}.id}}",
             image_resource_name(&image.name)
@@ -552,7 +626,10 @@ fn image_dependency(resource: &Resource, desired: &DesiredState) -> Option<Strin
         .image
         .as_ref()
         .and_then(|name| desired.images.get(name))?;
-    if image.source == ImageSource::Url {
+    if image.source == ImageSource::Url
+        && !resource_exists_locally(resource, desired)
+        && !image_cached_locally(image)
+    {
         Some(format!(
             "proxmox_virtual_environment_download_file.{}",
             image_resource_name(&image.name)
@@ -560,6 +637,118 @@ fn image_dependency(resource: &Resource, desired: &DesiredState) -> Option<Strin
     } else {
         None
     }
+}
+
+fn image_needed_for_new_resource(
+    image: &vmctl_domain::ResolvedImage,
+    desired: &DesiredState,
+) -> bool {
+    desired
+        .resources
+        .iter()
+        .filter(|resource| resource.image.as_deref() == Some(image.name.as_str()))
+        .any(|resource| !resource_exists_locally(resource, desired))
+}
+
+fn resource_exists_locally(resource: &Resource, desired: &DesiredState) -> bool {
+    if cfg!(test) && std::env::var_os("VMCTL_TEST_LIVE_PROXMOX").is_none() {
+        return false;
+    }
+    let vmid = desired
+        .normalized_resources
+        .get(&resource.name)
+        .and_then(|resource| resource.vmid)
+        .or(resource.vmid);
+    let Some(vmid) = vmid else {
+        return false;
+    };
+    let vmid = vmid.to_string();
+    let command = match resource.kind.as_str() {
+        "vm" => "qm",
+        "lxc" => "pct",
+        _ => return false,
+    };
+    command_runner::run(
+        CommandOptions::new(command, ["status", &vmid])
+            .timeout(Duration::from_secs(20))
+            .prefix(LogPrefix::Proxmox)
+            .stream(false)
+            .fail_on_proxmox_patterns(false),
+    )
+    .is_ok()
+}
+
+fn current_vm_disk_interface(vmid: Option<u32>) -> Option<String> {
+    if cfg!(test) && std::env::var_os("VMCTL_TEST_LIVE_PROXMOX").is_none() {
+        return None;
+    }
+    let vmid = vmid?.to_string();
+    let output = command_runner::run(
+        CommandOptions::new("qm", ["config", &vmid])
+            .timeout(Duration::from_secs(20))
+            .prefix(LogPrefix::Proxmox)
+            .stream(false)
+            .fail_on_proxmox_patterns(false),
+    )
+    .ok()?;
+    output.combined.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        if key == "ide2" || !looks_like_disk_interface(key) {
+            return None;
+        }
+        let value = value.trim();
+        if value.contains(":vm-") || value.contains(":base-") || value.contains("size=") {
+            Some(disk_bus_from_interface(key).to_string())
+        } else {
+            None
+        }
+    })
+}
+
+fn looks_like_disk_interface(value: &str) -> bool {
+    ["virtio", "scsi", "sata", "ide"]
+        .iter()
+        .any(|prefix| value.starts_with(prefix))
+}
+
+fn disk_bus_from_interface(value: &str) -> &str {
+    value.trim_end_matches(|ch: char| ch.is_ascii_digit())
+}
+
+fn image_cached_locally(image: &vmctl_domain::ResolvedImage) -> bool {
+    if cfg!(test) && std::env::var_os("VMCTL_TEST_LIVE_PROXMOX").is_none() {
+        return false;
+    }
+    if image.source != ImageSource::Url {
+        return false;
+    }
+    let path_output = command_runner::run(
+        CommandOptions::new("pvesm", ["path", &image.volume_id])
+            .timeout(Duration::from_secs(20))
+            .prefix(LogPrefix::Proxmox)
+            .stream(false)
+            .fail_on_proxmox_patterns(false),
+    );
+    if let Ok(output) = path_output {
+        let path = output.stdout.trim();
+        if !path.is_empty() && Path::new(path).is_file() {
+            return true;
+        }
+    }
+
+    command_runner::run(
+        CommandOptions::new(
+            "pvesm",
+            ["list", &image.storage, "--content", &image.content_type],
+        )
+        .timeout(Duration::from_secs(20))
+        .prefix(LogPrefix::Proxmox)
+        .stream(false)
+        .fail_on_proxmox_patterns(false),
+    )
+    .ok()
+    .map(|output| output.stdout.contains(&image.file_name))
+    .unwrap_or(false)
 }
 
 fn write_base_modules(generated: &Path, include_proxmox_resources: bool) -> Result<Vec<PathBuf>> {
@@ -675,9 +864,12 @@ fn vm_resource_json() -> (String, Value) {
                 "name": "${var.resource.name}",
                 "node_name": "${var.node_name}",
                 "vm_id": "${try(var.resource.vmid, null)}",
+                "lifecycle": {
+                    "ignore_changes": ["disk", "initialization"]
+                },
                 "machine": "${try(var.resource.machine, try(var.resource.features.intel_igpu.enabled, false) ? \"q35\" : null)}",
                 "on_boot": "${try(var.resource.start_on_boot, true)}",
-                "started": "${try(var.resource.start_on_boot, true)}",
+                "started": "${coalesce(try(var.resource.started, null), try(var.resource.start_on_boot, true))}",
                 "tags": "${try(var.resource.tags, [])}",
                 "agent": [{
                     "enabled": "${try(var.resource.agent, true)}"
@@ -692,8 +884,8 @@ fn vm_resource_json() -> (String, Value) {
                 "disk": [{
                     "datastore_id": "${var.storage}",
                     "import_from": "${try(var.resource.clone_vmid, null) == null && strcontains(var.template, \"proxmox_virtual_environment_download_file.\") ? var.template : null}",
-                    "interface": "scsi0",
-                    "iothread": true,
+                    "interface": "${coalesce(try(var.resource.disk_interface, null), \"virtio\")}",
+                    "iothread": "${coalesce(try(var.resource.iothread, null), true)}",
                     "discard": "on",
                     "size": "${try(var.resource.disk_gb, 8)}"
                 }],
@@ -927,30 +1119,27 @@ fn run_terraform_with_options(
 ) -> Result<String> {
     let binary = terraform_binary()?;
     let generated = workspace.root.join(&workspace.generated_dir);
-    let output = std::process::Command::new(binary)
-        .args(args)
-        .current_dir(&generated)
-        .output()
-        .with_context(|| format!("failed to run `{binary} {}`", args.join(" ")))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = if stderr.trim().is_empty() {
-        stdout.to_string()
+    let timeout = if args.first() == Some(&"apply") || args.first() == Some(&"destroy") {
+        Duration::from_secs(1800)
     } else {
-        format!("{stdout}\n{stderr}")
+        Duration::from_secs(600)
     };
-
-    if !output.status.success() {
-        let error_output = if include_full_error_output {
-            combined
-        } else {
-            concise_terraform_error(&combined)
-        };
-        bail!("`{binary} {}` failed:\n{error_output}", args.join(" "));
+    match command_runner::run(
+        CommandOptions::new(binary, args.iter().copied())
+            .cwd(generated)
+            .timeout(timeout)
+            .prefix(LogPrefix::Terraform),
+    ) {
+        Ok(output) => Ok(output.combined),
+        Err(error) => {
+            if include_full_error_output {
+                Err(error.into())
+            } else {
+                let concise = concise_terraform_error(&error.to_string());
+                bail!("{concise}")
+            }
+        }
     }
-
-    Ok(combined)
 }
 
 fn concise_terraform_error(output: &str) -> String {
@@ -1292,6 +1481,13 @@ mod tests {
             vm["disk"][0]["import_from"],
             "${try(var.resource.clone_vmid, null) == null && strcontains(var.template, \"proxmox_virtual_environment_download_file.\") ? var.template : null}"
         );
+    }
+
+    #[test]
+    fn disk_bus_strips_proxmox_slot_number() {
+        assert_eq!(disk_bus_from_interface("scsi0"), "scsi");
+        assert_eq!(disk_bus_from_interface("virtio12"), "virtio");
+        assert_eq!(disk_bus_from_interface("sata1"), "sata");
     }
 
     #[test]

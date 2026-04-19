@@ -1,0 +1,131 @@
+version = 1
+backend = "tofu"
+generated_at = "unix:0"
+
+[[resources]]
+name = "tailscale-gateway"
+kind = "lxc"
+vmid = 101
+backend_address = "module.tailscale_gateway.proxmox_virtual_environment_container.this"
+digest = "sha256:5d9b3f57177d5f6135a0e33d8be323eaa84da1948dc82e32c1452874ec8c2059"
+exists = true
+
+[[resources]]
+name = "media-stack"
+kind = "vm"
+vmid = 210
+backend_address = "module.media_stack.proxmox_virtual_environment_vm.this"
+digest = "sha256:9c63983dcf8c2f46081d12ca45944ef4f799e88ee592c5eff8bffed4f020f9aa"
+exists = true
+
+[[artifacts]]
+path = ".terraform/modules/modules.json"
+digest = "sha256:90621f2817bed4ba5b96713bb2be56f3ea5b8e7c387414f986e35fa9d90d9699"
+
+[[artifacts]]
+path = ".terraform/providers/registry.opentofu.org/bpg/proxmox/0.98.0/linux_amd64/CHANGELOG.md"
+digest = "sha256:8c13c1e5ce756e0a189d57c5ba243e1ef414edce7e785ec7cd7f1dd5c869da68"
+
+[[artifacts]]
+path = ".terraform/providers/registry.opentofu.org/bpg/proxmox/0.98.0/linux_amd64/LICENSE"
+digest = "sha256:1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+
+[[artifacts]]
+path = ".terraform/providers/registry.opentofu.org/bpg/proxmox/0.98.0/linux_amd64/README.md"
+digest = "sha256:7f9aa88ddad42eddf8e9f20b6f85a4d8050599ec61b24bc9b6537f6da5ce3e2b"
+
+[[artifacts]]
+path = ".terraform/providers/registry.opentofu.org/bpg/proxmox/0.98.0/linux_amd64/terraform-provider-proxmox_v0.98.0"
+digest = "sha256:a5a76501f8325068c972bff3e80cf877556292834e92324297e8d30fb4ab444f"
+
+[[artifacts]]
+path = ".terraform/providers/registry.opentofu.org/bpg/proxmox/0.98.0/linux_amd64.lock"
+digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+[[artifacts]]
+path = ".terraform.lock.hcl"
+digest = "sha256:1936aefac902f77b492259cbf9649c367de2fa7c0e743ca47614e9acbefabea3"
+
+[[artifacts]]
+path = "desired-state.json"
+digest = "sha256:f97bcbc093e150580e5f1b5ca8566ff9d791af0f1733a9fbb09891c88db7445c"
+
+[[artifacts]]
+path = "main.tf.json"
+digest = "sha256:87b7174f3f0dcd225fc3893896edbdc468f3b8c200b74e7ef7c7fed27d8901ef"
+
+[[artifacts]]
+path = "modules/lxc/main.tf.json"
+digest = "sha256:385b33f80dbc2256934d0cfed18869ebaba03a691b67277859c7673fde557a00"
+
+[[artifacts]]
+path = "modules/lxc/outputs.tf.json"
+digest = "sha256:a8b4e971e9976340db30491799641e9a4b25177a27171fb9cdfe1f2b6295d2e4"
+
+[[artifacts]]
+path = "modules/lxc/variables.tf.json"
+digest = "sha256:3bf2e8f61ed0a14865dd622bb89eac819556f929e386ae113312803d27211736"
+
+[[artifacts]]
+path = "modules/vm/main.tf.json"
+digest = "sha256:8c6371474a5c220b8bf1811f1d6fc5f063d32a4513b30e775b8bc9afc441c207"
+
+[[artifacts]]
+path = "modules/vm/outputs.tf.json"
+digest = "sha256:ce471fdc203476f7795966c853c81c56db6369f29294c63b142c9609e5bae3f9"
+
+[[artifacts]]
+path = "modules/vm/variables.tf.json"
+digest = "sha256:868ea0c53f2a254b4159e821401828df8fbccd07d11ca2ecd869b9bebd925818"
+
+[[artifacts]]
+path = "outputs.tf.json"
+digest = "sha256:73070ede9ee5430938a2d24e6f23497ec5bb9f67bf8951c45ab849e54247aa9e"
+
+[[artifacts]]
+path = "provider.tf.json"
+digest = "sha256:25a648e2113f1c363bf2c68671f1a2dd0623034bf374400836c7c6b9f620f597"
+
+[[artifacts]]
+path = "resources/media-stack/docker-compose.media"
+digest = "sha256:4347c065822b3b1ff72911e94f1da4f4a0ddbaaea0de3c412b7fc7bc8b1e5338"
+
+[[artifacts]]
+path = "resources/media-stack/media.env"
+digest = "sha256:a3dfbe9cd315224863f7d3c866d7413d7cfd8ffb71c4fdb2f45bca8b4f5e671b"
+
+[[artifacts]]
+path = "resources/media-stack/scripts/bootstrap-media.sh"
+digest = "sha256:75190a835adf14b10c16939bc74e69779d5d45b27094b3071fa788c654fdf9c8"
+
+[[artifacts]]
+path = "resources/media-stack/scripts/bootstrap-tailscale.sh"
+digest = "sha256:8cdebc11598582a0409889735c269b3ff04ef23bc5faf18c71d0603327f706ff"
+
+[[artifacts]]
+path = "resources/media-stack/tailscale-setup.sh"
+digest = "sha256:4957fa2b98e966ff6b7eba22ca7fd06f57d62d9d48ff9a1a1007bbfc1e49dff2"
+
+[[artifacts]]
+path = "resources/tailscale-gateway/scripts/bootstrap-tailscale.sh"
+digest = "sha256:8cdebc11598582a0409889735c269b3ff04ef23bc5faf18c71d0603327f706ff"
+
+[[artifacts]]
+path = "resources/tailscale-gateway/tailscale-setup.sh"
+digest = "sha256:b2c4e26f371e930bad13c182a449f365b9b22b28cb30cff8ddcd84b90a4f4ac8"
+
+[[artifacts]]
+path = "terraform.tfstate"
+digest = "sha256:ff2b61a5a1f707d13c8614d04a1fb6db51c6f8197d99198d72bf254c87fd2563"
+
+[[artifacts]]
+path = "terraform.tfstate.backup"
+digest = "sha256:bbb6ec11be080cf5948f1ec5de02f7c3ca81167c6db436a031fcda089aafb630"
+
+[[artifacts]]
+path = "terraform.tfvars.json"
+digest = "sha256:26cd04bcacfed8104b07ae1e367df9d2ec5b55f0ece792c8a6ea2e7fb1a7533d"
+
+[[artifacts]]
+path = "variables.tf.json"
+digest = "sha256:e0f0ac6c6133a36a7f9da541e1de6b0c2b137a51e1c5872bc80ea9b151571af8"

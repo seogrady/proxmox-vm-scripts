@@ -1,3 +1,5 @@
+pub mod command_runner;
+
 pub fn command_exists(command: &str) -> bool {
     std::env::var_os("PATH")
         .into_iter()
