@@ -1924,7 +1924,7 @@ mod tests {
     #[test]
     fn missing_existing_vm_image_error_mentions_recovery_steps() {
         let image = ResolvedImage {
-            name: "ubuntu_24_cloudinit_template".to_string(),
+            name: "ubuntu_24_cloud_image".to_string(),
             kind: ImageKind::Vm,
             source: ImageSource::Existing,
             node: "mini".to_string(),

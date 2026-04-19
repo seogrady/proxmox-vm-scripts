@@ -30,7 +30,9 @@
             "enabled": true
           },
           "intel_igpu": {
-            "enabled": false
+            "enabled": true,
+            "mapping": "intel-igpu",
+            "pci_device": "00:02.0"
           },
           "media_services": {
             "enabled": true,
