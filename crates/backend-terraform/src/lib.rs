@@ -675,6 +675,7 @@ fn vm_resource_json() -> (String, Value) {
                 "name": "${var.resource.name}",
                 "node_name": "${var.node_name}",
                 "vm_id": "${try(var.resource.vmid, null)}",
+                "machine": "${try(var.resource.machine, try(var.resource.features.intel_igpu.enabled, false) ? \"q35\" : null)}",
                 "on_boot": "${try(var.resource.start_on_boot, true)}",
                 "started": "${try(var.resource.start_on_boot, true)}",
                 "tags": "${try(var.resource.tags, [])}",

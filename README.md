@@ -384,7 +384,9 @@ device to the VM.
 
    `pci_device` is used by `vmctl passthrough prepare` to create the Proxmox
    mapping. The generated VM hardware uses `mapping`, not raw hostpci, when
-   `mapping` is set.
+   `mapping` is set. VMs with `features.intel_igpu.enabled = true` also default
+   to `machine = "q35"`, which Proxmox requires for PCIe passthrough. Set a
+   resource-level `machine` only if you need to override that default.
 
 5. Run vmctl passthrough checks.
 
