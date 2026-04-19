@@ -301,42 +301,142 @@ client's general internet traffic through your homelab; they are useful for
 egress, not required for accessing homelab services. Enable
 `features.tailscale.exit_node = true` only when that is the intended behavior.
 
-iGPU passthrough is disabled in the example because raw PCI devices such as
-`00:02.0` can only be assigned by `root@pam`. When using a Proxmox API token,
-create a Proxmox PCI resource mapping and configure that mapping instead:
+### iGPU Passthrough
 
-```toml
-[resources.features.intel_igpu]
-enabled = true
-mapping = "intel-igpu"
-pci_device = "00:02.0"
-```
+iGPU passthrough is useful for media servers because Jellyfin and related
+services can use hardware transcoding through Intel Quick Sync. It requires
+firmware support, Proxmox host support, and a safe way for vmctl to attach the
+device to the VM.
 
-The `pci_device` value is used by `vmctl passthrough prepare` to create the
-mapping. The generated VM hardware uses the mapping name, not raw hostpci, when
-`mapping` is set.
+1. Enable firmware settings in BIOS/UEFI.
 
-Passthrough checks run automatically during `vmctl apply` before OpenTofu
-applies changes. You can run them directly with:
+   The exact names vary by motherboard, but look for:
 
-```bash
-vmctl passthrough doctor
-```
+   - Intel VT-d
+   - IOMMU
+   - Intel Virtualization Technology for Directed I/O
+   - Above 4G Decoding, if available
+   - SR-IOV, if available
 
-To create missing Proxmox PCI resource mappings from config:
+   Save settings and boot back into Proxmox.
 
-```bash
-vmctl passthrough prepare --dry-run
-vmctl passthrough prepare
-```
+2. Verify the Proxmox host sees the iGPU.
 
-`prepare` can create Proxmox PCI mappings with `pvesh`, but it will not change
-BIOS settings or kernel boot arguments. If IOMMU groups are missing under
-`/sys/kernel/iommu_groups`, enable VT-d/IOMMU in BIOS and configure the Proxmox
-kernel for IOMMU, then reboot.
+   On the Proxmox host:
 
-Use raw `pci_device = "00:02.0"` without `mapping` only when applying as an
-interactive `root@pam` session and you intend to grant raw host PCI access.
+   ```bash
+   lspci -nn | grep -Ei 'vga|display|intel'
+   ```
+
+   The example config assumes the iGPU is:
+
+   ```text
+   00:02.0
+   ```
+
+   Use the PCI address from your host if it differs.
+
+3. Verify IOMMU is active.
+
+   Run:
+
+   ```bash
+   find /sys/kernel/iommu_groups -type l | head
+   ```
+
+   If that prints nothing, firmware or kernel-side IOMMU is not active. vmctl
+   will detect this, but it will not change BIOS settings or bootloader
+   arguments automatically because those changes can take the host offline.
+
+4. Prefer a Proxmox PCI resource mapping.
+
+   Raw PCI passthrough, such as `hostpci0: 00:02.0`, can only be configured by
+   `root@pam`. That is why an API-token apply can fail with:
+
+   ```text
+   only root can set 'hostpci0' config for non-mapped devices
+   ```
+
+   A Proxmox PCI resource mapping gives the device a stable logical name, such
+   as `intel-igpu`. vmctl can then reference the mapping instead of sending the
+   raw PCI address in VM config. This is better for API-token workflows, easier
+   to audit, and safer if the cluster grows later.
+
+   Configure vmctl with both the mapping name and the physical PCI device:
+
+   ```toml
+   [resources.features.intel_igpu]
+   enabled = true
+   mapping = "intel-igpu"
+   pci_device = "00:02.0"
+   ```
+
+   `pci_device` is used by `vmctl passthrough prepare` to create the Proxmox
+   mapping. The generated VM hardware uses `mapping`, not raw hostpci, when
+   `mapping` is set.
+
+5. Run vmctl passthrough checks.
+
+   Passthrough checks run automatically during `vmctl apply` before OpenTofu
+   applies changes. You can run them directly with:
+
+   ```bash
+   vmctl passthrough doctor
+   ```
+
+   `doctor` checks whether passthrough is enabled in config, whether IOMMU
+   groups exist, and whether the configured Proxmox PCI mapping exists.
+
+6. Create the Proxmox PCI mapping from config.
+
+   Preview first:
+
+   ```bash
+   vmctl passthrough prepare --dry-run
+   ```
+
+   Then create it:
+
+   ```bash
+   vmctl passthrough prepare
+   ```
+
+   `prepare` resolves the vendor/device ID with `lspci` and creates a mapping
+   similar to:
+
+   ```bash
+   pvesh create /cluster/mapping/pci --id intel-igpu \
+     --map node=mini,path=0000:00:02.0,id=8086:46a6
+   ```
+
+   If you create the mapping manually instead, use the Proxmox UI:
+   `Datacenter` -> `Resource Mappings` -> `PCI Devices` -> `Add`.
+
+7. Grant the API token mapping permission.
+
+   The token used by vmctl needs permission to use the mapping:
+
+   ```text
+   Mapping.Use on /mapping/pci/intel-igpu
+   ```
+
+   It also needs the normal VM configuration permissions used by vmctl.
+
+8. Apply the config.
+
+   ```bash
+   vmctl apply
+   ```
+
+Using `root@pam` for passthrough is possible, but it is not the recommended
+default for vmctl automation. `root@pam` can configure raw host PCI devices and
+is useful for one-off manual recovery or debugging, but it gives the automation
+full host control. A dedicated API token plus a PCI resource mapping limits the
+dangerous part to a named mapping and keeps vmctl's normal apply path more
+auditable.
+
+Use raw `pci_device = "00:02.0"` without `mapping` only when applying through an
+interactive `root@pam` session and you intentionally want raw host PCI access.
 
 Image commands:
 
