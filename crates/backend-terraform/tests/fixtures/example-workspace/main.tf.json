@@ -4,6 +4,100 @@
     "vmctl_resource_names": "${[for resource in var.resources : resource.name]}"
   },
   "module": {
+    "kodi_htpc": {
+      "bridge": "vmbr0",
+      "node_name": "mini",
+      "resource": {
+        "agent": true,
+        "bridge": "vmbr0",
+        "clone_vmid": null,
+        "cloud_init": {
+          "ssh_key_file": "/home/me/.ssh/id_ed25519.pub",
+          "user": "ubuntu"
+        },
+        "cores": 4,
+        "depends_on": [],
+        "description": "Kodi living room HTPC VM managed by vmctl",
+        "disk_gb": 32,
+        "disk_interface": "scsi",
+        "features": {
+          "htpc": {
+            "autostart": true,
+            "cec": true,
+            "enabled": true
+          },
+          "intel_igpu": {
+            "enabled": true,
+            "mapping": "intel-igpu",
+            "pci_device": "00:02.0"
+          },
+          "jellyfin": {
+            "enabled": true,
+            "password": "dummy-jellyfin-password",
+            "server_url": "http://media-stack.home.arpa:8096",
+            "username": "admin"
+          },
+          "remote": {
+            "enabled": true,
+            "event_server_port": 9777,
+            "web_port": 8080
+          },
+          "tailscale": {
+            "auth_key": "<redacted>",
+            "enabled": true,
+            "mode": "client",
+            "tags": [
+              "tag:homelab"
+            ]
+          }
+        },
+        "hostname": null,
+        "image": "ubuntu_24_cloud_image",
+        "iothread": false,
+        "kind": "vm",
+        "machine": "q35",
+        "memory": 4096,
+        "name": "kodi-htpc",
+        "nameserver": "1.1.1.1",
+        "network": {
+          "address": null,
+          "firewall": null,
+          "gateway": null,
+          "mac": null,
+          "mode": "dhcp",
+          "mtu": null,
+          "vlan_id": null
+        },
+        "node": null,
+        "os_type": null,
+        "provision": {
+          "host": "kodi-htpc",
+          "private_key_file": "<redacted>",
+          "retries": 20,
+          "retry_delay_seconds": 15,
+          "user": "ubuntu"
+        },
+        "role": "kodi_htpc",
+        "rootfs_gb": null,
+        "scsi_hardware": "virtio-scsi-single",
+        "searchdomain": "home.arpa",
+        "start_on_boot": true,
+        "storage": "local-lvm",
+        "tags": [
+          "vmctl",
+          "homelab"
+        ],
+        "template": "local:import/noble-server-cloudimg-amd64.qcow2",
+        "template_storage": null,
+        "vmid": 211
+      },
+      "source": "./modules/vm",
+      "storage": "local-lvm",
+      "template": "${proxmox_virtual_environment_download_file.image_ubuntu_24_cloud_image.id}",
+      "depends_on": [
+        "proxmox_virtual_environment_download_file.image_ubuntu_24_cloud_image"
+      ]
+    },
     "media_stack": {
       "bridge": "vmbr0",
       "depends_on": [
@@ -25,26 +119,28 @@
         ],
         "description": "Media stack VM managed by vmctl",
         "disk_gb": 64,
-        "disk_interface": null,
+        "disk_interface": "scsi",
         "features": {
           "docker": {
             "enabled": true
           },
-          "intel_igpu": {
-            "enabled": true,
-            "mapping": "intel-igpu",
-            "pci_device": "00:02.0"
-          },
           "media_services": {
             "enabled": true,
+            "jellyfin_admin_password": "dummy-jellyfin-password",
+            "jellyfin_admin_user": "admin",
+            "jellyfin_url": "http://media-stack.home.arpa:8096",
             "minimal": true,
             "services": [
+              "gluetun",
               "jellyfin",
               "sonarr",
               "radarr",
               "prowlarr",
-              "qbittorrent"
+              "qbittorrent-vpn"
             ]
+          },
+          "storage": {
+            "media_path": "/media"
           },
           "tailscale": {
             "auth_key": "<redacted>",
@@ -53,13 +149,21 @@
             "tags": [
               "tag:homelab"
             ]
+          },
+          "vpn": {
+            "enabled": false,
+            "provider": "mullvad",
+            "server_cities": "",
+            "type": "wireguard",
+            "wireguard_addresses": "",
+            "wireguard_private_key": "<redacted>"
           }
         },
-            "hostname": null,
+        "hostname": null,
         "image": "ubuntu_24_cloud_image",
-        "iothread": null,
+        "iothread": false,
         "kind": "vm",
-        "machine": "q35",
+        "machine": null,
         "memory": 8192,
         "name": "media-stack",
         "nameserver": "1.1.1.1",
@@ -75,7 +179,7 @@
         "node": null,
         "os_type": null,
         "provision": {
-              "host": "media-stack",
+          "host": "media-stack",
           "private_key_file": "<redacted>",
           "retries": 20,
           "retry_delay_seconds": 15,
@@ -83,7 +187,7 @@
         },
         "role": "media_stack",
         "rootfs_gb": null,
-        "scsi_hardware": null,
+        "scsi_hardware": "virtio-scsi-single",
         "searchdomain": "home.arpa",
         "start_on_boot": true,
         "storage": "local-lvm",
@@ -132,7 +236,7 @@
             ]
           }
         },
-            "hostname": null,
+        "hostname": null,
         "image": "debian_12_lxc",
         "iothread": null,
         "kind": "lxc",
@@ -152,7 +256,7 @@
         "node": null,
         "os_type": null,
         "provision": {
-              "host": "tailscale-gateway",
+          "host": "tailscale-gateway",
           "private_key_file": "<redacted>",
           "retries": 20,
           "retry_delay_seconds": 15,
@@ -177,6 +281,9 @@
       "template": "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
     }
   },
+  "terraform": {
+    "required_version": ">= 1.6.0"
+  },
   "resource": {
     "proxmox_virtual_environment_download_file": {
       "image_ubuntu_24_cloud_image": {
@@ -189,8 +296,5 @@
         "url": "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
       }
     }
-  },
-  "terraform": {
-    "required_version": ">= 1.6.0"
   }
 }

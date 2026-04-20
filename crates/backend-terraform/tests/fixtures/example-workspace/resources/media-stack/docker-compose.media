@@ -38,7 +38,7 @@ services:
       - "9696:9696"
     volumes:
       - "${CONFIG_PATH}/prowlarr:/config"
-  qbittorrent:
+  qbittorrent-vpn:
     image: "lscr.io/linuxserver/qbittorrent:latest"
     env_file:
       - .env

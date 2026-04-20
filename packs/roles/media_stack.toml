@@ -8,11 +8,12 @@ requires = ["docker"]
 enabled = true
 minimal = true
 services = [
+  "gluetun",
   "jellyfin",
   "sonarr",
   "radarr",
   "prowlarr",
-  "qbittorrent",
+  "qbittorrent-vpn",
   "jellyseerr",
   "bazarr",
   "homarr",
@@ -20,8 +21,16 @@ services = [
   "jellystat",
 ]
 
+[features.storage]
+media_path = "/media"
+
+[features.vpn]
+enabled = false
+provider = "mullvad"
+type = "wireguard"
+
 [render]
 templates = ["docker-compose.media.hbs", "media.env.hbs", "tailscale-setup.sh.hbs"]
 
 [scripts]
-bootstrap = ["bootstrap-tailscale.sh", "bootstrap-media.sh"]
+bootstrap = ["bootstrap-node.sh", "bootstrap-tailscale.sh", "bootstrap-media.sh", "bootstrap-jellyfin.sh", "bootstrap-qbittorrent.sh", "bootstrap-arr.sh"]

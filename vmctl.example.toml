@@ -41,6 +41,11 @@ PROXMOX_TOKEN_SECRET = "${PROXMOX_TOKEN_SECRET}"
 TAILSCALE_AUTH_KEY = "${TAILSCALE_AUTH_KEY}"
 DEFAULT_SSH_KEY_FILE = "${DEFAULT_SSH_KEY_FILE}"
 DEFAULT_SSH_PRIVATE_KEY_FILE = "${DEFAULT_SSH_PRIVATE_KEY_FILE}"
+JELLYFIN_ADMIN_USER = "admin"
+JELLYFIN_ADMIN_PASSWORD = "${JELLYFIN_ADMIN_PASSWORD}"
+WIREGUARD_PRIVATE_KEY = ""
+WIREGUARD_ADDRESSES = ""
+VPN_SERVER_CITIES = ""
 
 [images.debian_12_lxc]
 kind = "lxc"
@@ -101,6 +106,9 @@ vmid = 210
 cores = 6
 memory = 8192
 disk_gb = 64
+disk_interface = "scsi"
+scsi_hardware = "virtio-scsi-single"
+iothread = false
 description = "Media stack VM managed by vmctl"
 depends_on = ["${tailscale_gateway}"]
 
@@ -124,14 +132,76 @@ mode = "client"
 auth_key = "${TAILSCALE_AUTH_KEY}"
 tags = ["${default_tailnet_tag}"]
 
-[resources.features.intel_igpu]
-enabled = true
-# Raw PCI devices such as "00:02.0" require root@pam. Prefer a Proxmox PCI
-# resource mapping when using an API token.
-mapping = "intel-igpu"
-pci_device = "00:02.0"
-
 [resources.features.media_services]
 enabled = true
 minimal = true
-services = ["jellyfin", "sonarr", "radarr", "prowlarr", "qbittorrent"]
+services = ["gluetun", "jellyfin", "sonarr", "radarr", "prowlarr", "qbittorrent-vpn"]
+jellyfin_url = "http://media-stack.${domain}:8096"
+jellyfin_admin_user = "${JELLYFIN_ADMIN_USER}"
+jellyfin_admin_password = "${JELLYFIN_ADMIN_PASSWORD}"
+
+[resources.features.storage]
+# Mount a NAS or external volume here later; containers still see it as /media.
+media_path = "/media"
+
+[resources.features.vpn]
+enabled = false
+provider = "mullvad"
+type = "wireguard"
+wireguard_private_key = "${WIREGUARD_PRIVATE_KEY}"
+wireguard_addresses = "${WIREGUARD_ADDRESSES}"
+server_cities = "${VPN_SERVER_CITIES}"
+
+[[resources]]
+name = "kodi-htpc"
+kind = "vm"
+image = "ubuntu_24_cloud_image"
+role = "kodi_htpc"
+vmid = 211
+cores = 4
+memory = 4096
+disk_gb = 32
+disk_interface = "scsi"
+scsi_hardware = "virtio-scsi-single"
+iothread = false
+description = "Kodi living room HTPC VM managed by vmctl"
+depends_on = []
+
+[resources.network]
+mode = "dhcp"
+
+[resources.cloud_init]
+user = "ubuntu"
+ssh_key_file = "${DEFAULT_SSH_KEY_FILE}"
+
+[resources.provision]
+user = "ubuntu"
+private_key_file = "${DEFAULT_SSH_PRIVATE_KEY_FILE}"
+
+[resources.features.tailscale]
+enabled = true
+mode = "client"
+auth_key = "${TAILSCALE_AUTH_KEY}"
+tags = ["${default_tailnet_tag}"]
+
+[resources.features.intel_igpu]
+enabled = true
+# The HTPC owns the HDMI-capable GPU for real living room output.
+mapping = "intel-igpu"
+pci_device = "00:02.0"
+
+[resources.features.htpc]
+enabled = true
+autostart = true
+cec = true
+
+[resources.features.remote]
+enabled = true
+web_port = 8080
+event_server_port = 9777
+
+[resources.features.jellyfin]
+enabled = true
+server_url = "http://media-stack.${domain}:8096"
+username = "${JELLYFIN_ADMIN_USER}"
+password = "${JELLYFIN_ADMIN_PASSWORD}"

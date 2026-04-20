@@ -243,6 +243,9 @@ fn resource_steps(
     normalized: &NormalizedResource,
     expansion: &Expansion,
 ) -> Result<Vec<ProvisionStep>> {
+    if normalized.kind == "vm" && normalized.started == Some(false) {
+        return Ok(Vec::new());
+    }
     if expansion.bootstrap_steps.is_empty() {
         return Ok(Vec::new());
     }
@@ -364,6 +367,55 @@ mod tests {
             plan.steps[0].local_script,
             PathBuf::from("/repo/backend/generated/workspace/resources/media-stack/scripts/bootstrap-media.sh")
         );
+    }
+
+    #[test]
+    fn skips_stopped_vms() {
+        let workspace = Workspace {
+            root: PathBuf::from("/repo"),
+            generated_dir: PathBuf::from("backend/generated/workspace"),
+        };
+        let desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::new(),
+            resources: vec![Resource {
+                name: "kodi-htpc".to_string(),
+                kind: "vm".to_string(),
+                image: None,
+                role: Some("kodi_htpc".to_string()),
+                vmid: Some(211),
+                depends_on: Vec::new(),
+                features: BTreeMap::new(),
+                settings: BTreeMap::new(),
+            }],
+            normalized_resources: BTreeMap::from([(
+                "kodi-htpc".to_string(),
+                NormalizedResource {
+                    name: "kodi-htpc".to_string(),
+                    kind: "vm".to_string(),
+                    started: Some(false),
+                    provision: Some(ProvisionConfig {
+                        host: Some("kodi-htpc.home.arpa".to_string()),
+                        user: Some("ubuntu".to_string()),
+                        private_key_file: Some("/home/me/.ssh/id_ed25519".to_string()),
+                        retries: Some(3),
+                        retry_delay_seconds: Some(1),
+                    }),
+                    ..NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::from([(
+                "kodi-htpc".to_string(),
+                Expansion {
+                    bootstrap_steps: vec!["bootstrap-kodi.sh".to_string()],
+                    ..Expansion::default()
+                },
+            )]),
+        };
+
+        let plan = build_provision_plan(&workspace, &desired).unwrap();
+
+        assert!(plan.steps.is_empty());
     }
 
     #[test]

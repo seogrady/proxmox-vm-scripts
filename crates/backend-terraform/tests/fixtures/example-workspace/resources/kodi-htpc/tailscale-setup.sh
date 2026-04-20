@@ -8,8 +8,8 @@ if [[ "$VMCTL_TAILSCALE_ENABLED" != "1" ]]; then
 fi
 
 VMCTL_TAILSCALE_AUTH_KEY="tskey-fixture"
-VMCTL_TAILSCALE_HOSTNAME="tailscale-gateway"
-VMCTL_TAILSCALE_ROUTES="192.168.86.0/24"
+VMCTL_TAILSCALE_HOSTNAME="kodi-htpc"
+VMCTL_TAILSCALE_ROUTES=""
 VMCTL_TAILSCALE_TAGS="tag:homelab"
 VMCTL_TAILSCALE_ACCEPT_ROUTES=0
 VMCTL_TAILSCALE_EXIT_NODE=0
@@ -31,7 +31,6 @@ fi
 if [[ "$already_authenticated" == "1" ]]; then
   set_args=()
   set_args+=(--hostname "$VMCTL_TAILSCALE_HOSTNAME")
-  set_args+=(--advertise-routes "$VMCTL_TAILSCALE_ROUTES")
   if ((${#set_args[@]} > 0)); then
     tailscale set "${set_args[@]}"
   fi
@@ -45,14 +44,7 @@ fi
 
 args=(--reset --auth-key "$VMCTL_TAILSCALE_AUTH_KEY")
 args+=(--hostname "$VMCTL_TAILSCALE_HOSTNAME")
-args+=(--advertise-routes "$VMCTL_TAILSCALE_ROUTES")
 args+=(--advertise-tags "$VMCTL_TAILSCALE_TAGS")
 
-cat >/etc/sysctl.d/99-tailscale-forwarding.conf <<'EOF'
-net.ipv4.ip_forward = 1
-net.ipv6.conf.all.forwarding = 1
-EOF
-sysctl -w net.ipv4.ip_forward=1
-sysctl -w net.ipv6.conf.all.forwarding=1
 
 tailscale up "${args[@]}"

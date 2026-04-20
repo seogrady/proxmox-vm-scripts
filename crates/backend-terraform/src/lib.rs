@@ -44,20 +44,41 @@ impl TerraformBackend {
         verbose: bool,
         refresh: bool,
     ) -> Result<ApplyResult> {
+        self.apply_with_output_refresh_target(workspace, desired, registry, verbose, refresh, None)
+    }
+
+    pub fn apply_with_output_refresh_target(
+        &self,
+        workspace: &Workspace,
+        desired: &DesiredState,
+        registry: &PackRegistry,
+        verbose: bool,
+        refresh: bool,
+        target: Option<&str>,
+    ) -> Result<ApplyResult> {
         self.render(workspace, desired, registry)?;
         run_terraform(workspace, &["init", "-input=false"])?;
-        let args = terraform_apply_args(refresh);
-        let output = run_terraform_with_options(workspace, &args, verbose)?;
+        let args = terraform_apply_args(refresh, target);
+        let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        let output = run_terraform_with_options(workspace, &arg_refs, verbose)?;
         Ok(ApplyResult {
             summary: output_summary("terraform apply", &output),
         })
     }
 }
 
-fn terraform_apply_args(refresh: bool) -> Vec<&'static str> {
-    let mut args = vec!["apply", "-auto-approve", "-input=false", "-no-color"];
+fn terraform_apply_args(refresh: bool, target: Option<&str>) -> Vec<String> {
+    let mut args = vec![
+        "apply".to_string(),
+        "-auto-approve".to_string(),
+        "-input=false".to_string(),
+        "-no-color".to_string(),
+    ];
     if !refresh {
-        args.push("-refresh=false");
+        args.push("-refresh=false".to_string());
+    }
+    if let Some(target) = target {
+        args.push(format!("-target=module.{}", sanitize_module_name(target)));
     }
     args
 }
@@ -924,7 +945,8 @@ fn vm_resource_json() -> (String, Value) {
                     "type": "host"
                 }],
                 "memory": [{
-                    "dedicated": "${try(var.resource.memory, 1024)}"
+                    "dedicated": "${try(var.resource.memory, 1024)}",
+                    "floating": "${try(var.resource.memory, 1024)}"
                 }],
                 "disk": [{
                     "datastore_id": "${var.storage}",
@@ -1001,6 +1023,17 @@ fn lxc_resource_json() -> (String, Value) {
                 "description": "${try(var.resource.description, \"managed by vmctl\")}",
                 "node_name": "${var.node_name}",
                 "vm_id": "${try(var.resource.vmid, null)}",
+                "lifecycle": {
+                    "ignore_changes": [
+                        "console",
+                        "device_passthrough",
+                        "disk",
+                        "features",
+                        "network_interface",
+                        "operating_system",
+                        "tags"
+                    ]
+                },
                 "start_on_boot": "${try(var.resource.start_on_boot, true)}",
                 "started": "${try(var.resource.start_on_boot, true)}",
                 "tags": "${try(var.resource.tags, [])}",
@@ -1024,7 +1057,7 @@ fn lxc_resource_json() -> (String, Value) {
                     "cores": "${try(var.resource.cores, 1)}"
                 }],
                 "initialization": [{
-                    "hostname": "${try(var.resource.hostname, var.resource.name)}",
+                    "hostname": "${coalesce(try(var.resource.hostname, null), var.resource.name)}",
                     "dns": [{
                         "domain": "${try(var.resource.searchdomain, null)}",
                         "servers": "${compact(split(\",\", replace(try(var.resource.nameserver, \"\"), \" \", \"\")))}"
@@ -1568,7 +1601,7 @@ mod tests {
     #[test]
     fn terraform_apply_args_can_disable_refresh_for_safe_apply() {
         assert_eq!(
-            terraform_apply_args(false),
+            terraform_apply_args(false, None),
             vec![
                 "apply",
                 "-auto-approve",
@@ -1577,7 +1610,9 @@ mod tests {
                 "-refresh=false"
             ]
         );
-        assert!(!terraform_apply_args(true).contains(&"-refresh=false"));
+        assert!(!terraform_apply_args(true, None).contains(&"-refresh=false".to_string()));
+        assert!(terraform_apply_args(true, Some("kodi-htpc"))
+            .contains(&"-target=module.kodi_htpc".to_string()));
     }
 
     #[test]
@@ -1740,6 +1775,10 @@ mod tests {
                 "DEFAULT_SSH_PRIVATE_KEY_FILE".to_string(),
                 "/home/me/.ssh/id_ed25519".to_string(),
             ),
+            (
+                "JELLYFIN_ADMIN_PASSWORD".to_string(),
+                "dummy-jellyfin-password".to_string(),
+            ),
         ]);
         let config = vmctl_config::Config::from_toml(raw, &env).unwrap();
         let registry = PackRegistry::load(&workspace_root.join("packs")).unwrap();
@@ -1774,9 +1813,33 @@ mod tests {
             include_str!("../tests/fixtures/example-workspace/resources/media-stack/media.env"),
         );
         assert_file_fixture(
+            &root.join("generated/resources/media-stack/scripts/bootstrap-node.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-node.sh"
+            ),
+        );
+        assert_file_fixture(
             &root.join("generated/resources/media-stack/scripts/bootstrap-media.sh"),
             include_str!(
                 "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-media.sh"
+            ),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/media-stack/scripts/bootstrap-jellyfin.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-jellyfin.sh"
+            ),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/media-stack/scripts/bootstrap-qbittorrent.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-qbittorrent.sh"
+            ),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/media-stack/scripts/bootstrap-arr.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-arr.sh"
             ),
         );
         assert_file_fixture(
@@ -1792,12 +1855,44 @@ mod tests {
             ),
         );
         assert_file_fixture(
+            &root.join("generated/resources/tailscale-gateway/scripts/bootstrap-node.sh"),
+            include_str!("../tests/fixtures/example-workspace/resources/tailscale-gateway/scripts/bootstrap-node.sh"),
+        );
+        assert_file_fixture(
             &root.join("generated/resources/tailscale-gateway/scripts/bootstrap-tailscale.sh"),
             include_str!("../tests/fixtures/example-workspace/resources/tailscale-gateway/scripts/bootstrap-tailscale.sh"),
         );
         assert_file_fixture(
             &root.join("generated/resources/tailscale-gateway/tailscale-setup.sh"),
             include_str!("../tests/fixtures/example-workspace/resources/tailscale-gateway/tailscale-setup.sh"),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/kodi-htpc/kodi.env"),
+            include_str!("../tests/fixtures/example-workspace/resources/kodi-htpc/kodi.env"),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/kodi-htpc/scripts/bootstrap-node.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/kodi-htpc/scripts/bootstrap-node.sh"
+            ),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/kodi-htpc/scripts/bootstrap-tailscale.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/kodi-htpc/scripts/bootstrap-tailscale.sh"
+            ),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/kodi-htpc/scripts/bootstrap-kodi.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/kodi-htpc/scripts/bootstrap-kodi.sh"
+            ),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/kodi-htpc/scripts/bootstrap-kodi-jellyfin.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/kodi-htpc/scripts/bootstrap-kodi-jellyfin.sh"
+            ),
         );
 
         std::fs::remove_dir_all(root).unwrap();

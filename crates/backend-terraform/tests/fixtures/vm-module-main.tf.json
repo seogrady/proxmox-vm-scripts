@@ -74,16 +74,17 @@
             "for_each": "${try(var.resource.cloud_init, null) == null && try(var.resource.network, null) == null && try(var.resource.nameserver, null) == null && try(var.resource.searchdomain, null) == null ? [] : [1]}"
           }
         },
-        "machine": "${try(var.resource.machine, try(var.resource.features.intel_igpu.enabled, false) ? \"q35\" : null)}",
         "lifecycle": {
           "ignore_changes": [
             "disk",
             "initialization"
           ]
         },
+        "machine": "${try(var.resource.machine, try(var.resource.features.intel_igpu.enabled, false) ? \"q35\" : null)}",
         "memory": [
           {
-            "dedicated": "${try(var.resource.memory, 1024)}"
+            "dedicated": "${try(var.resource.memory, 1024)}",
+            "floating": "${try(var.resource.memory, 1024)}"
           }
         ],
         "name": "${var.resource.name}",

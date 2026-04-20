@@ -1,0 +1,25 @@
+name = "kodi_htpc"
+kind = "vm"
+
+[defaults]
+requires = ["kodi", "xorg", "jellyfin"]
+
+[features.htpc]
+enabled = true
+autostart = true
+cec = true
+
+[features.jellyfin]
+enabled = true
+server_url = "http://media-stack.home.arpa:8096"
+
+[features.remote]
+enabled = true
+web_port = 8080
+event_server_port = 9777
+
+[render]
+templates = ["kodi.env.hbs", "tailscale-setup.sh.hbs"]
+
+[scripts]
+bootstrap = ["bootstrap-node.sh", "bootstrap-tailscale.sh", "bootstrap-kodi.sh", "bootstrap-kodi-jellyfin.sh"]

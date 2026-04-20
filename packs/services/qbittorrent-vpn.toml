@@ -1,0 +1,13 @@
+name = "qbittorrent-vpn"
+container_type = "docker"
+vpn_route_through_gluetun = true
+
+[image]
+name = "lscr.io/linuxserver/qbittorrent"
+tag = "latest"
+
+[ports]
+published = ["8080:8080", "6881:6881", "6881:6881/udp"]
+
+[volumes]
+mounts = ["${MEDIA_PATH}:/media", "${CONFIG_PATH}/qbittorrent:/config"]

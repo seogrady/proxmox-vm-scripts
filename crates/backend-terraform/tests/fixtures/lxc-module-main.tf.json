@@ -15,11 +15,6 @@
             "size": "${try(var.resource.rootfs_gb, 8)}"
           }
         ],
-        "features": [
-          {
-            "nesting": "${try(var.resource.features.lxc.nesting, false)}"
-          }
-        ],
         "dynamic": {
           "device_passthrough": {
             "content": {
@@ -29,6 +24,11 @@
             "for_each": "${try(var.resource.features.tailscale.enabled, false) ? [1] : []}"
           }
         },
+        "features": [
+          {
+            "nesting": "${try(var.resource.features.lxc.nesting, false)}"
+          }
+        ],
         "initialization": [
           {
             "dns": [
@@ -37,7 +37,7 @@
                 "servers": "${compact(split(\",\", replace(try(var.resource.nameserver, \"\"), \" \", \"\")))}"
               }
             ],
-            "hostname": "${try(var.resource.hostname, var.resource.name)}",
+            "hostname": "${coalesce(try(var.resource.hostname, null), var.resource.name)}",
             "ip_config": [
               {
                 "ipv4": [
@@ -50,6 +50,17 @@
             ]
           }
         ],
+        "lifecycle": {
+          "ignore_changes": [
+            "console",
+            "device_passthrough",
+            "disk",
+            "features",
+            "network_interface",
+            "operating_system",
+            "tags"
+          ]
+        },
         "memory": [
           {
             "dedicated": "${try(var.resource.memory, 1024)}"

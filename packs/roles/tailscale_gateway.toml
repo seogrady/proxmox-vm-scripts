@@ -12,5 +12,4 @@ mode = "router"
 templates = ["tailscale-setup.sh.hbs"]
 
 [scripts]
-bootstrap = ["bootstrap-tailscale.sh"]
-
+bootstrap = ["bootstrap-node.sh", "bootstrap-tailscale.sh"]

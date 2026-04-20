@@ -393,21 +393,22 @@ fn apply_command(
     target: Option<&str>,
     _command: &str,
 ) -> Result<()> {
-    let (workspace, mut desired, registry) = load_workspace(config_path, packs_path, target)?;
-    let auto_no_start = !no_start && has_vm_passthrough(&desired);
-    let no_start = no_start || auto_no_start;
-    if auto_no_start {
-        eprintln!(
-            "warning: PCI passthrough VM detected; vmctl will not start it during apply. Already-running VMs may still be provisioned."
-        );
-    }
+    let (workspace, mut desired, registry) = load_workspace(config_path, packs_path, None)?;
+    let mut provision_desired = if target.is_some() {
+        let (_target_workspace, target_desired, _target_registry) =
+            load_workspace(config_path, packs_path, target)?;
+        target_desired
+    } else {
+        desired.clone()
+    };
     if no_start {
         disable_vm_start(&mut desired);
+        disable_vm_start(&mut provision_desired);
     }
     if dry_run {
         return inspect_workspace(&workspace, &desired, InspectMode::Inspect);
     }
-    let skip_provision = skip_provision || (no_start && !auto_no_start);
+    let skip_provision = skip_provision || no_start;
     let progress = ApplyProgress::new();
     let guard = ApplyGuard::new(GLOBAL_APPLY_TIMEOUT);
     check_dependencies(&desired, CommandScope::Apply)?;
@@ -450,8 +451,9 @@ fn apply_command(
         })?
     } else {
         progress.run("applying OpenTofu plan", || {
-            TerraformBackend
-                .apply_with_output_refresh(&workspace, &desired, &registry, verbose, true)
+            TerraformBackend.apply_with_output_refresh_target(
+                &workspace, &desired, &registry, verbose, true, target,
+            )
         })?
     };
     guard.checkpoint("lockfile write")?;
@@ -460,7 +462,7 @@ fn apply_command(
     })?;
     println!("{}; wrote vmctl.lock", result.summary);
     if !skip_provision {
-        let result = run_provision(&workspace, &desired, &progress)?;
+        let result = run_provision(&workspace, &provision_desired, &progress)?;
         println!("{}", result.summary);
     }
     println!("vmctl apply complete");
@@ -497,19 +499,6 @@ fn parse_qm_started(output: &str) -> Option<bool> {
         "stopped" => Some(false),
         _ => None,
     }
-}
-
-fn has_vm_passthrough(desired: &DesiredState) -> bool {
-    desired.normalized_resources.values().any(|resource| {
-        resource.kind == "vm"
-            && resource
-                .features
-                .get("intel_igpu")
-                .and_then(Value::as_table)
-                .and_then(|feature| feature.get("enabled"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -757,6 +746,9 @@ fn ensure_provision_hosts_resolve(desired: &DesiredState) -> Result<()> {
         if resource.kind != "vm" && resource.kind != "lxc" {
             continue;
         }
+        if resource.kind == "vm" && resource.started == Some(false) {
+            continue;
+        }
         let Some(host) = resource
             .provision
             .as_ref()
@@ -765,37 +757,70 @@ fn ensure_provision_hosts_resolve(desired: &DesiredState) -> Result<()> {
         else {
             continue;
         };
-        if host_resolves(host) {
-            continue;
+        let mut aliases = BTreeSet::from([host.to_string(), resource.name.clone()]);
+        if let Some(searchdomain) = resource
+            .searchdomain
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            aliases.insert(format!("{}.{}", resource.name, searchdomain.trim()));
         }
-        let Some(vmid) = resource.vmid else {
+        if let Some(hostname) = resource
+            .hostname
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            aliases.insert(hostname.to_string());
+            if let Some(searchdomain) = resource
+                .searchdomain
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                aliases.insert(format!("{}.{}", hostname.trim(), searchdomain.trim()));
+            }
+        }
+
+        let discovered_ip = resource
+            .vmid
+            .and_then(|vmid| discover_resource_ipv4(&resource.kind, vmid).ok().flatten());
+        let resolved_ip = discovered_ip.or_else(|| resolve_host_ipv4(host));
+        let Some(ip) = resolved_ip else {
+            if resource.vmid.is_none() {
+                bail!(
+                    "provision host `{host}` for `{}` does not resolve and the resource has no vmid for DHCP discovery",
+                    resource.name
+                );
+            }
             bail!(
-                "provision host `{host}` for `{}` does not resolve and the resource has no vmid for DHCP discovery",
+                "provision host `{host}` for `{}` does not resolve and vmctl could not discover its DHCP address from Proxmox/ARP",
                 resource.name
             );
         };
-        let ip = discover_resource_ipv4(&resource.kind, vmid)?.with_context(|| {
-            format!(
-                "provision host `{host}` for `{}` does not resolve and vmctl could not discover its DHCP address from Proxmox/ARP",
-                resource.name
-            )
-        })?;
-        upsert_hosts_file(host, &ip, &resource.name)?;
-        println!("[vmctl] resolved {host} to {ip} via /etc/hosts for provisioning");
+        let aliases = aliases.into_iter().collect::<Vec<_>>();
+        upsert_hosts_file(&aliases, &ip, &resource.name)?;
+        println!(
+            "[vmctl] resolved {} to {ip} via /etc/hosts for provisioning",
+            aliases.join(", ")
+        );
     }
     Ok(())
 }
 
-fn host_resolves(host: &str) -> bool {
-    command_runner::run(
-        CommandOptions::new("getent", ["hosts", host])
+fn resolve_host_ipv4(host: &str) -> Option<String> {
+    let output = command_runner::run(
+        CommandOptions::new("getent", ["ahostsv4", host])
             .timeout(Duration::from_secs(10))
             .prefix(LogPrefix::Vmctl)
             .stream(false)
             .fail_on_proxmox_patterns(false),
     )
-    .ok()
-    .is_some_and(|output| !output.stdout.trim().is_empty())
+    .ok()?;
+    output
+        .stdout
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .find(|value| value.parse::<std::net::Ipv4Addr>().is_ok())
+        .map(str::to_string)
 }
 
 fn discover_resource_ipv4(kind: &str, vmid: u32) -> Result<Option<String>> {
@@ -822,20 +847,32 @@ fn discover_resource_ipv4(kind: &str, vmid: u32) -> Result<Option<String>> {
     Ok(None)
 }
 
-fn upsert_hosts_file(host: &str, ip: &str, resource: &str) -> Result<()> {
+fn upsert_hosts_file(hosts: &[String], ip: &str, resource: &str) -> Result<()> {
     let path = Path::new("/etc/hosts");
     let current = std::fs::read_to_string(path).unwrap_or_default();
-    let updated = upsert_hosts_content(&current, host, ip, resource);
+    let updated = upsert_hosts_content(&current, hosts, ip, resource);
     if updated != current {
-        std::fs::write(path, updated)
-            .with_context(|| format!("failed to update {} so `{host}` resolves", path.display()))?;
+        std::fs::write(path, updated).with_context(|| {
+            format!(
+                "failed to update {} so `{resource}` resolves",
+                path.display()
+            )
+        })?;
     }
     Ok(())
 }
 
-fn upsert_hosts_content(content: &str, host: &str, ip: &str, resource: &str) -> String {
+fn upsert_hosts_content(content: &str, hosts: &[String], ip: &str, resource: &str) -> String {
     let marker = format!("# vmctl:{resource}");
-    let entry = format!("{ip}\t{host}\t{marker}");
+    let aliases = hosts
+        .iter()
+        .map(|host| host.trim())
+        .filter(|host| !host.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let entry = format!("{ip}\t{aliases}\t{marker}");
     let mut lines: Vec<String> = content
         .lines()
         .filter(|line| !line.contains(&marker))
@@ -2719,35 +2756,6 @@ mod tests {
     }
 
     #[test]
-    fn passthrough_vm_triggers_safe_no_start_guard() {
-        let mut features = BTreeMap::new();
-        features.insert(
-            "intel_igpu".to_string(),
-            toml::Value::Table(toml::map::Map::from_iter([(
-                "enabled".to_string(),
-                toml::Value::Boolean(true),
-            )])),
-        );
-        let desired = DesiredState {
-            backend: BackendConfig::default(),
-            images: BTreeMap::new(),
-            resources: Vec::new(),
-            normalized_resources: BTreeMap::from([(
-                "media-stack".to_string(),
-                vmctl_domain::NormalizedResource {
-                    name: "media-stack".to_string(),
-                    kind: "vm".to_string(),
-                    features,
-                    ..vmctl_domain::NormalizedResource::default()
-                },
-            )]),
-            expansions: BTreeMap::new(),
-        };
-
-        assert!(has_vm_passthrough(&desired));
-    }
-
-    #[test]
     fn disable_vm_start_only_mutates_vms() {
         let mut desired = DesiredState {
             backend: BackendConfig::default(),
@@ -2985,11 +2993,19 @@ Interface: vmbr0
     fn upsert_hosts_content_replaces_vmctl_marker_entry() {
         let current = "127.0.0.1 localhost\n192.168.86.10\tmedia.home.arpa\t# vmctl:media-stack\n";
 
-        let updated =
-            upsert_hosts_content(current, "media.home.arpa", "192.168.86.103", "media-stack");
+        let updated = upsert_hosts_content(
+            current,
+            &[
+                "media-stack".to_string(),
+                "media-stack.home.arpa".to_string(),
+            ],
+            "192.168.86.103",
+            "media-stack",
+        );
 
         assert!(updated.contains("127.0.0.1 localhost\n"));
-        assert!(updated.contains("192.168.86.103\tmedia.home.arpa\t# vmctl:media-stack\n"));
+        assert!(updated
+            .contains("192.168.86.103\tmedia-stack media-stack.home.arpa\t# vmctl:media-stack\n"));
         assert!(!updated.contains("192.168.86.10\tmedia.home.arpa"));
     }
 

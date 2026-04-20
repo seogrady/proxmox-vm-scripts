@@ -1,10 +1,23 @@
 services:
 {{#each service_packs}}
+{{#if vpn_gateway}}
+{{#if @root.features.vpn.enabled}}
   {{name}}:
     image: "{{image.name}}:{{image.tag}}"
     env_file:
       - .env
     restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER}
+      - VPN_TYPE=${VPN_TYPE}
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
+      - SERVER_CITIES=${VPN_SERVER_CITIES}
+      - FIREWALL_INPUT_PORTS=8080,6881
 {{#if ports.published}}
     ports:
 {{#each ports.published}}
@@ -16,5 +29,40 @@ services:
 {{#each volumes.mounts}}
       - "{{this}}"
 {{/each}}
+{{/if}}
+{{/if}}
+{{else}}
+  {{name}}:
+    image: "{{image.name}}:{{image.tag}}"
+    env_file:
+      - .env
+    restart: unless-stopped
+{{#if vpn_route_through_gluetun}}
+{{#if @root.features.vpn.enabled}}
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+{{else}}
+{{#if ports.published}}
+    ports:
+{{#each ports.published}}
+      - "{{this}}"
+{{/each}}
+{{/if}}
+{{/if}}
+{{else}}
+{{#if ports.published}}
+    ports:
+{{#each ports.published}}
+      - "{{this}}"
+{{/each}}
+{{/if}}
+{{/if}}
+{{#if volumes.mounts}}
+    volumes:
+{{#each volumes.mounts}}
+      - "{{this}}"
+{{/each}}
+{{/if}}
 {{/if}}
 {{/each}}
