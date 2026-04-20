@@ -396,6 +396,31 @@ by:
 tailscale status --self
 ```
 
+To expose the Proxmox Web UI privately inside the tailnet, enable Tailscale
+Serve on the host:
+
+```bash
+sudo scripts/proxmox-host-serve-ui.sh
+```
+
+That proxies the local Proxmox UI at `https://localhost:8006` to the host's
+tailnet HTTPS name:
+
+```text
+https://proxmox-mini.tailde9535.ts.net/
+```
+
+This uses Tailscale Serve, not Funnel, so the UI is only available to devices
+allowed by your tailnet ACLs. It also avoids exposing port `8006` directly and
+lets Tailscale terminate HTTPS with its tailnet certificate.
+
+Check or disable the Serve mapping with:
+
+```bash
+sudo scripts/proxmox-host-serve-ui.sh --status
+sudo scripts/proxmox-host-serve-ui.sh --disable
+```
+
 Tailscale SSH is optional and separate from normal OpenSSH. Enable it only when
 you want Tailscale to handle SSH authorization:
 

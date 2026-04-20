@@ -3114,6 +3114,29 @@ Interface: vmbr0
         .unwrap();
     }
 
+    #[test]
+    fn proxmox_host_ui_serve_script_is_tailnet_only() {
+        let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("scripts/proxmox-host-serve-ui.sh");
+        let content = std::fs::read_to_string(&script).unwrap();
+
+        assert!(content.contains("tailscale serve"));
+        assert!(content.contains("https+insecure://localhost:8006"));
+        assert!(content.contains("--bg"));
+        assert!(content.contains("--yes"));
+        assert!(content.contains("--wait-seconds"));
+        assert!(content.contains("off"));
+        assert!(!content.contains("tailscale funnel"));
+
+        command_runner::run(
+            CommandOptions::new("bash", ["-n", &script.to_string_lossy()])
+                .stream(false)
+                .timeout(Duration::from_secs(10)),
+        )
+        .unwrap();
+    }
+
     fn unique_temp_dir() -> PathBuf {
         let mut dir = std::env::temp_dir();
         dir.push(format!(
