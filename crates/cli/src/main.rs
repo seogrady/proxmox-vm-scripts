@@ -894,7 +894,8 @@ fn ensure_provision_hosts_resolve(desired: &DesiredState) -> Result<()> {
         let discovered_ip = resource
             .vmid
             .and_then(|vmid| discover_resource_ipv4_with_retries(&resource.kind, vmid));
-        let resolved_ip = select_provision_ip(resource.vmid, discovered_ip, resolve_host_ipv4(host));
+        let resolved_ip =
+            select_provision_ip(resource.vmid, discovered_ip, resolve_host_ipv4(host));
         let Some(ip) = resolved_ip else {
             if resource.vmid.is_none() {
                 bail!(
@@ -2834,14 +2835,14 @@ mod tests {
             resources: Vec::new(),
             normalized_resources: BTreeMap::from([(
                 "media-stack".to_string(),
-                    vmctl_domain::NormalizedResource {
-                        name: "media-stack".to_string(),
-                        kind: "vm".to_string(),
-                        vmid: Some(210),
-                        disk_interface: Some("virtio0".to_string()),
-                        iothread: Some(true),
-                        ..vmctl_domain::NormalizedResource::default()
-                    },
+                vmctl_domain::NormalizedResource {
+                    name: "media-stack".to_string(),
+                    kind: "vm".to_string(),
+                    vmid: Some(210),
+                    disk_interface: Some("virtio0".to_string()),
+                    iothread: Some(true),
+                    ..vmctl_domain::NormalizedResource::default()
+                },
             )]),
             expansions: BTreeMap::new(),
         };

@@ -1843,18 +1843,20 @@ mod tests {
     }
 
     #[test]
-    fn media_jellyfin_bootstrap_configures_tailscale_https_serve() {
-        let script =
-            include_str!("../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-jellyfin.sh");
-        assert!(script.contains("JELLYFIN_TAILSCALE_HTTPS_ENABLED"));
+    fn media_ui_routing_bootstrap_configures_tailscale_https_serve() {
+        let script = include_str!(
+            "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-ui-routing.sh"
+        );
+        assert!(script.contains("TAILSCALE_HTTPS_ENABLED"));
         assert!(script.contains("tailscale serve --yes --bg"));
         assert!(script.contains("tailscale serve reset"));
     }
 
     #[test]
     fn kodi_bootstrap_configures_tailscale_https_serve() {
-        let script =
-            include_str!("../tests/fixtures/example-workspace/resources/kodi-htpc/scripts/bootstrap-kodi.sh");
+        let script = include_str!(
+            "../tests/fixtures/example-workspace/resources/kodi-htpc/scripts/bootstrap-kodi.sh"
+        );
         assert!(script.contains("KODI_TAILSCALE_HTTPS_ENABLED"));
         assert!(script.contains("tailscale serve --yes --bg"));
         assert!(script.contains("tailscale serve reset"));
@@ -1916,6 +1918,14 @@ mod tests {
             ),
         );
         assert_file_fixture(
+            &root.join("generated/resources/media-stack/caddyfile.media"),
+            include_str!("../tests/fixtures/example-workspace/resources/media-stack/caddyfile.media"),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/media-stack/media-index.html"),
+            include_str!("../tests/fixtures/example-workspace/resources/media-stack/media-index.html"),
+        );
+        assert_file_fixture(
             &root.join("generated/resources/media-stack/media.env"),
             include_str!("../tests/fixtures/example-workspace/resources/media-stack/media.env"),
         );
@@ -1947,6 +1957,12 @@ mod tests {
             &root.join("generated/resources/media-stack/scripts/bootstrap-arr.sh"),
             include_str!(
                 "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-arr.sh"
+            ),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/media-stack/scripts/bootstrap-ui-routing.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-ui-routing.sh"
             ),
         );
         assert_file_fixture(

@@ -20,6 +20,7 @@ import urllib.request
 base = os.environ.get("JELLYFIN_URL") or "http://localhost:8096"
 user = os.environ.get("JELLYFIN_ADMIN_USER") or "admin"
 password = os.environ.get("JELLYFIN_ADMIN_PASSWORD") or ""
+base_url = os.environ.get("JELLYFIN_BASE_URL") or "/jellyfin"
 
 
 def call(method, path, payload=None, token=None, allow=(200, 204)):
@@ -89,6 +90,10 @@ if not auth:
 token = auth.get("AccessToken") if auth else None
 
 if token:
+    config = try_call("GET", "/System/Configuration", token=token) or {}
+    if config.get("BaseUrl") != base_url:
+        config["BaseUrl"] = base_url
+        call("POST", "/System/Configuration", config, token=token, allow=(200, 204, 400))
     for name, path, collection_type in [
         ("Movies", "/media/movies", "movies"),
         ("TV", "/media/tv", "tvshows"),
@@ -101,40 +106,3 @@ if token:
             "LibraryOptions": {},
         }, token=token, allow=(200, 204, 400))
 PY
-
-jellyfin_tailscale_https_enabled="${JELLYFIN_TAILSCALE_HTTPS_ENABLED:-true}"
-jellyfin_tailscale_https_target="${JELLYFIN_TAILSCALE_HTTPS_TARGET:-http://127.0.0.1:8096}"
-
-if [[ "${jellyfin_tailscale_https_enabled,,}" == "false" || "${jellyfin_tailscale_https_enabled}" == "0" ]]; then
-  if command -v tailscale >/dev/null 2>&1; then
-    tailscale serve reset >/dev/null 2>&1 || true
-  fi
-  exit 0
-fi
-
-if ! command -v tailscale >/dev/null 2>&1; then
-  echo "tailscale not installed; skipping Jellyfin tailnet HTTPS exposure"
-  exit 0
-fi
-
-if ! tailscale status --json >/tmp/vmctl-tailscale-status.json 2>/dev/null; then
-  echo "tailscale is not authenticated; skipping Jellyfin tailnet HTTPS exposure"
-  exit 0
-fi
-
-tailscale_ready="$(python3 <<'PY'
-import json
-try:
-    with open("/tmp/vmctl-tailscale-status.json", encoding="utf-8") as handle:
-        status = json.load(handle)
-    print(1 if status.get("BackendState") in {"Running", "Starting"} else 0)
-except Exception:
-    print(0)
-PY
-)"
-if [[ "$tailscale_ready" != "1" ]]; then
-  echo "tailscale backend is not running; skipping Jellyfin tailnet HTTPS exposure"
-  exit 0
-fi
-
-tailscale serve --yes --bg "$jellyfin_tailscale_https_target"

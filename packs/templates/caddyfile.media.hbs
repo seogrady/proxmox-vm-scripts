@@ -1,0 +1,20 @@
+:80 {
+  encode gzip
+
+  handle_path /healthz {
+    respond "ok" 200
+  }
+
+  {{#each features.media_services.ui_routes}}
+  {{#unless (eq this.path "/")}}
+  handle {{this.path}}* {
+    reverse_proxy {{lookup ../features.media_services.upstreams this.service}}
+  }
+  {{/unless}}
+  {{/each}}
+
+  handle / {
+    root * /srv/ui-index
+    file_server
+  }
+}

@@ -135,10 +135,65 @@ tags = ["${default_tailnet_tag}"]
 [resources.features.media_services]
 enabled = true
 minimal = true
-services = ["gluetun", "jellyfin", "sonarr", "radarr", "prowlarr", "qbittorrent-vpn"]
+services = ["caddy", "gluetun", "jellyfin", "sonarr", "radarr", "prowlarr", "qbittorrent-vpn"]
 jellyfin_url = "http://media-stack.${domain}:8096"
 jellyfin_admin_user = "${JELLYFIN_ADMIN_USER}"
 jellyfin_admin_password = "${JELLYFIN_ADMIN_PASSWORD}"
+ui_routing_mode = "path_prefix"
+ui_homepage_enabled = true
+ui_homepage_title = "Media Stack"
+jellyfin_base_url = "/jellyfin"
+sonarr_base_url = "/sonarr"
+radarr_base_url = "/radarr"
+prowlarr_base_url = "/prowlarr"
+qbittorrent_base_url = "/qbittorrent"
+
+[resources.features.media_services.exposure]
+tailscale_https_enabled = true
+tailscale_https_target = "http://127.0.0.1:80"
+
+[resources.features.media_services.upstreams]
+jellyfin = "jellyfin:8096"
+sonarr = "sonarr:8989"
+radarr = "radarr:7878"
+prowlarr = "prowlarr:9696"
+qbittorrent-vpn = "gluetun:8080"
+
+[[resources.features.media_services.ui_routes]]
+path = "/"
+service = "ui-index"
+title = "Home"
+description = "Service directory"
+
+[[resources.features.media_services.ui_routes]]
+path = "/jellyfin"
+service = "jellyfin"
+title = "Jellyfin"
+description = "Media server"
+
+[[resources.features.media_services.ui_routes]]
+path = "/sonarr"
+service = "sonarr"
+title = "Sonarr"
+description = "TV automation"
+
+[[resources.features.media_services.ui_routes]]
+path = "/radarr"
+service = "radarr"
+title = "Radarr"
+description = "Movie automation"
+
+[[resources.features.media_services.ui_routes]]
+path = "/prowlarr"
+service = "prowlarr"
+title = "Prowlarr"
+description = "Indexer manager"
+
+[[resources.features.media_services.ui_routes]]
+path = "/qbittorrent"
+service = "qbittorrent-vpn"
+title = "qBittorrent"
+description = "Torrent client"
 
 [resources.features.storage]
 # Mount a NAS or external volume here later; containers still see it as /media.

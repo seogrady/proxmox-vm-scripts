@@ -35,6 +35,14 @@ install -d "$STACK_DIR" "$STACK_DIR/config" \
   "$MEDIA_PATH/movies" "$MEDIA_PATH/tv"
 install -m 0644 "$RESOURCE_DIR/docker-compose.media" "$STACK_DIR/docker-compose.yml"
 install -m 0644 "$RESOURCE_DIR/media.env" "$STACK_DIR/.env"
+if [[ -f "$RESOURCE_DIR/caddyfile.media" ]]; then
+  install -d "$STACK_DIR/config/caddy" "$STACK_DIR/config/caddy/ui-index"
+  install -m 0644 "$RESOURCE_DIR/caddyfile.media" "$STACK_DIR/config/caddy/Caddyfile"
+fi
+if [[ -f "$RESOURCE_DIR/media-index.html" ]]; then
+  install -d "$STACK_DIR/config/caddy/ui-index"
+  install -m 0644 "$RESOURCE_DIR/media-index.html" "$STACK_DIR/config/caddy/ui-index/index.html"
+fi
 chown -R 1000:1000 "$STACK_DIR/config" "$MEDIA_PATH"
 
 docker compose --env-file "$STACK_DIR/.env" -f "$STACK_DIR/docker-compose.yml" pull

@@ -1,4 +1,14 @@
 services:
+  caddy:
+    image: "caddy:2"
+    env_file:
+      - .env
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - "${CONFIG_PATH}/caddy/Caddyfile:/etc/caddy/Caddyfile:ro"
+      - "${CONFIG_PATH}/caddy/ui-index:/srv/ui-index:ro"
   jellyfin:
     image: "lscr.io/linuxserver/jellyfin:latest"
     env_file:

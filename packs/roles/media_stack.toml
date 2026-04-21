@@ -8,6 +8,7 @@ requires = ["docker"]
 enabled = true
 minimal = true
 services = [
+  "caddy",
   "gluetun",
   "jellyfin",
   "sonarr",
@@ -30,7 +31,7 @@ provider = "mullvad"
 type = "wireguard"
 
 [render]
-templates = ["docker-compose.media.hbs", "media.env.hbs", "tailscale-setup.sh.hbs"]
+templates = ["docker-compose.media.hbs", "media.env.hbs", "caddyfile.media.hbs", "media-index.html.hbs", "tailscale-setup.sh.hbs"]
 
 [scripts]
-bootstrap = ["bootstrap-node.sh", "bootstrap-tailscale.sh", "bootstrap-media.sh", "bootstrap-jellyfin.sh", "bootstrap-qbittorrent.sh", "bootstrap-arr.sh"]
+bootstrap = ["bootstrap-node.sh", "bootstrap-tailscale.sh", "bootstrap-media.sh", "bootstrap-jellyfin.sh", "bootstrap-qbittorrent.sh", "bootstrap-arr.sh", "bootstrap-ui-routing.sh"]

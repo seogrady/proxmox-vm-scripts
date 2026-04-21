@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use handlebars::handlebars_helper;
 use handlebars::Handlebars;
 use serde::{Deserialize, Serialize};
 use toml::Value;
@@ -256,7 +257,9 @@ fn load_files(dir: &Path) -> Result<Vec<String>> {
 fn render_template(source: &Path, context: &serde_json::Value) -> Result<String> {
     let template = std::fs::read_to_string(source)
         .with_context(|| format!("failed to read template {}", source.display()))?;
-    let handlebars = Handlebars::new();
+    let mut handlebars = Handlebars::new();
+    handlebars_helper!(eq: |a: Json, b: Json| a == b);
+    handlebars.register_helper("eq", Box::new(eq));
     handlebars
         .render_template(&template, context)
         .with_context(|| format!("failed to render template {}", source.display()))
@@ -539,6 +542,68 @@ mod tests {
             .join("resources/guest/scripts/bootstrap.sh")
             .is_file());
 
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn renders_templates_with_eq_helper() {
+        let root = unique_temp_dir();
+        std::fs::create_dir_all(root.join("roles")).unwrap();
+        std::fs::create_dir_all(root.join("services")).unwrap();
+        std::fs::create_dir_all(root.join("templates")).unwrap();
+
+        std::fs::write(
+            root.join("roles/example.toml"),
+            r#"
+            name = "example"
+            kind = "vm"
+
+            [render]
+            templates = ["routes.txt.hbs"]
+            "#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("templates/routes.txt.hbs"),
+            r#"{{#each features.media_services.ui_routes}}{{#unless (eq this.path "/")}}{{this.path}} {{/unless}}{{/each}}"#,
+        )
+        .unwrap();
+
+        let registry = PackRegistry::load(&root).unwrap();
+        let resource = Resource {
+            name: "guest".to_string(),
+            kind: "vm".to_string(),
+            image: None,
+            role: Some("example".to_string()),
+            vmid: None,
+            depends_on: Vec::new(),
+            features: BTreeMap::from([(
+                "media_services".to_string(),
+                toml::Value::Table(toml::map::Map::from_iter([(
+                    "ui_routes".to_string(),
+                    toml::Value::Array(vec![
+                        toml::Value::Table(toml::map::Map::from_iter([(
+                            "path".to_string(),
+                            toml::Value::String("/".to_string()),
+                        )])),
+                        toml::Value::Table(toml::map::Map::from_iter([(
+                            "path".to_string(),
+                            toml::Value::String("/jellyfin".to_string()),
+                        )])),
+                    ]),
+                )])),
+            )]),
+            settings: BTreeMap::new(),
+        };
+        let expansion = registry.expand_resource(&resource).unwrap();
+        let expansions = BTreeMap::from([("guest".to_string(), expansion)]);
+        let output = root.join("generated");
+        registry
+            .render_artifacts(&output, &[resource], &expansions)
+            .unwrap();
+
+        let rendered = std::fs::read_to_string(output.join("resources/guest/routes.txt")).unwrap();
+        assert_eq!(rendered.trim(), "/jellyfin");
         std::fs::remove_dir_all(root).unwrap();
     }
 

@@ -33,6 +33,7 @@ WebUI\\AuthSubnetWhitelist=10.0.0.0/8,100.64.0.0/10,172.16.0.0/12,192.168.0.0/16
 WebUI\\AuthSubnetWhitelistEnabled=true
 WebUI\\LocalHostAuth=false
 WebUI\\Port=${QBITTORRENT_WEBUI_PORT:-8080}
+WebUI\\RootFolder=${QBITTORRENT_ROOT_FOLDER:-/qbittorrent}
 EOF
 
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d qbittorrent-vpn
@@ -44,7 +45,7 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 
-temporary_password="$(docker logs media-qbittorrent-vpn-1 2>&1 \
+temporary_password="$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs qbittorrent-vpn 2>&1 \
   | sed -n 's/.*temporary password is provided for this session: //p' \
   | tail -1)"
 
@@ -61,6 +62,7 @@ if [[ -n "$temporary_password" ]]; then
   "bypass_auth_subnet_whitelist": "10.0.0.0/8,100.64.0.0/10,172.16.0.0/12,192.168.0.0/16",
   "bypass_auth_subnet_whitelist_enabled": true,
   "bypass_local_auth": true,
+  "web_ui_root_folder": "${QBITTORRENT_ROOT_FOLDER:-/qbittorrent}",
   "save_path": "${QBITTORRENT_DOWNLOADS:-/media/downloads/complete}",
   "temp_path": "${QBITTORRENT_INCOMPLETE:-/media/downloads/incomplete}",
   "temp_path_enabled": true,
