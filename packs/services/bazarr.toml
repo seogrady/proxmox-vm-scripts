@@ -11,3 +11,9 @@ published = ["6767:6767"]
 [volumes]
 mounts = ["${MEDIA_PATH}:/media", "${CONFIG_PATH}/bazarr:/config"]
 
+[ui]
+enabled = true
+port = 6767
+path = "/"
+name = "Bazarr"
+description = "Subtitle automation"

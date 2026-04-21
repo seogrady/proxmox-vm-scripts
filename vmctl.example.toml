@@ -146,54 +146,6 @@ ui_homepage_title = "Media Stack"
 tailscale_https_enabled = true
 tailscale_https_target = "http://127.0.0.1:80"
 
-[resources.features.media_services.upstreams]
-jellyfin = "jellyfin:8096"
-sonarr = "sonarr:8989"
-radarr = "radarr:7878"
-prowlarr = "prowlarr:9696"
-qbittorrent-vpn = "gluetun:8080"
-
-[[resources.features.media_services.ui_routes]]
-path = "/"
-service = "ui-index"
-title = "Home"
-description = "Service directory"
-
-[[resources.features.media_services.ui_routes]]
-path = "/jellyfin"
-service = "jellyfin"
-port = 8096
-title = "Jellyfin"
-description = "Media server"
-
-[[resources.features.media_services.ui_routes]]
-path = "/sonarr"
-service = "sonarr"
-port = 8989
-title = "Sonarr"
-description = "TV automation"
-
-[[resources.features.media_services.ui_routes]]
-path = "/radarr"
-service = "radarr"
-port = 7878
-title = "Radarr"
-description = "Movie automation"
-
-[[resources.features.media_services.ui_routes]]
-path = "/prowlarr"
-service = "prowlarr"
-port = 9696
-title = "Prowlarr"
-description = "Indexer manager"
-
-[[resources.features.media_services.ui_routes]]
-path = "/qbittorrent"
-service = "qbittorrent-vpn"
-port = 8080
-title = "qBittorrent"
-description = "Torrent client"
-
 [resources.features.storage]
 # Mount a NAS or external volume here later; containers still see it as /media.
 media_path = "/media"

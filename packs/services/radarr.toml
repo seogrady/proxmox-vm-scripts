@@ -11,3 +11,9 @@ published = ["7878:7878"]
 [volumes]
 mounts = ["${MEDIA_PATH}:/media", "${CONFIG_PATH}/radarr:/config"]
 
+[ui]
+enabled = true
+port = 7878
+path = "/"
+name = "Radarr"
+description = "Movie automation"

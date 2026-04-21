@@ -1858,14 +1858,10 @@ mod tests {
             include_str!("../tests/fixtures/example-workspace/resources/media-stack/caddyfile.media");
         assert!(caddy.contains("handle_path /healthz"));
         assert!(caddy.contains("handle / {"));
-        assert!(caddy.contains("handle /sonarr*"));
-        assert!(caddy.contains("handle /radarr*"));
-        assert!(caddy.contains("handle /prowlarr*"));
-        assert!(caddy.contains("handle /qbittorrent*"));
-        assert!(caddy.contains("redir http://{host}:8989/ 308"));
-        assert!(caddy.contains("redir http://{host}:7878/ 308"));
-        assert!(caddy.contains("redir http://{host}:9696/ 308"));
-        assert!(caddy.contains("redir http://{host}:8080/ 308"));
+        assert!(!caddy.contains("handle /sonarr*"));
+        assert!(!caddy.contains("handle /radarr*"));
+        assert!(!caddy.contains("handle /prowlarr*"));
+        assert!(!caddy.contains("handle /qbittorrent*"));
         assert!(!caddy.contains("reverse_proxy sonarr:8989"));
     }
 
@@ -1878,7 +1874,8 @@ mod tests {
         assert!(index.contains("data-service-port=\"7878\""));
         assert!(index.contains("data-service-port=\"9696\""));
         assert!(index.contains("data-service-port=\"8080\""));
-        assert!(index.contains("link.href = \"http://\" + host + \":\" + port + \"/\";"));
+        assert!(index.contains("data-service-path=\"/\""));
+        assert!(index.contains("link.href = \"http://\" + host + \":\" + port + path;"));
     }
 
     #[test]
@@ -1935,8 +1932,8 @@ mod tests {
         let main: Value =
             serde_json::from_str(&std::fs::read_to_string(root.join("generated/main.tf.json")).unwrap())
                 .unwrap();
-        assert_eq!(main["module"]["media_stack"]["resource"]["features"]["media_services"]["ui_routes"][1]["port"], 8096);
-        assert_eq!(main["module"]["media_stack"]["resource"]["features"]["media_services"]["ui_routes"][2]["port"], 8989);
+        assert!(main["module"]["media_stack"]["resource"]["features"]["media_services"]["ui_routes"].is_null());
+        assert!(main["module"]["media_stack"]["resource"]["features"]["media_services"]["upstreams"].is_null());
 
         let provider: Value =
             serde_json::from_str(&std::fs::read_to_string(root.join("generated/provider.tf.json")).unwrap())

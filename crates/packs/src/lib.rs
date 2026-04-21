@@ -51,8 +51,24 @@ pub struct ServicePack {
     pub ports: BTreeMap<String, Value>,
     #[serde(default)]
     pub volumes: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub ui: ServiceUiConfig,
     #[serde(flatten)]
     pub settings: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ServiceUiConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -280,15 +296,64 @@ fn render_context(
         })
         .collect::<Result<Vec<_>>>()?;
 
+    let ui_services = service_packs
+        .iter()
+        .filter_map(|service| ui_service_context(service))
+        .collect::<Vec<_>>();
+
     Ok(serde_json::json!({
         "resource": resource,
         "features": resource.features,
         "expansion": expansion,
         "services": expansion.service_defs,
         "service_packs": service_packs,
+        "ui_services": ui_services,
         "auth_key": tailscale_auth_key(resource),
         "tailscale": tailscale_context(resource),
     }))
+}
+
+fn ui_service_context(service: &ServicePack) -> Option<serde_json::Value> {
+    if !service.ui.enabled {
+        return None;
+    }
+    let port = service
+        .ui
+        .port
+        .or_else(|| first_published_host_port(&service.ports))?;
+    let path = service
+        .ui
+        .path
+        .clone()
+        .unwrap_or_else(|| "/".to_string());
+    let name = service
+        .ui
+        .name
+        .clone()
+        .unwrap_or_else(|| service.name.clone());
+    Some(serde_json::json!({
+        "service": service.name,
+        "name": name,
+        "port": port,
+        "path": path,
+        "description": service.ui.description.clone().unwrap_or_default(),
+    }))
+}
+
+fn first_published_host_port(ports: &BTreeMap<String, Value>) -> Option<u16> {
+    let published = ports.get("published")?.as_array()?;
+    for entry in published {
+        let raw = entry.as_str()?.trim();
+        if raw.ends_with("/udp") {
+            continue;
+        }
+        let normalized = raw.strip_suffix("/tcp").unwrap_or(raw);
+        let head = normalized.split(':').next()?;
+        if let Ok(port) = head.parse::<u16>() {
+            return Some(port);
+        }
+    }
+    None
 }
 
 fn tailscale_auth_key(resource: &Resource) -> Option<String> {
@@ -565,7 +630,19 @@ mod tests {
         .unwrap();
         std::fs::write(
             root.join("templates/routes.txt.hbs"),
-            r#"{{#each features.media_services.ui_routes}}{{#unless (eq this.path "/")}}{{this.path}} {{/unless}}{{/each}}"#,
+            r#"{{#each ui_services}}{{#if (eq this.name "Jellyfin")}}{{this.port}}{{/if}}{{/each}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("services/jellyfin.toml"),
+            r#"
+            name = "jellyfin"
+            container_type = "docker"
+            [ui]
+            enabled = true
+            port = 8096
+            name = "Jellyfin"
+            "#,
         )
         .unwrap();
 
@@ -580,16 +657,9 @@ mod tests {
             features: BTreeMap::from([(
                 "media_services".to_string(),
                 toml::Value::Table(toml::map::Map::from_iter([(
-                    "ui_routes".to_string(),
+                    "services".to_string(),
                     toml::Value::Array(vec![
-                        toml::Value::Table(toml::map::Map::from_iter([(
-                            "path".to_string(),
-                            toml::Value::String("/".to_string()),
-                        )])),
-                        toml::Value::Table(toml::map::Map::from_iter([(
-                            "path".to_string(),
-                            toml::Value::String("/jellyfin".to_string()),
-                        )])),
+                        toml::Value::String("jellyfin".to_string()),
                     ]),
                 )])),
             )]),
@@ -603,7 +673,94 @@ mod tests {
             .unwrap();
 
         let rendered = std::fs::read_to_string(output.join("resources/guest/routes.txt")).unwrap();
-        assert_eq!(rendered.trim(), "/jellyfin");
+        assert_eq!(rendered.trim(), "8096");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn renders_media_index_from_ui_enabled_services() {
+        let root = unique_temp_dir();
+        std::fs::create_dir_all(root.join("roles")).unwrap();
+        std::fs::create_dir_all(root.join("services")).unwrap();
+        std::fs::create_dir_all(root.join("templates")).unwrap();
+
+        std::fs::write(
+            root.join("roles/media_stack.toml"),
+            r#"
+            name = "media_stack"
+            kind = "vm"
+
+            [features.media_services]
+            enabled = true
+            services = ["jellyfin", "jellyseerr", "gluetun"]
+
+            [render]
+            templates = ["media-index.html.hbs"]
+            "#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("services/jellyfin.toml"),
+            r#"
+            name = "jellyfin"
+            container_type = "docker"
+            [ui]
+            enabled = true
+            port = 8096
+            name = "Jellyfin"
+            "#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("services/jellyseerr.toml"),
+            r#"
+            name = "jellyseerr"
+            container_type = "docker"
+            [ports]
+            published = ["5055:5055"]
+            [ui]
+            enabled = true
+            name = "Jellyseerr"
+            "#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("services/gluetun.toml"),
+            r#"
+            name = "gluetun"
+            container_type = "docker"
+            "#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("templates/media-index.html.hbs"),
+            r#"{{#each ui_services}}{{name}}={{port}} {{/each}}"#,
+        )
+        .unwrap();
+
+        let registry = PackRegistry::load(&root).unwrap();
+        let resource = Resource {
+            name: "media-stack".to_string(),
+            kind: "vm".to_string(),
+            image: None,
+            role: Some("media_stack".to_string()),
+            vmid: None,
+            depends_on: Vec::new(),
+            features: BTreeMap::new(),
+            settings: BTreeMap::new(),
+        };
+        let expansion = registry.expand_resource(&resource).unwrap();
+        let expansions = BTreeMap::from([("media-stack".to_string(), expansion)]);
+        let output = root.join("generated");
+        registry
+            .render_artifacts(&output, &[resource], &expansions)
+            .unwrap();
+
+        let rendered =
+            std::fs::read_to_string(output.join("resources/media-stack/media-index.html")).unwrap();
+        assert!(rendered.contains("Jellyfin=8096"));
+        assert!(rendered.contains("Jellyseerr=5055"));
+        assert!(!rendered.contains("gluetun"));
         std::fs::remove_dir_all(root).unwrap();
     }
 

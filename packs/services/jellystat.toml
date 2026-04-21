@@ -11,3 +11,9 @@ published = ["3000:3000"]
 [volumes]
 mounts = ["${CONFIG_PATH}/jellystat:/app/backend/backup-data"]
 
+[ui]
+enabled = true
+port = 3000
+path = "/"
+name = "Jellystat"
+description = "Usage analytics"

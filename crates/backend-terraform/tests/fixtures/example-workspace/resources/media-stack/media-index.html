@@ -18,23 +18,23 @@
   <h1>Media Stack</h1>
   <ul>
     <li>
-      <a href="#" data-service-port="8096">Jellyfin</a>
+      <a href="#" data-service-port="8096" data-service-path="/">Jellyfin</a>
       <p>Media server</p>
     </li>
     <li>
-      <a href="#" data-service-port="8989">Sonarr</a>
+      <a href="#" data-service-port="8989" data-service-path="/">Sonarr</a>
       <p>TV automation</p>
     </li>
     <li>
-      <a href="#" data-service-port="7878">Radarr</a>
+      <a href="#" data-service-port="7878" data-service-path="/">Radarr</a>
       <p>Movie automation</p>
     </li>
     <li>
-      <a href="#" data-service-port="9696">Prowlarr</a>
+      <a href="#" data-service-port="9696" data-service-path="/">Prowlarr</a>
       <p>Indexer manager</p>
     </li>
     <li>
-      <a href="#" data-service-port="8080">qBittorrent</a>
+      <a href="#" data-service-port="8080" data-service-path="/">qBittorrent</a>
       <p>Torrent client</p>
     </li>
   </ul>
@@ -44,8 +44,10 @@
       var links = document.querySelectorAll("a[data-service-port]");
       links.forEach(function (link) {
         var port = link.getAttribute("data-service-port");
+        var path = link.getAttribute("data-service-path") || "/";
+        if (!path.startsWith("/")) path = "/" + path;
         if (!port) return;
-        link.href = "http://" + host + ":" + port + "/";
+        link.href = "http://" + host + ":" + port + path;
       });
     })();
   </script>

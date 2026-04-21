@@ -11,3 +11,9 @@ published = ["7575:7575"]
 [volumes]
 mounts = ["${CONFIG_PATH}/homarr:/appdata"]
 
+[ui]
+enabled = true
+port = 7575
+path = "/"
+name = "Homarr"
+description = "Dashboard"

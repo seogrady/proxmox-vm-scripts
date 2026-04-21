@@ -11,3 +11,10 @@ published = ["8080:8080", "6881:6881", "6881:6881/udp"]
 
 [volumes]
 mounts = ["${MEDIA_PATH}:/media", "${CONFIG_PATH}/qbittorrent:/config"]
+
+[ui]
+enabled = true
+port = 8080
+path = "/"
+name = "qBittorrent"
+description = "Torrent client"

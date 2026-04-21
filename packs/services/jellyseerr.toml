@@ -11,3 +11,9 @@ published = ["5055:5055"]
 [volumes]
 mounts = ["${CONFIG_PATH}/jellyseerr:/app/config"]
 
+[ui]
+enabled = true
+port = 5055
+path = "/"
+name = "Jellyseerr"
+description = "Request management"

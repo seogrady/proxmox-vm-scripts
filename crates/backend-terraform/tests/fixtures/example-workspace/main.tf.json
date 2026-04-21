@@ -142,57 +142,7 @@
               "qbittorrent-vpn"
             ],
             "ui_homepage_enabled": true,
-            "ui_homepage_title": "Media Stack",
-            "ui_routes": [
-              {
-                "description": "Service directory",
-                "path": "/",
-                "service": "ui-index",
-                "title": "Home"
-              },
-              {
-                "description": "Media server",
-                "path": "/jellyfin",
-                "port": 8096,
-                "service": "jellyfin",
-                "title": "Jellyfin"
-              },
-              {
-                "description": "TV automation",
-                "path": "/sonarr",
-                "port": 8989,
-                "service": "sonarr",
-                "title": "Sonarr"
-              },
-              {
-                "description": "Movie automation",
-                "path": "/radarr",
-                "port": 7878,
-                "service": "radarr",
-                "title": "Radarr"
-              },
-              {
-                "description": "Indexer manager",
-                "path": "/prowlarr",
-                "port": 9696,
-                "service": "prowlarr",
-                "title": "Prowlarr"
-              },
-              {
-                "description": "Torrent client",
-                "path": "/qbittorrent",
-                "port": 8080,
-                "service": "qbittorrent-vpn",
-                "title": "qBittorrent"
-              }
-            ],
-            "upstreams": {
-              "jellyfin": "jellyfin:8096",
-              "prowlarr": "prowlarr:9696",
-              "qbittorrent-vpn": "gluetun:8080",
-              "radarr": "radarr:7878",
-              "sonarr": "sonarr:8989"
-            }
+            "ui_homepage_title": "Media Stack"
           },
           "storage": {
             "media_path": "/media"

@@ -5,22 +5,6 @@
     respond "ok" 200
   }
 
-  handle /jellyfin* {
-    redir http://{host}:8096/ 308
-  }
-  handle /sonarr* {
-    redir http://{host}:8989/ 308
-  }
-  handle /radarr* {
-    redir http://{host}:7878/ 308
-  }
-  handle /prowlarr* {
-    redir http://{host}:9696/ 308
-  }
-  handle /qbittorrent* {
-    redir http://{host}:8080/ 308
-  }
-
   handle / {
     root * /srv/ui-index
     file_server

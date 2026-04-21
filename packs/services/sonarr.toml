@@ -11,3 +11,9 @@ published = ["8989:8989"]
 [volumes]
 mounts = ["${MEDIA_PATH}:/media", "${CONFIG_PATH}/sonarr:/config"]
 
+[ui]
+enabled = true
+port = 8989
+path = "/"
+name = "Sonarr"
+description = "TV automation"

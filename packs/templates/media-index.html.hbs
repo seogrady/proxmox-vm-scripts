@@ -17,13 +17,11 @@
 <body>
   <h1>{{features.media_services.ui_homepage_title}}</h1>
   <ul>
-    {{#each features.media_services.ui_routes}}
-    {{#unless (eq this.path "/")}}
+    {{#each ui_services}}
     <li>
-      <a href="#" data-service-port="{{this.port}}">{{this.title}}</a>
+      <a href="#" data-service-port="{{this.port}}" data-service-path="{{this.path}}">{{this.name}}</a>
       <p>{{this.description}}</p>
     </li>
-    {{/unless}}
     {{/each}}
   </ul>
   <script>
@@ -32,8 +30,10 @@
       var links = document.querySelectorAll("a[data-service-port]");
       links.forEach(function (link) {
         var port = link.getAttribute("data-service-port");
+        var path = link.getAttribute("data-service-path") || "/";
+        if (!path.startsWith("/")) path = "/" + path;
         if (!port) return;
-        link.href = "http://" + host + ":" + port + "/";
+        link.href = "http://" + host + ":" + port + path;
       });
     })();
   </script>

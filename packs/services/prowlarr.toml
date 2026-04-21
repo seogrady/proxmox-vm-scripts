@@ -11,3 +11,9 @@ published = ["9696:9696"]
 [volumes]
 mounts = ["${CONFIG_PATH}/prowlarr:/config"]
 
+[ui]
+enabled = true
+port = 9696
+path = "/"
+name = "Prowlarr"
+description = "Indexer manager"

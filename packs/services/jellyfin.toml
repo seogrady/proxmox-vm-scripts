@@ -11,3 +11,9 @@ published = ["8096:8096"]
 [volumes]
 mounts = ["${MEDIA_PATH}:/media", "${CONFIG_PATH}/jellyfin:/config"]
 
+[ui]
+enabled = true
+port = 8096
+path = "/"
+name = "Jellyfin"
+description = "Media server"

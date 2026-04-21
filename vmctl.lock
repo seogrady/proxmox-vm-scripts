@@ -15,7 +15,7 @@ name = "media-stack"
 kind = "vm"
 vmid = 210
 backend_address = "module.media_stack.proxmox_virtual_environment_vm.this"
-digest = "sha256:68ac069ccdb8781310eb31bf07b4ecd972a10d9882da44e4b2ab3901b67c5764"
+digest = "sha256:50f3fa2740f2ef095d4c3b5bf0fffcfc5a00d102e8135871f70ecddea4c0227e"
 exists = true
 
 [[resources]]
@@ -56,11 +56,11 @@ digest = "sha256:1936aefac902f77b492259cbf9649c367de2fa7c0e743ca47614e9acbefabea
 
 [[artifacts]]
 path = "desired-state.json"
-digest = "sha256:37983ff77293932ab8d5fe1b640e379c69afec754ca95db5b63ec50b02bd424a"
+digest = "sha256:145826c1ea1f62b38fdc9f45099b138bd527e54df02774a468bf15e0c0a647db"
 
 [[artifacts]]
 path = "main.tf.json"
-digest = "sha256:9cdfdf31b37dce332b0aa8532d781cc5f8ad15dd9f97587922bcf1eec016fb89"
+digest = "sha256:ed523e758721b56ad44e917ea54394715d4e9fa8e98c625d89965db30dbeb8d3"
 
 [[artifacts]]
 path = "modules/lxc/main.tf.json"
@@ -120,7 +120,7 @@ digest = "sha256:f67db7c943055e292634be123e160445c2177a8465b02186e519ecc42b0dc3d
 
 [[artifacts]]
 path = "resources/media-stack/caddyfile.media"
-digest = "sha256:35269f6506a3a6725e8d6cf37cb3c06c9315841461ee1aed690843e728d9d925"
+digest = "sha256:f77422495009b3ec39238e4599f7901d42a72629e7d845a9093383e230ed44fc"
 
 [[artifacts]]
 path = "resources/media-stack/docker-compose.media"
@@ -128,7 +128,7 @@ digest = "sha256:b8fb7a8b0e06cc3d737442b0420c594851e52e7932fcdb84a7ee0393f4450a5
 
 [[artifacts]]
 path = "resources/media-stack/media-index.html"
-digest = "sha256:bd370a28f0d7a3b62a2a2b37ab5bdbfd2b1b79cb7d476bf1c3550a190de936ca"
+digest = "sha256:171d313d1932374919748e830aa02888cceb12885708e03f7a1347ac0799ede5"
 
 [[artifacts]]
 path = "resources/media-stack/media.env"
@@ -180,7 +180,7 @@ digest = "sha256:71104ebea0d8a20f4fcb7e35b0362e96bbf6b921d8d52df73922064498c3bb0
 
 [[artifacts]]
 path = "terraform.tfstate"
-digest = "sha256:ca7a1e884c7e0799e6462361c44822a4d4fb6c866794eeb34afd23929fe68ff3"
+digest = "sha256:76802c248d1c8f5b2e218d6c6f295680f663b14b9af1992d6c6a2420137a44e7"
 
 [[artifacts]]
 path = "terraform.tfstate.1776751520.backup"
@@ -188,11 +188,11 @@ digest = "sha256:e671ed0896848f962f4011997fb8470a86dff0c9f69d9dc6f562e8b4fb3153f
 
 [[artifacts]]
 path = "terraform.tfstate.backup"
-digest = "sha256:9f201ee785b244a2814fe501632f6313910eed6bdad698a3297ee84ee20ce894"
+digest = "sha256:0e28c7d07d5a787d21372164e983ba11e3a7e0daeaa814788dfccd8dc1d95f8f"
 
 [[artifacts]]
 path = "terraform.tfvars.json"
-digest = "sha256:ad28306d8e757a48e255cb98d4bd863c76d4f0841462c918787e8fd4438615a9"
+digest = "sha256:473fa6e4d307070fba3ceb4a76036b5ec6174973ef80bd5e89eac5c9c47bdcf7"
 
 [[artifacts]]
 path = "variables.tf.json"
