@@ -101,3 +101,40 @@ if token:
             "LibraryOptions": {},
         }, token=token, allow=(200, 204, 400))
 PY
+
+jellyfin_tailscale_https_enabled="${JELLYFIN_TAILSCALE_HTTPS_ENABLED:-true}"
+jellyfin_tailscale_https_target="${JELLYFIN_TAILSCALE_HTTPS_TARGET:-http://127.0.0.1:8096}"
+
+if [[ "${jellyfin_tailscale_https_enabled,,}" == "false" || "${jellyfin_tailscale_https_enabled}" == "0" ]]; then
+  if command -v tailscale >/dev/null 2>&1; then
+    tailscale serve reset >/dev/null 2>&1 || true
+  fi
+  exit 0
+fi
+
+if ! command -v tailscale >/dev/null 2>&1; then
+  echo "tailscale not installed; skipping Jellyfin tailnet HTTPS exposure"
+  exit 0
+fi
+
+if ! tailscale status --json >/tmp/vmctl-tailscale-status.json 2>/dev/null; then
+  echo "tailscale is not authenticated; skipping Jellyfin tailnet HTTPS exposure"
+  exit 0
+fi
+
+tailscale_ready="$(python3 <<'PY'
+import json
+try:
+    with open("/tmp/vmctl-tailscale-status.json", encoding="utf-8") as handle:
+        status = json.load(handle)
+    print(1 if status.get("BackendState") in {"Running", "Starting"} else 0)
+except Exception:
+    print(0)
+PY
+)"
+if [[ "$tailscale_ready" != "1" ]]; then
+  echo "tailscale backend is not running; skipping Jellyfin tailnet HTTPS exposure"
+  exit 0
+fi
+
+tailscale serve --yes --bg "$jellyfin_tailscale_https_target"

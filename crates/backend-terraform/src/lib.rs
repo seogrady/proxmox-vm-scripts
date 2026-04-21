@@ -1843,6 +1843,15 @@ mod tests {
     }
 
     #[test]
+    fn media_jellyfin_bootstrap_configures_tailscale_https_serve() {
+        let script =
+            include_str!("../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-jellyfin.sh");
+        assert!(script.contains("JELLYFIN_TAILSCALE_HTTPS_ENABLED"));
+        assert!(script.contains("tailscale serve --yes --bg"));
+        assert!(script.contains("tailscale serve reset"));
+    }
+
+    #[test]
     fn example_workspace_matches_fixtures() {
         let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let raw = include_str!("../../../vmctl.example.toml");

@@ -57,6 +57,8 @@ enum Command {
         no_image_ensure: bool,
         #[arg(long)]
         no_start: bool,
+        #[arg(long)]
+        ignore_lock: bool,
         target: Option<String>,
     },
     Inspect {
@@ -74,6 +76,8 @@ enum Command {
         skip_provision: bool,
         #[arg(long)]
         no_image_ensure: bool,
+        #[arg(long)]
+        ignore_lock: bool,
         target: Option<String>,
     },
     Destroy {
@@ -172,6 +176,7 @@ fn main() -> Result<()> {
             skip_provision,
             no_image_ensure,
             no_start,
+            ignore_lock,
             target,
         } => apply_command(
             cli.config.as_deref(),
@@ -182,6 +187,7 @@ fn main() -> Result<()> {
             skip_provision,
             no_image_ensure,
             no_start,
+            ignore_lock,
             target.as_deref(),
             "apply",
         ),
@@ -202,6 +208,7 @@ fn main() -> Result<()> {
             verbose,
             skip_provision,
             no_image_ensure,
+            ignore_lock,
             target,
         } => apply_command(
             cli.config.as_deref(),
@@ -212,6 +219,7 @@ fn main() -> Result<()> {
             skip_provision,
             no_image_ensure,
             false,
+            ignore_lock,
             target.as_deref(),
             "up",
         ),
@@ -390,6 +398,7 @@ fn apply_command(
     skip_provision: bool,
     no_image_ensure: bool,
     no_start: bool,
+    ignore_lock: bool,
     target: Option<&str>,
     _command: &str,
 ) -> Result<()> {
@@ -462,6 +471,9 @@ fn apply_command(
     progress.run("writing vmctl.lock", || {
         write_lockfile(&workspace, &desired)
     })?;
+    if ignore_lock {
+        eprintln!("warning: --ignore-lock is enabled; vmctl.lock was ignored as an input cache");
+    }
     println!("{}; wrote vmctl.lock", result.summary);
     if !skip_provision {
         let result = run_provision(&workspace, &provision_desired, &progress)?;
@@ -1216,6 +1228,7 @@ fn validate_live_backend(
 }
 
 fn auto_recover_backend_state(workspace: &Workspace, desired: &DesiredState) -> Result<()> {
+    prune_missing_state_resources(workspace, desired)?;
     let unmanaged = find_existing_unmanaged_resources(workspace, desired)?;
     if unmanaged.is_empty() {
         return Ok(());
@@ -1243,6 +1256,21 @@ fn auto_recover_backend_state(workspace: &Workspace, desired: &DesiredState) -> 
         }
     }
 
+    Ok(())
+}
+
+fn prune_missing_state_resources(workspace: &Workspace, desired: &DesiredState) -> Result<()> {
+    let state_addresses = terraform_state_addresses(workspace)?;
+    let stale = missing_backend_state_resources(desired, &state_addresses, |kind, vmid| {
+        proxmox_resource_exists(kind, vmid)
+    });
+    for stale_resource in stale {
+        println!(
+            "state recovery: removing stale state for missing {} {} ({})",
+            stale_resource.kind, stale_resource.vmid, stale_resource.address
+        );
+        terraform_state_rm(workspace, &stale_resource.address)?;
+    }
     Ok(())
 }
 
@@ -1355,6 +1383,19 @@ fn terraform_import(workspace: &Workspace, address: &str, import_id: &str) -> Re
     Ok(())
 }
 
+fn terraform_state_rm(workspace: &Workspace, address: &str) -> Result<()> {
+    let generated = workspace.root.join(&workspace.generated_dir);
+    let binary = terraform_binary_name();
+    command_runner::run(
+        CommandOptions::new(&binary, ["state", "rm", address])
+            .cwd(generated)
+            .timeout(Duration::from_secs(120))
+            .prefix(LogPrefix::Terraform),
+    )
+    .with_context(|| format!("failed to run `{binary} state rm {address}`"))?;
+    Ok(())
+}
+
 fn confirm_destroy_existing_resource(resource: &UnmanagedBackendResource) -> Result<bool> {
     if !std::io::stdin().is_terminal() {
         return Ok(false);
@@ -1442,6 +1483,40 @@ fn proxmox_destroy_command(kind: &str, vmid: u32) -> String {
         "lxc" => format!("pct stop {vmid} || true; pct destroy {vmid} --purge"),
         _ => format!("remove Proxmox resource {vmid}"),
     }
+}
+
+fn missing_backend_state_resources<F>(
+    desired: &DesiredState,
+    state_addresses: &BTreeSet<String>,
+    mut exists: F,
+) -> Vec<UnmanagedBackendResource>
+where
+    F: FnMut(&str, u32) -> bool,
+{
+    let mut stale = Vec::new();
+    for resource in desired.normalized_resources.values() {
+        let Some(vmid) = resource.vmid else {
+            continue;
+        };
+        let Some(address) = backend_resource_address(&resource.name, &resource.kind) else {
+            continue;
+        };
+        if !state_addresses.contains(&address) {
+            continue;
+        }
+        if exists(&resource.kind, vmid) {
+            continue;
+        }
+        stale.push(UnmanagedBackendResource {
+            name: resource.name.clone(),
+            kind: resource.kind.clone(),
+            vmid,
+            address,
+            import_id: String::new(),
+            destroy_command: String::new(),
+        });
+    }
+    stale
 }
 
 fn render_images_list(desired: &DesiredState) -> String {
@@ -2648,7 +2723,7 @@ fn collect_files(root: &Path, dir: &Path, files: &mut Vec<PathBuf>) -> Result<()
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use super::*;
     use clap::CommandFactory;
@@ -2707,6 +2782,20 @@ mod tests {
         let cli = Cli::try_parse_from(["vmctl", "apply", "--no-start"]).unwrap();
 
         assert!(matches!(cli.command, Command::Apply { no_start: true, .. }));
+    }
+
+    #[test]
+    fn apply_accepts_ignore_lock_flag() {
+        Cli::command().debug_assert();
+        let cli = Cli::try_parse_from(["vmctl", "apply", "--ignore-lock"]).unwrap();
+
+        assert!(matches!(
+            cli.command,
+            Command::Apply {
+                ignore_lock: true,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -3136,6 +3225,62 @@ mod tests {
         };
 
         validate_apply_preflight_with_host_memory(&desired, Some(15765)).unwrap();
+    }
+
+    #[test]
+    fn detects_stale_state_entries_for_missing_backend_resources() {
+        let desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::new(),
+            resources: Vec::new(),
+            normalized_resources: BTreeMap::from([(
+                "media-stack".to_string(),
+                vmctl_domain::NormalizedResource {
+                    name: "media-stack".to_string(),
+                    kind: "vm".to_string(),
+                    vmid: Some(210),
+                    ..vmctl_domain::NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::new(),
+        };
+        let state_addresses = BTreeSet::from([
+            "module.media_stack.proxmox_virtual_environment_vm.this[0]".to_string(),
+        ]);
+
+        let stale =
+            missing_backend_state_resources(&desired, &state_addresses, |_kind, _vmid| false);
+
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].name, "media-stack");
+        assert_eq!(stale[0].vmid, 210);
+    }
+
+    #[test]
+    fn ignores_state_entries_when_backend_resource_exists() {
+        let desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::new(),
+            resources: Vec::new(),
+            normalized_resources: BTreeMap::from([(
+                "media-stack".to_string(),
+                vmctl_domain::NormalizedResource {
+                    name: "media-stack".to_string(),
+                    kind: "vm".to_string(),
+                    vmid: Some(210),
+                    ..vmctl_domain::NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::new(),
+        };
+        let state_addresses = BTreeSet::from([
+            "module.media_stack.proxmox_virtual_environment_vm.this[0]".to_string(),
+        ]);
+
+        let stale =
+            missing_backend_state_resources(&desired, &state_addresses, |_kind, _vmid| true);
+
+        assert!(stale.is_empty());
     }
 
     #[test]
