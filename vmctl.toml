@@ -150,7 +150,7 @@ tailscale_https_target = "http://127.0.0.1:80"
 media_path = "/media"
 
 [resources.features.vpn]
-enabled = false
+enabled = true
 provider = "mullvad"
 type = "wireguard"
 wireguard_private_key = "${WIREGUARD_PRIVATE_KEY}"

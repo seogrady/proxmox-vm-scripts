@@ -15,7 +15,7 @@ name = "media-stack"
 kind = "vm"
 vmid = 210
 backend_address = "module.media_stack.proxmox_virtual_environment_vm.this"
-digest = "sha256:4f963cad8cd30b3c12e75bcd8c0cec6fd599ad92367a52bf6a9e589837b35703"
+digest = "sha256:e95289eb3722914a9e9f64b57002aaef31b1f34d455ae47cd42cb88d13f4047e"
 exists = true
 
 [[resources]]
@@ -56,11 +56,11 @@ digest = "sha256:1936aefac902f77b492259cbf9649c367de2fa7c0e743ca47614e9acbefabea
 
 [[artifacts]]
 path = "desired-state.json"
-digest = "sha256:674c3e961d0dbaa7008b808b9923b8c0f5c8049c749a5a80a5815fcb133b1a6f"
+digest = "sha256:7a0cdf345d085d1dc7fd722c62e046b418e8be6282186130f7a240826217b1f5"
 
 [[artifacts]]
 path = "main.tf.json"
-digest = "sha256:0e7abe4139aebbe8e918427bae9f8368cb21104cc5c19cd092308587e2fc04e5"
+digest = "sha256:b18d6877d24a9e7f80d76dc21b2efd91292b4c0f46fc0ff705af2e8102a71639"
 
 [[artifacts]]
 path = "modules/lxc/main.tf.json"
@@ -116,7 +116,7 @@ digest = "sha256:042b1f3ed088144ea9c61dde4dad6fdf1b66c14ddb0be737602a5c8a048f56b
 
 [[artifacts]]
 path = "resources/kodi-htpc/tailscale-setup.sh"
-digest = "sha256:f67db7c943055e292634be123e160445c2177a8465b02186e519ecc42b0dc3d4"
+digest = "sha256:6aa802c64bd08065b05755eb40fd15993cce4a95759d27e3a64d6c909c839cb1"
 
 [[artifacts]]
 path = "resources/media-stack/caddyfile.media"
@@ -132,7 +132,7 @@ digest = "sha256:82eae59671cd2b4c9dbcd10a9463d5076c9a881e0a0c29e9f90ccac84a94d07
 
 [[artifacts]]
 path = "resources/media-stack/media.env"
-digest = "sha256:e799e4425845f76903e03b97585d520bb2904f2caf23d25aa9ef08c1e5f62f3a"
+digest = "sha256:da06def1fc42d32bf39532179bf1fe6f172c13d2a217a5890ec5d99ee2ebdcb6"
 
 [[artifacts]]
 path = "resources/media-stack/scripts/bootstrap-arr.sh"
@@ -148,7 +148,7 @@ digest = "sha256:743f9c1a9d97b0b46d0620e83157324619649ebb143bc517db823c2eacf4b64
 
 [[artifacts]]
 path = "resources/media-stack/scripts/bootstrap-media.sh"
-digest = "sha256:a4b4dcc279feeb36585344e0dd590e7dd065370797a6347578647f4029677e73"
+digest = "sha256:73302094e8eac4805c73ecdd0019ad34c78fe19fea788f8dec098be76014bfdc"
 
 [[artifacts]]
 path = "resources/media-stack/scripts/bootstrap-node.sh"
@@ -168,7 +168,7 @@ digest = "sha256:e8bd79e956e5a20d03f870b00c0b8ebd8aa2532421ab4aa2f420c14ee350fcc
 
 [[artifacts]]
 path = "resources/media-stack/tailscale-setup.sh"
-digest = "sha256:0dcdbe360dc27ca9432d95a5d6c3c102c861b4608c7ab6c006665735820d13cc"
+digest = "sha256:f3b8ff601764faefd3d27c77e8833ad224f5c0c4be4fe5a599ef382565b9b1a9"
 
 [[artifacts]]
 path = "resources/tailscale-gateway/scripts/bootstrap-node.sh"
@@ -180,11 +180,11 @@ digest = "sha256:042b1f3ed088144ea9c61dde4dad6fdf1b66c14ddb0be737602a5c8a048f56b
 
 [[artifacts]]
 path = "resources/tailscale-gateway/tailscale-setup.sh"
-digest = "sha256:71104ebea0d8a20f4fcb7e35b0362e96bbf6b921d8d52df73922064498c3bb03"
+digest = "sha256:4188c24c4b5763aaf0f9391824dfeebad16f90b6492ffe01b0264783ce62744b"
 
 [[artifacts]]
 path = "terraform.tfstate"
-digest = "sha256:820ae3ad4f4d8717ac1fb1325daf7e0416f981e886106e96f3ab8a0871b6b902"
+digest = "sha256:79c255a7e4a759f877920073605bcb5981bacd1ba9e454bddd214e26bd2fc19f"
 
 [[artifacts]]
 path = "terraform.tfstate.1776751520.backup"
@@ -192,11 +192,11 @@ digest = "sha256:e671ed0896848f962f4011997fb8470a86dff0c9f69d9dc6f562e8b4fb3153f
 
 [[artifacts]]
 path = "terraform.tfstate.backup"
-digest = "sha256:80f4989df9084d0d4e93591bae77b239104d20dcb5207e865654f1015c3a74dd"
+digest = "sha256:25dfcbc399affeb5d876f761363081c7d64acbcb68472391e40b4e60eb97be5f"
 
 [[artifacts]]
 path = "terraform.tfvars.json"
-digest = "sha256:f8d4435f7c715111dc13cd377e08e2ce76ba1a8c7fbcbf98a2395b622ef20604"
+digest = "sha256:e4d0beb1c613a687defc7f874bed8b7e47b3657b5a621b71994308fb24467cde"
 
 [[artifacts]]
 path = "variables.tf.json"

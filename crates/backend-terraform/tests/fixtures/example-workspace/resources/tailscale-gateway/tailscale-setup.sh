@@ -15,27 +15,47 @@ VMCTL_TAILSCALE_ACCEPT_ROUTES=0
 VMCTL_TAILSCALE_EXIT_NODE=0
 
 already_authenticated=0
+backend_state=""
 if command -v tailscale >/dev/null 2>&1 && tailscale status --json >/tmp/vmctl-tailscale-status.json 2>/dev/null; then
-  already_authenticated="$(python3 - <<'PY'
+  readarray -t ts_state < <(python3 - <<'PY'
 import json
 try:
     with open("/tmp/vmctl-tailscale-status.json", encoding="utf-8") as handle:
         status = json.load(handle)
-    print(1 if status.get("HaveNodeKey") and status.get("BackendState") in {"Running", "Starting"} else 0)
+    have_key = bool(status.get("HaveNodeKey"))
+    backend = str(status.get("BackendState", ""))
+    print("1" if have_key and backend in {"Running", "Starting"} else "0")
+    print(backend)
 except Exception:
-    print(0)
+    print("0")
+    print("")
 PY
-)"
+)
+  already_authenticated="${ts_state[0]}"
+  backend_state="${ts_state[1]}"
 fi
 
+set_args=()
+set_args+=(--hostname "$VMCTL_TAILSCALE_HOSTNAME")
+set_args+=(--advertise-routes "$VMCTL_TAILSCALE_ROUTES")
+
 if [[ "$already_authenticated" == "1" ]]; then
-  set_args=()
-  set_args+=(--hostname "$VMCTL_TAILSCALE_HOSTNAME")
-  set_args+=(--advertise-routes "$VMCTL_TAILSCALE_ROUTES")
   if ((${#set_args[@]} > 0)); then
     tailscale set "${set_args[@]}"
   fi
   exit 0
+fi
+
+# Keep existing node identity whenever possible.
+if [[ "$backend_state" == "Stopped" || "$backend_state" == "NoState" ]]; then
+  tailscale up "${set_args[@]}"
+  exit 0
+fi
+
+if [[ "$backend_state" != "NeedsLogin" ]]; then
+  if tailscale up "${set_args[@]}"; then
+    exit 0
+  fi
 fi
 
 if [[ -z "$VMCTL_TAILSCALE_AUTH_KEY" ]]; then
@@ -43,9 +63,8 @@ if [[ -z "$VMCTL_TAILSCALE_AUTH_KEY" ]]; then
   exit 1
 fi
 
-args=(--reset --auth-key "$VMCTL_TAILSCALE_AUTH_KEY")
-args+=(--hostname "$VMCTL_TAILSCALE_HOSTNAME")
-args+=(--advertise-routes "$VMCTL_TAILSCALE_ROUTES")
+args=(--auth-key "$VMCTL_TAILSCALE_AUTH_KEY")
+args+=("${set_args[@]}")
 args+=(--advertise-tags "$VMCTL_TAILSCALE_TAGS")
 
 cat >/etc/sysctl.d/99-tailscale-forwarding.conf <<'EOF'

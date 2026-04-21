@@ -1,7 +1,7 @@
 services:
 {{#each service_packs}}
 {{#if vpn_gateway}}
-{{#if @root.features.vpn.enabled}}
+{{#if @root.vpn.enabled}}
   {{name}}:
     image: "{{image.name}}:{{image.tag}}"
     env_file:
@@ -38,7 +38,7 @@ services:
       - .env
     restart: unless-stopped
 {{#if vpn_route_through_gluetun}}
-{{#if @root.features.vpn.enabled}}
+{{#if @root.vpn.enabled}}
     network_mode: "service:gluetun"
     depends_on:
       - gluetun

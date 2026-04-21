@@ -304,6 +304,7 @@ fn render_context(
     Ok(serde_json::json!({
         "resource": resource,
         "features": resource.features,
+        "vpn": media_vpn_context(resource),
         "expansion": expansion,
         "services": expansion.service_defs,
         "service_packs": service_packs,
@@ -311,6 +312,45 @@ fn render_context(
         "auth_key": tailscale_auth_key(resource),
         "tailscale": tailscale_context(resource),
     }))
+}
+
+fn media_vpn_context(resource: &Resource) -> serde_json::Value {
+    let vpn = resource.features.get("vpn").and_then(Value::as_table);
+    let configured = vpn
+        .and_then(|table| table.get("enabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let provider = vpn
+        .and_then(|table| table.get("provider"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let vpn_type = vpn
+        .and_then(|table| table.get("type"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let wireguard_private_key = vpn
+        .and_then(|table| table.get("wireguard_private_key"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let wireguard_addresses = vpn
+        .and_then(|table| table.get("wireguard_addresses"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let enabled = if !configured {
+        false
+    } else if vpn_type.eq_ignore_ascii_case("wireguard") {
+        !provider.is_empty() && !wireguard_private_key.is_empty() && !wireguard_addresses.is_empty()
+    } else {
+        true
+    };
+    serde_json::json!({
+        "enabled": enabled,
+        "configured": configured,
+    })
 }
 
 fn ui_service_context(service: &ServicePack) -> Option<serde_json::Value> {
@@ -762,6 +802,58 @@ mod tests {
         assert!(rendered.contains("Jellyseerr=5055"));
         assert!(!rendered.contains("gluetun"));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn media_vpn_context_requires_wireguard_inputs() {
+        let mut resource = Resource {
+            name: "media-stack".to_string(),
+            kind: "vm".to_string(),
+            image: None,
+            role: Some("media_stack".to_string()),
+            vmid: None,
+            depends_on: Vec::new(),
+            features: BTreeMap::new(),
+            settings: BTreeMap::new(),
+        };
+        resource.features.insert(
+            "vpn".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([
+                ("enabled".to_string(), toml::Value::Boolean(true)),
+                ("provider".to_string(), toml::Value::String("mullvad".to_string())),
+                ("type".to_string(), toml::Value::String("wireguard".to_string())),
+                (
+                    "wireguard_private_key".to_string(),
+                    toml::Value::String("".to_string()),
+                ),
+                (
+                    "wireguard_addresses".to_string(),
+                    toml::Value::String("".to_string()),
+                ),
+            ])),
+        );
+        let context = media_vpn_context(&resource);
+        assert_eq!(context.get("configured").unwrap(), true);
+        assert_eq!(context.get("enabled").unwrap(), false);
+
+        resource.features.insert(
+            "vpn".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([
+                ("enabled".to_string(), toml::Value::Boolean(true)),
+                ("provider".to_string(), toml::Value::String("mullvad".to_string())),
+                ("type".to_string(), toml::Value::String("wireguard".to_string())),
+                (
+                    "wireguard_private_key".to_string(),
+                    toml::Value::String("key".to_string()),
+                ),
+                (
+                    "wireguard_addresses".to_string(),
+                    toml::Value::String("10.0.0.2/32".to_string()),
+                ),
+            ])),
+        );
+        let context = media_vpn_context(&resource);
+        assert_eq!(context.get("enabled").unwrap(), true);
     }
 
     fn unique_temp_dir() -> PathBuf {
