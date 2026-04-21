@@ -14,6 +14,8 @@ KODI_USER="${KODI_USER:-kodi}"
 KODI_HOME="${KODI_HOME:-/home/$KODI_USER}"
 KODI_WEB_PORT="${KODI_WEB_PORT:-8080}"
 KODI_EVENT_SERVER_PORT="${KODI_EVENT_SERVER_PORT:-9777}"
+KODI_TAILSCALE_HTTPS_ENABLED="${KODI_TAILSCALE_HTTPS_ENABLED:-true}"
+KODI_TAILSCALE_HTTPS_TARGET="${KODI_TAILSCALE_HTTPS_TARGET:-http://127.0.0.1:${KODI_WEB_PORT}}"
 
 export DEBIAN_FRONTEND=noninteractive
 packages=(
@@ -47,6 +49,7 @@ cat > "$KODI_HOME/.kodi/userdata/advancedsettings.xml" <<EOF
     <esmaxclients>20</esmaxclients>
     <esport>${KODI_EVENT_SERVER_PORT}</esport>
     <webserver>true</webserver>
+    <webserverallinterfaces>true</webserverallinterfaces>
     <webserverport>${KODI_WEB_PORT}</webserverport>
     <webserverusername></webserverusername>
     <webserverpassword></webserverpassword>
@@ -72,6 +75,7 @@ settings = {
     "services.devicename": "Kodi HTPC",
     "services.zeroconf": "true",
     "services.webserver": "true",
+    "services.webserverallinterfaces": "true",
     "services.webserverport": web_port,
     "services.webserverauthentication": "false",
     "services.webserverusername": "",
@@ -161,3 +165,46 @@ EOF
 systemctl daemon-reload
 systemctl enable kodi-htpc.service
 systemctl restart kodi-htpc.service
+
+for _ in {1..60}; do
+  if curl -fsS "http://127.0.0.1:${KODI_WEB_PORT}/jsonrpc" \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"JSONRPC.Ping","id":1}' >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+
+if [[ "${KODI_TAILSCALE_HTTPS_ENABLED,,}" == "false" || "${KODI_TAILSCALE_HTTPS_ENABLED}" == "0" ]]; then
+  if command -v tailscale >/dev/null 2>&1; then
+    tailscale serve reset >/dev/null 2>&1 || true
+  fi
+  exit 0
+fi
+
+if ! command -v tailscale >/dev/null 2>&1; then
+  echo "tailscale not installed; skipping Kodi tailnet HTTPS exposure"
+  exit 0
+fi
+
+if ! tailscale status --json >/tmp/vmctl-tailscale-status.json 2>/dev/null; then
+  echo "tailscale is not authenticated; skipping Kodi tailnet HTTPS exposure"
+  exit 0
+fi
+
+tailscale_ready="$(python3 <<'PY'
+import json
+try:
+    with open("/tmp/vmctl-tailscale-status.json", encoding="utf-8") as handle:
+        status = json.load(handle)
+    print(1 if status.get("BackendState") in {"Running", "Starting"} else 0)
+except Exception:
+    print(0)
+PY
+)"
+if [[ "$tailscale_ready" != "1" ]]; then
+  echo "tailscale backend is not running; skipping Kodi tailnet HTTPS exposure"
+  exit 0
+fi
+
+tailscale serve --yes --bg "$KODI_TAILSCALE_HTTPS_TARGET"
