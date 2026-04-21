@@ -6,9 +6,6 @@
   "module": {
     "kodi_htpc": {
       "bridge": "vmbr0",
-      "depends_on": [
-        "proxmox_virtual_environment_download_file.image_ubuntu_24_cloud_image"
-      ],
       "node_name": "mini",
       "resource": {
         "agent": true,
@@ -98,13 +95,12 @@
       },
       "source": "./modules/vm",
       "storage": "local-lvm",
-      "template": "${proxmox_virtual_environment_download_file.image_ubuntu_24_cloud_image.id}"
+      "template": "local:import/noble-server-cloudimg-amd64.qcow2"
     },
     "media_stack": {
       "bridge": "vmbr0",
       "depends_on": [
-        "module.tailscale_gateway",
-        "proxmox_virtual_environment_download_file.image_ubuntu_24_cloud_image"
+        "module.tailscale_gateway"
       ],
       "node_name": "mini",
       "resource": {
@@ -134,12 +130,8 @@
             },
             "jellyfin_admin_password": "dummy-jellyfin-password",
             "jellyfin_admin_user": "admin",
-            "jellyfin_base_url": "/jellyfin",
             "jellyfin_url": "http://media-stack.home.arpa:8096",
             "minimal": true,
-            "prowlarr_base_url": "/prowlarr",
-            "qbittorrent_base_url": "/qbittorrent",
-            "radarr_base_url": "/radarr",
             "services": [
               "caddy",
               "gluetun",
@@ -149,7 +141,6 @@
               "prowlarr",
               "qbittorrent-vpn"
             ],
-            "sonarr_base_url": "/sonarr",
             "ui_homepage_enabled": true,
             "ui_homepage_title": "Media Stack",
             "ui_routes": [
@@ -162,35 +153,39 @@
               {
                 "description": "Media server",
                 "path": "/jellyfin",
+                "port": 8096,
                 "service": "jellyfin",
                 "title": "Jellyfin"
               },
               {
                 "description": "TV automation",
                 "path": "/sonarr",
+                "port": 8989,
                 "service": "sonarr",
                 "title": "Sonarr"
               },
               {
                 "description": "Movie automation",
                 "path": "/radarr",
+                "port": 7878,
                 "service": "radarr",
                 "title": "Radarr"
               },
               {
                 "description": "Indexer manager",
                 "path": "/prowlarr",
+                "port": 9696,
                 "service": "prowlarr",
                 "title": "Prowlarr"
               },
               {
                 "description": "Torrent client",
                 "path": "/qbittorrent",
+                "port": 8080,
                 "service": "qbittorrent-vpn",
                 "title": "qBittorrent"
               }
             ],
-            "ui_routing_mode": "path_prefix",
             "upstreams": {
               "jellyfin": "jellyfin:8096",
               "prowlarr": "prowlarr:9696",
@@ -261,7 +256,7 @@
       },
       "source": "./modules/vm",
       "storage": "local-lvm",
-      "template": "${proxmox_virtual_environment_download_file.image_ubuntu_24_cloud_image.id}"
+      "template": "local:import/noble-server-cloudimg-amd64.qcow2"
     },
     "tailscale_gateway": {
       "bridge": "vmbr0",
@@ -339,19 +334,6 @@
       "source": "./modules/lxc",
       "storage": "local-lvm",
       "template": "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
-    }
-  },
-  "resource": {
-    "proxmox_virtual_environment_download_file": {
-      "image_ubuntu_24_cloud_image": {
-        "content_type": "import",
-        "datastore_id": "local",
-        "file_name": "noble-server-cloudimg-amd64.qcow2",
-        "node_name": "mini",
-        "overwrite": true,
-        "overwrite_unmanaged": true,
-        "url": "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
-      }
     }
   },
   "terraform": {

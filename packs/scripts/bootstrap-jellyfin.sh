@@ -3,11 +3,56 @@ set -euo pipefail
 
 STACK_DIR="/opt/media"
 ENV_FILE="$STACK_DIR/.env"
+COMPOSE_FILE="$STACK_DIR/docker-compose.yml"
 
 if [[ -f "$ENV_FILE" ]]; then
   set -a
   . "$ENV_FILE"
   set +a
+fi
+
+CONFIG_ROOT="${CONFIG_PATH:-/opt/media/config}"
+BASE_URL_VALUE="${JELLYFIN_BASE_URL:-}"
+JELLYFIN_NETWORK_XML="$CONFIG_ROOT/jellyfin/network.xml"
+mkdir -p "$(dirname "$JELLYFIN_NETWORK_XML")"
+export BASE_URL_VALUE
+export JELLYFIN_NETWORK_XML
+
+jellyfin_base_updated="$(
+python3 <<'PY'
+import os
+import xml.etree.ElementTree as ET
+
+xml_path = os.environ["JELLYFIN_NETWORK_XML"]
+base_url = (os.environ.get("BASE_URL_VALUE") or "").strip()
+if not base_url.startswith("/"):
+    base_url = f"/{base_url}"
+if base_url == "/":
+    base_url = ""
+
+root = None
+if os.path.exists(xml_path):
+    root = ET.parse(xml_path).getroot()
+else:
+    root = ET.Element("NetworkConfiguration")
+
+node = root.find("BaseUrl")
+if node is None:
+    node = ET.SubElement(root, "BaseUrl")
+
+current = (node.text or "").strip()
+if current == base_url:
+    print("0")
+else:
+    node.text = base_url
+    ET.ElementTree(root).write(xml_path, encoding="utf-8", xml_declaration=True)
+    print("1")
+PY
+)"
+
+if [[ "$jellyfin_base_updated" == "1" ]]; then
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d jellyfin
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" restart jellyfin
 fi
 
 python3 <<'PY'
@@ -20,7 +65,7 @@ import urllib.request
 base = os.environ.get("JELLYFIN_URL") or "http://localhost:8096"
 user = os.environ.get("JELLYFIN_ADMIN_USER") or "admin"
 password = os.environ.get("JELLYFIN_ADMIN_PASSWORD") or ""
-base_url = os.environ.get("JELLYFIN_BASE_URL") or "/jellyfin"
+base_url = os.environ.get("JELLYFIN_BASE_URL") or ""
 
 
 def call(method, path, payload=None, token=None, allow=(200, 204)):

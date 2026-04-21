@@ -12,6 +12,7 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d caddy
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" restart caddy
 
 python3 <<'PY'
 import os

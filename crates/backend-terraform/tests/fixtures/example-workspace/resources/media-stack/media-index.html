@@ -18,25 +18,36 @@
   <h1>Media Stack</h1>
   <ul>
     <li>
-      <a href="/jellyfin">Jellyfin</a>
+      <a href="#" data-service-port="8096">Jellyfin</a>
       <p>Media server</p>
     </li>
     <li>
-      <a href="/sonarr">Sonarr</a>
+      <a href="#" data-service-port="8989">Sonarr</a>
       <p>TV automation</p>
     </li>
     <li>
-      <a href="/radarr">Radarr</a>
+      <a href="#" data-service-port="7878">Radarr</a>
       <p>Movie automation</p>
     </li>
     <li>
-      <a href="/prowlarr">Prowlarr</a>
+      <a href="#" data-service-port="9696">Prowlarr</a>
       <p>Indexer manager</p>
     </li>
     <li>
-      <a href="/qbittorrent">qBittorrent</a>
+      <a href="#" data-service-port="8080">qBittorrent</a>
       <p>Torrent client</p>
     </li>
   </ul>
+  <script>
+    (function () {
+      var host = window.location.hostname;
+      var links = document.querySelectorAll("a[data-service-port]");
+      links.forEach(function (link) {
+        var port = link.getAttribute("data-service-port");
+        if (!port) return;
+        link.href = "http://" + host + ":" + port + "/";
+      });
+    })();
+  </script>
 </body>
 </html>

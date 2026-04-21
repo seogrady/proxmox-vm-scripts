@@ -139,14 +139,8 @@ services = ["caddy", "gluetun", "jellyfin", "sonarr", "radarr", "prowlarr", "qbi
 jellyfin_url = "http://media-stack.${domain}:8096"
 jellyfin_admin_user = "${JELLYFIN_ADMIN_USER}"
 jellyfin_admin_password = "${JELLYFIN_ADMIN_PASSWORD}"
-ui_routing_mode = "path_prefix"
 ui_homepage_enabled = true
 ui_homepage_title = "Media Stack"
-jellyfin_base_url = "/jellyfin"
-sonarr_base_url = "/sonarr"
-radarr_base_url = "/radarr"
-prowlarr_base_url = "/prowlarr"
-qbittorrent_base_url = "/qbittorrent"
 
 [resources.features.media_services.exposure]
 tailscale_https_enabled = true
@@ -168,30 +162,35 @@ description = "Service directory"
 [[resources.features.media_services.ui_routes]]
 path = "/jellyfin"
 service = "jellyfin"
+port = 8096
 title = "Jellyfin"
 description = "Media server"
 
 [[resources.features.media_services.ui_routes]]
 path = "/sonarr"
 service = "sonarr"
+port = 8989
 title = "Sonarr"
 description = "TV automation"
 
 [[resources.features.media_services.ui_routes]]
 path = "/radarr"
 service = "radarr"
+port = 7878
 title = "Radarr"
 description = "Movie automation"
 
 [[resources.features.media_services.ui_routes]]
 path = "/prowlarr"
 service = "prowlarr"
+port = 9696
 title = "Prowlarr"
 description = "Indexer manager"
 
 [[resources.features.media_services.ui_routes]]
 path = "/qbittorrent"
 service = "qbittorrent-vpn"
+port = 8080
 title = "qBittorrent"
 description = "Torrent client"
 

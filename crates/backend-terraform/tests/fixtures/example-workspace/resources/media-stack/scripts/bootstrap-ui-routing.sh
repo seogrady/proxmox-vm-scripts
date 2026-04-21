@@ -12,6 +12,7 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d caddy
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" restart caddy
 
 python3 <<'PY'
 import os
@@ -20,22 +21,25 @@ import urllib.error
 import urllib.request
 
 
-def wait_status(path):
+def wait_status(path, strict=True):
     url = f"http://127.0.0.1{path}"
     for _ in range(60):
         try:
             req = urllib.request.Request(url, method="GET")
             with urllib.request.urlopen(req, timeout=10) as resp:
                 if 200 <= resp.status < 500:
-                    return
+                    return True
         except urllib.error.HTTPError as err:
             if 200 <= err.code < 500:
-                return
+                return True
         except Exception:
             time.sleep(2)
             continue
         time.sleep(2)
-    raise RuntimeError(f"route check failed: {path}")
+    if strict:
+        raise RuntimeError(f"route check failed: {path}")
+    print(f"warning: route check failed: {path}")
+    return False
 
 
 wait_status("/healthz")
@@ -49,7 +53,7 @@ for env in [
 ]:
     route = (os.environ.get(env) or "").strip()
     if route and route != "/":
-        wait_status(route)
+        wait_status(route, strict=False)
 PY
 
 tailscale_https_enabled="${TAILSCALE_HTTPS_ENABLED:-true}"

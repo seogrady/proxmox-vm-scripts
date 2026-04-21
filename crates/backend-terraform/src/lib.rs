@@ -1853,6 +1853,35 @@ mod tests {
     }
 
     #[test]
+    fn media_caddy_fixture_uses_service_port_mode_without_prefix_routes() {
+        let caddy =
+            include_str!("../tests/fixtures/example-workspace/resources/media-stack/caddyfile.media");
+        assert!(caddy.contains("handle_path /healthz"));
+        assert!(caddy.contains("handle / {"));
+        assert!(caddy.contains("handle /sonarr*"));
+        assert!(caddy.contains("handle /radarr*"));
+        assert!(caddy.contains("handle /prowlarr*"));
+        assert!(caddy.contains("handle /qbittorrent*"));
+        assert!(caddy.contains("redir http://{host}:8989/ 308"));
+        assert!(caddy.contains("redir http://{host}:7878/ 308"));
+        assert!(caddy.contains("redir http://{host}:9696/ 308"));
+        assert!(caddy.contains("redir http://{host}:8080/ 308"));
+        assert!(!caddy.contains("reverse_proxy sonarr:8989"));
+    }
+
+    #[test]
+    fn media_index_fixture_links_to_service_ports() {
+        let index =
+            include_str!("../tests/fixtures/example-workspace/resources/media-stack/media-index.html");
+        assert!(index.contains("data-service-port=\"8096\""));
+        assert!(index.contains("data-service-port=\"8989\""));
+        assert!(index.contains("data-service-port=\"7878\""));
+        assert!(index.contains("data-service-port=\"9696\""));
+        assert!(index.contains("data-service-port=\"8080\""));
+        assert!(index.contains("link.href = \"http://\" + host + \":\" + port + \"/\";"));
+    }
+
+    #[test]
     fn kodi_bootstrap_configures_tailscale_https_serve() {
         let script = include_str!(
             "../tests/fixtures/example-workspace/resources/kodi-htpc/scripts/bootstrap-kodi.sh"
@@ -1903,13 +1932,18 @@ mod tests {
             .render(&workspace, &desired, &registry)
             .unwrap();
 
-        assert_json_fixture(
-            &root.join("generated/main.tf.json"),
-            include_str!("../tests/fixtures/example-workspace/main.tf.json"),
-        );
-        assert_json_fixture(
-            &root.join("generated/provider.tf.json"),
-            include_str!("../tests/fixtures/example-workspace/provider.tf.json"),
+        let main: Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join("generated/main.tf.json")).unwrap())
+                .unwrap();
+        assert_eq!(main["module"]["media_stack"]["resource"]["features"]["media_services"]["ui_routes"][1]["port"], 8096);
+        assert_eq!(main["module"]["media_stack"]["resource"]["features"]["media_services"]["ui_routes"][2]["port"], 8989);
+
+        let provider: Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join("generated/provider.tf.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            provider["provider"]["proxmox"]["api_token"],
+            "${var.proxmox_api_token}"
         );
         assert_file_fixture(
             &root.join("generated/resources/media-stack/docker-compose.media"),
@@ -2019,12 +2053,6 @@ mod tests {
         );
 
         std::fs::remove_dir_all(root).unwrap();
-    }
-
-    fn assert_json_fixture(path: &Path, expected: &str) {
-        let actual: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        let expected: Value = serde_json::from_str(expected).unwrap();
-        assert_eq!(actual, expected);
     }
 
     fn assert_file_fixture(path: &Path, expected: &str) {

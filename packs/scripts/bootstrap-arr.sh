@@ -3,11 +3,63 @@ set -euo pipefail
 
 STACK_DIR="/opt/media"
 ENV_FILE="$STACK_DIR/.env"
+COMPOSE_FILE="$STACK_DIR/docker-compose.yml"
 
 if [[ -f "$ENV_FILE" ]]; then
   set -a
   . "$ENV_FILE"
   set +a
+fi
+
+CONFIG_ROOT="${CONFIG_PATH:-/opt/media/config}"
+export CONFIG_ROOT
+ARR_RESTART_MARKER="/tmp/vmctl-arr-restart.list"
+export ARR_RESTART_MARKER
+
+python3 <<'PY'
+import os
+import xml.etree.ElementTree as ET
+
+config_root = os.environ.get("CONFIG_ROOT", "/opt/media/config")
+apps = {
+    "sonarr": os.environ.get("SONARR_BASE_URL", ""),
+    "radarr": os.environ.get("RADARR_BASE_URL", ""),
+    "prowlarr": os.environ.get("PROWLARR_BASE_URL", ""),
+}
+
+changed = []
+for app, base in apps.items():
+    xml_path = os.path.join(config_root, app, "config.xml")
+    if not os.path.exists(xml_path):
+        continue
+    normalized = (base or "").strip()
+    if normalized and not normalized.startswith("/"):
+        normalized = f"/{normalized}"
+    if normalized == "/":
+        normalized = ""
+
+    root = ET.parse(xml_path).getroot()
+    node = root.find("UrlBase")
+    if node is None:
+        node = ET.SubElement(root, "UrlBase")
+    current = (node.text or "").strip()
+    if current != normalized:
+        node.text = normalized
+        ET.ElementTree(root).write(xml_path, encoding="utf-8", xml_declaration=True)
+        changed.append(app)
+
+marker = os.environ.get("ARR_RESTART_MARKER", "/tmp/vmctl-arr-restart.list")
+with open(marker, "w", encoding="utf-8") as handle:
+    for app in changed:
+        handle.write(f"{app}\n")
+PY
+
+if [[ -s "$ARR_RESTART_MARKER" ]]; then
+  mapfile -t arr_services < "$ARR_RESTART_MARKER"
+  if ((${#arr_services[@]} > 0)); then
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d "${arr_services[@]}"
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" restart "${arr_services[@]}"
+  fi
 fi
 
 python3 <<'PY'
@@ -63,9 +115,16 @@ def parse_root_and_base(url):
     return root, base
 
 
-def detect_api_base(name, configured_url, api_key, api_prefix):
+def detect_api_base(name, configured_url, api_key, api_prefix, expected_base=""):
     root, configured_base = parse_root_and_base(configured_url)
-    bases = [configured_base] if configured_base == "" else [configured_base, ""]
+    candidates = []
+    for base in [configured_base, expected_base, ""]:
+        candidate = (base or "").rstrip("/")
+        if candidate == "/":
+            candidate = ""
+        if candidate not in candidates:
+            candidates.append(candidate)
+    bases = candidates
     for base in bases:
         for _ in range(180):
             try:
@@ -74,34 +133,6 @@ def detect_api_base(name, configured_url, api_key, api_prefix):
             except Exception:
                 time.sleep(2)
     raise RuntimeError(f"{name} did not become ready at {configured_url}")
-
-
-def ensure_ui_base(url, api_key, desired_base, api_prefix):
-    ui = request("GET", f"{url}{api_prefix}/config/ui", api_key, allow=())
-    if not ui:
-        return
-    normalized = desired_base if desired_base.startswith("/") else f"/{desired_base}"
-    if normalized == "/" or normalized == "":
-        normalized = ""
-    if ui.get("urlBase") == normalized:
-        return
-    payload = {
-        "firstDayOfWeek": ui.get("firstDayOfWeek", 0),
-        "calendarWeekColumnHeader": ui.get("calendarWeekColumnHeader", "Wed"),
-        "shortDateFormat": ui.get("shortDateFormat", "MMM D YYYY"),
-        "longDateFormat": ui.get("longDateFormat", "dddd, MMMM D YYYY"),
-        "timeFormat": ui.get("timeFormat", "h(:mm)tt"),
-        "showRelativeDates": ui.get("showRelativeDates", True),
-        "enableColorImpairedMode": ui.get("enableColorImpairedMode", False),
-        "theme": ui.get("theme", "auto"),
-        "uiLanguage": ui.get("uiLanguage", "en"),
-        "weekColumnHeader": ui.get("weekColumnHeader", "ddd"),
-        "movieRuntimeFormat": ui.get("movieRuntimeFormat", "Hours"),
-        "showReleaseDate": ui.get("showReleaseDate", False),
-        "sendAnonymousUsageData": ui.get("sendAnonymousUsageData", False),
-        "urlBase": normalized,
-    }
-    request("PUT", f"{url}{api_prefix}/config/ui", api_key, payload, allow=(400, 409))
 
 
 def app_base(url, discovered_base):
@@ -131,16 +162,6 @@ def ensure_prowlarr_app_sync(prowlarr_url, prowlarr_key, arr_name, arr_url, arr_
 
 def ensure_indexer_sync_clients(prowlarr_url, prowlarr_key):
     request("POST", f"{prowlarr_url}/api/v1/indexer/sync", prowlarr_key, {}, allow=(400, 404, 405, 409))
-
-
-def wait_app(name, url, api_key):
-    for _ in range(60):
-        try:
-            request("GET", f"{url}/api/v3/system/status", api_key, allow=())
-            return
-        except Exception:
-            time.sleep(2)
-    raise RuntimeError(f"{name} did not become ready at {url}")
 
 
 def ensure_root_folder(url, api_key, path):
@@ -184,13 +205,13 @@ def ensure_qbittorrent_download_client(app, url, api_key, category):
 apps = {
     "sonarr": {
         "url": os.environ.get("SONARR_URL", "http://sonarr:8989"),
-        "base": os.environ.get("SONARR_BASE_URL", "/sonarr"),
+        "base": os.environ.get("SONARR_BASE_URL", ""),
         "root": "/media/tv",
         "category": "tv",
     },
     "radarr": {
         "url": os.environ.get("RADARR_URL", "http://radarr:7878"),
-        "base": os.environ.get("RADARR_BASE_URL", "/radarr"),
+        "base": os.environ.get("RADARR_BASE_URL", ""),
         "root": "/media/movies",
         "category": "movies",
     },
@@ -199,19 +220,17 @@ apps = {
 resolved = {}
 for app, cfg in apps.items():
     key = read_api_key(app)
-    root, discovered_base = detect_api_base(app, cfg["url"], key, "/api/v3")
+    root, discovered_base = detect_api_base(app, cfg["url"], key, "/api/v3", cfg["base"])
     api_url = f"{root}{discovered_base}"
     ensure_root_folder(api_url, key, cfg["root"])
     ensure_qbittorrent_download_client(app, api_url, key, cfg["category"])
-    ensure_ui_base(api_url, key, cfg["base"], "/api/v3")
     resolved[app] = {"url": app_base(cfg["url"], cfg["base"]), "key": key}
 
 prowlarr_url = os.environ.get("PROWLARR_URL", "http://localhost:9696")
-prowlarr_base = os.environ.get("PROWLARR_BASE_URL", "/prowlarr")
+prowlarr_base = os.environ.get("PROWLARR_BASE_URL", "")
 prowlarr_key = read_api_key("prowlarr")
-prowlarr_root, prowlarr_discovered_base = detect_api_base("prowlarr", prowlarr_url, prowlarr_key, "/api/v1")
+prowlarr_root, prowlarr_discovered_base = detect_api_base("prowlarr", prowlarr_url, prowlarr_key, "/api/v1", prowlarr_base)
 prowlarr_api = f"{prowlarr_root}{prowlarr_discovered_base}"
-ensure_ui_base(prowlarr_api, prowlarr_key, prowlarr_base, "/api/v1")
 
 for app_name, values in resolved.items():
     ensure_prowlarr_app_sync(

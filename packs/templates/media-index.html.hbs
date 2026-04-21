@@ -20,11 +20,22 @@
     {{#each features.media_services.ui_routes}}
     {{#unless (eq this.path "/")}}
     <li>
-      <a href="{{this.path}}">{{this.title}}</a>
+      <a href="#" data-service-port="{{this.port}}">{{this.title}}</a>
       <p>{{this.description}}</p>
     </li>
     {{/unless}}
     {{/each}}
   </ul>
+  <script>
+    (function () {
+      var host = window.location.hostname;
+      var links = document.querySelectorAll("a[data-service-port]");
+      links.forEach(function (link) {
+        var port = link.getAttribute("data-service-port");
+        if (!port) return;
+        link.href = "http://" + host + ":" + port + "/";
+      });
+    })();
+  </script>
 </body>
 </html>
