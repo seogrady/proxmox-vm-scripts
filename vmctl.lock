@@ -56,15 +56,15 @@ digest = "sha256:1936aefac902f77b492259cbf9649c367de2fa7c0e743ca47614e9acbefabea
 
 [[artifacts]]
 path = "desired-state.json"
-digest = "sha256:5beef84d74e3308c1be62d47ea1b05c4c6780e4bada55535d235aa9563e44ab8"
+digest = "sha256:3e0f8dc2345469d76314843464f92c554becf727994bec04ebe45e5a611c4a23"
 
 [[artifacts]]
 path = "main.tf.json"
-digest = "sha256:c9760db3b1e7b84533a86ddef0ec9f8163a6311b4e91b61a231f2871404a2bbd"
+digest = "sha256:7c6c931aafe84aceb33011b9905c806c0f32113742962a54bfc08d6e6ec831a5"
 
 [[artifacts]]
 path = "modules/lxc/main.tf.json"
-digest = "sha256:7b1715b8c43b4b309dd7c6597fa0aa603e3ec425ab83734bed2256955bfc45bd"
+digest = "sha256:21264962dac5f34587321ba1f91485e88ae695a2389dd6d6511da48b00c95d51"
 
 [[artifacts]]
 path = "modules/lxc/outputs.tf.json"
@@ -76,7 +76,7 @@ digest = "sha256:3bf2e8f61ed0a14865dd622bb89eac819556f929e386ae113312803d2721173
 
 [[artifacts]]
 path = "modules/vm/main.tf.json"
-digest = "sha256:59eae9ca3408833726a671d6f8537fc6a6dabc741acf9b97b37aa89dc18b5859"
+digest = "sha256:a30561166305f742b1809d042e0a92e922050a1b75f7065bddcc22898124dc53"
 
 [[artifacts]]
 path = "modules/vm/outputs.tf.json"
@@ -100,7 +100,7 @@ digest = "sha256:deb3a4025e0a73eae743a3ee271ae49b3b8ce3486a6b028a634bc270f98ca4b
 
 [[artifacts]]
 path = "resources/kodi-htpc/scripts/bootstrap-kodi-jellyfin.sh"
-digest = "sha256:d9a77457b29ac1bf97a88e45b75cedd283e5de93a6ae74b325233ab8681766cc"
+digest = "sha256:5b664328771e57a7daed15029ce1bc20fe51617d18b2a85f70ccddcdb479f817"
 
 [[artifacts]]
 path = "resources/kodi-htpc/scripts/bootstrap-kodi.sh"
@@ -168,15 +168,15 @@ digest = "sha256:71104ebea0d8a20f4fcb7e35b0362e96bbf6b921d8d52df73922064498c3bb0
 
 [[artifacts]]
 path = "terraform.tfstate"
-digest = "sha256:9e346cd119910eff73a3c6276ca622ce64af8b2078bd92b5d742733cc1aa6f61"
+digest = "sha256:e671ed0896848f962f4011997fb8470a86dff0c9f69d9dc6f562e8b4fb3153fd"
 
 [[artifacts]]
 path = "terraform.tfstate.backup"
-digest = "sha256:824be075eb53c09a34c92fc1fde24164bdde18cd5f2261ac0f9bcd325f2c5c57"
+digest = "sha256:dbe94e4f0d891b803c1ba86713d2bc855812e7bc9871faf0b605cfc86f2bfe9c"
 
 [[artifacts]]
 path = "terraform.tfvars.json"
-digest = "sha256:57ffd0b93b6bf01ef17d848ee89b287fddedd711f1f7ddfeef34bcb5da2515e6"
+digest = "sha256:7b833f5a4ada9ca54c43926eb06cdb3b4178d73c3dfbcb768e573a1ff2d67f8b"
 
 [[artifacts]]
 path = "variables.tf.json"

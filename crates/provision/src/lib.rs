@@ -182,6 +182,7 @@ pub fn run_provision_plan_with_progress(
         let mut last_error_text: Option<String> = None;
         for attempt in 1..=attempts {
             let result = (|| {
+                let _ = remove_known_host_entry(&step.host);
                 on_event(ProvisionEvent::UploadStarted {
                     step,
                     attempt,
@@ -202,6 +203,10 @@ pub fn run_provision_plan_with_progress(
                 }
                 Err(error) => {
                     let error_text = error.to_string();
+                    if host_key_changed_error(&error_text) {
+                        let _ = remove_known_host_entry(&step.host);
+                        last_error_text = None;
+                    }
                     if last_error_text.as_deref() == Some(error_text.as_str()) {
                         bail!(
                             "provision {} repeated the same failure on attempt {attempt}/{attempts}: {error_text}",
@@ -235,6 +240,23 @@ pub fn run_provision_plan_with_progress(
     Ok(ProvisionResult {
         summary: format!("provisioned {} scripts", plan.steps.len()),
     })
+}
+
+fn host_key_changed_error(message: &str) -> bool {
+    message.contains("REMOTE HOST IDENTIFICATION HAS CHANGED")
+        || message.contains("Host key verification failed")
+}
+
+fn remove_known_host_entry(host: &str) -> Result<()> {
+    command_runner::run(
+        CommandOptions::new("ssh-keygen", ["-R", host])
+            .timeout(Duration::from_secs(10))
+            .prefix(LogPrefix::Ssh)
+            .stream(false)
+            .fail_on_proxmox_patterns(false),
+    )
+    .with_context(|| format!("failed to remove stale SSH host key for {host}"))?;
+    Ok(())
 }
 
 fn resource_steps(
@@ -602,5 +624,15 @@ mod tests {
                 "finished:bootstrap-tailscale.sh".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn detects_ssh_host_key_mismatch_errors() {
+        assert!(host_key_changed_error(
+            "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\nHost key verification failed."
+        ));
+        assert!(!host_key_changed_error(
+            "ssh: connect to host media-stack port 22: No route to host"
+        ));
     }
 }

@@ -359,10 +359,16 @@ fn validate_vm_preflight(resource: &NormalizedResource) -> Result<()> {
     }
 
     let iothread = resource.iothread.unwrap_or(true);
-    let disk_interface = resource
+    let raw_disk_interface = resource
         .disk_interface
         .as_deref()
         .unwrap_or(default_vm_disk_interface());
+    let Some(disk_interface) = canonical_vm_disk_interface(raw_disk_interface) else {
+        bail!(
+            "vm resource `{}` sets disk_interface={raw_disk_interface}; expected slot syntax like virtio0/scsi0/sata0/ide0",
+            resource.name
+        );
+    };
     if iothread && !iothread_compatible_disk(disk_interface) {
         bail!(
             "vm resource `{}` sets iothread=true with disk_interface={disk_interface}; use a virtio disk interface or set iothread=false",
@@ -393,7 +399,18 @@ fn iothread_compatible_disk(interface: &str) -> bool {
 }
 
 fn default_vm_disk_interface() -> &'static str {
-    "virtio"
+    "virtio0"
+}
+
+fn canonical_vm_disk_interface(value: &str) -> Option<&str> {
+    let value = value.trim();
+    let prefixes = ["virtio", "scsi", "sata", "ide"];
+    let prefix = prefixes.iter().find(|prefix| value.starts_with(**prefix))?;
+    let suffix = &value[prefix.len()..];
+    if suffix.is_empty() || !suffix.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    Some(value)
 }
 
 fn write_json<T: serde::Serialize>(
@@ -572,6 +589,14 @@ fn module_json(resource: &Resource, desired: &DesiredState) -> Value {
             module_resource.disk_interface = Some(interface);
         }
     }
+    if module_resource.kind == "vm" {
+        module_resource.disk_interface = module_resource
+            .disk_interface
+            .as_deref()
+            .and_then(canonical_vm_disk_interface)
+            .map(str::to_string)
+            .or_else(|| Some(default_vm_disk_interface().to_string()));
+    }
     if module_resource.kind == "vm" && module_resource.scsi_hardware.is_none() {
         if let Some(scsi_hardware) = current_vm_scsi_hardware(module_resource.vmid) {
             module_resource.scsi_hardware = Some(scsi_hardware);
@@ -740,7 +765,7 @@ fn current_vm_disk_interface(vmid: Option<u32>) -> Option<String> {
         }
         let value = value.trim();
         if value.contains(":vm-") || value.contains(":base-") || value.contains("size=") {
-            Some(disk_bus_from_interface(key).to_string())
+            Some(key.to_string())
         } else {
             None
         }
@@ -773,10 +798,6 @@ fn looks_like_disk_interface(value: &str) -> bool {
     ["virtio", "scsi", "sata", "ide"]
         .iter()
         .any(|prefix| value.starts_with(prefix))
-}
-
-fn disk_bus_from_interface(value: &str) -> &str {
-    value.trim_end_matches(|ch: char| ch.is_ascii_digit())
 }
 
 fn image_cached_locally(image: &vmctl_domain::ResolvedImage) -> bool {
@@ -951,7 +972,7 @@ fn vm_resource_json() -> (String, Value) {
                 "disk": [{
                     "datastore_id": "${var.storage}",
                     "import_from": "${try(var.resource.clone_vmid, null) == null && var.template != \"\" ? var.template : null}",
-                    "interface": "${coalesce(try(var.resource.disk_interface, null), \"virtio\")}",
+                    "interface": "${coalesce(try(var.resource.disk_interface, null), \"virtio0\")}",
                     "iothread": "${coalesce(try(var.resource.iothread, null), true)}",
                     "discard": "on",
                     "size": "${try(var.resource.disk_gb, 8)}"
@@ -1041,15 +1062,6 @@ fn lxc_resource_json() -> (String, Value) {
                 "features": [{
                     "nesting": "${try(var.resource.features.lxc.nesting, false)}"
                 }],
-                "dynamic": {
-                    "device_passthrough": {
-                        "for_each": "${try(var.resource.features.tailscale.enabled, false) ? [1] : []}",
-                        "content": {
-                            "path": "/dev/net/tun",
-                            "mode": "0666"
-                        }
-                    }
-                },
                 "memory": [{
                     "dedicated": "${try(var.resource.memory, 1024)}"
                 }],
@@ -1084,7 +1096,7 @@ fn lxc_resource_json() -> (String, Value) {
                 }],
                 "operating_system": [{
                     "template_file_id": "${strcontains(var.template, \":\") ? var.template : format(\"%s:vztmpl/%s\", try(var.resource.template_storage, var.storage), var.template)}",
-                    "type": "${try(var.resource.os_type, \"debian\")}"
+                    "type": "${coalesce(try(var.resource.os_type, null), \"debian\")}"
                 }]
             }
         }),
@@ -1571,10 +1583,11 @@ mod tests {
     }
 
     #[test]
-    fn disk_bus_strips_proxmox_slot_number() {
-        assert_eq!(disk_bus_from_interface("scsi0"), "scsi");
-        assert_eq!(disk_bus_from_interface("virtio12"), "virtio");
-        assert_eq!(disk_bus_from_interface("sata1"), "sata");
+    fn canonical_vm_disk_interface_requires_slot_suffix() {
+        assert_eq!(canonical_vm_disk_interface("virtio0"), Some("virtio0"));
+        assert_eq!(canonical_vm_disk_interface("scsi12"), Some("scsi12"));
+        assert_eq!(canonical_vm_disk_interface("sata"), None);
+        assert_eq!(canonical_vm_disk_interface("virtio"), None);
     }
 
     #[test]
@@ -1739,6 +1752,57 @@ mod tests {
     }
 
     #[test]
+    fn live_render_rejects_unindexed_vm_disk_interface() {
+        let desired = DesiredState {
+            backend: BackendConfig {
+                kind: "terraform".to_string(),
+                settings: BTreeMap::from([(
+                    "proxmox".to_string(),
+                    toml::Value::Table(toml::map::Map::from_iter([
+                        (
+                            "endpoint".to_string(),
+                            toml::Value::String("https://mini:8006/api2/json".to_string()),
+                        ),
+                        ("node".to_string(), toml::Value::String("mini".to_string())),
+                    ])),
+                )]),
+            },
+            images: BTreeMap::new(),
+            resources: vec![Resource {
+                name: "media-stack".to_string(),
+                kind: "vm".to_string(),
+                image: None,
+                role: None,
+                vmid: Some(210),
+                depends_on: Vec::new(),
+                features: BTreeMap::new(),
+                settings: BTreeMap::new(),
+            }],
+            normalized_resources: BTreeMap::from([(
+                "media-stack".to_string(),
+                NormalizedResource {
+                    name: "media-stack".to_string(),
+                    kind: "vm".to_string(),
+                    vmid: Some(210),
+                    bridge: Some("vmbr0".to_string()),
+                    storage: Some("local-lvm".to_string()),
+                    template: Some("ubuntu-template".to_string()),
+                    clone_vmid: Some(9000),
+                    disk_interface: Some("scsi".to_string()),
+                    iothread: Some(false),
+                    ..NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::new(),
+        };
+
+        let err = validate_live_inputs(&desired).unwrap_err();
+
+        assert!(err.to_string().contains("disk_interface=scsi"));
+        assert!(err.to_string().contains("virtio0/scsi0/sata0/ide0"));
+    }
+
+    #[test]
     fn vm_module_matches_fixture() {
         let expected: Value =
             serde_json::from_str(include_str!("../tests/fixtures/vm-module-main.tf.json")).unwrap();
@@ -1751,6 +1815,31 @@ mod tests {
             serde_json::from_str(include_str!("../tests/fixtures/lxc-module-main.tf.json"))
                 .unwrap();
         assert_eq!(base_module_main_json("lxc", true), expected);
+    }
+
+    #[test]
+    fn lxc_module_omits_device_passthrough_from_provider_create_path() {
+        let module = base_module_main_json("lxc", true);
+        let lxc = &module["resource"]["proxmox_virtual_environment_container"]["this"];
+        assert!(lxc["dynamic"]["device_passthrough"].is_null());
+    }
+
+    #[test]
+    fn lxc_module_defaults_os_type_to_debian_when_unset() {
+        let module = base_module_main_json("lxc", true);
+        let lxc = &module["resource"]["proxmox_virtual_environment_container"]["this"];
+        assert_eq!(
+            lxc["operating_system"][0]["type"],
+            "${coalesce(try(var.resource.os_type, null), \"debian\")}"
+        );
+    }
+
+    #[test]
+    fn kodi_bootstrap_tolerates_jellyfin_unauthorized_auth() {
+        let script =
+            include_str!("../tests/fixtures/example-workspace/resources/kodi-htpc/scripts/bootstrap-kodi-jellyfin.sh");
+        assert!(script.contains("if exc.code in (401, 403):"));
+        assert!(script.contains("skipping Kodi Jellyfin token bootstrap"));
     }
 
     #[test]

@@ -21,7 +21,7 @@
             "datastore_id": "${var.storage}",
             "discard": "on",
             "import_from": "${try(var.resource.clone_vmid, null) == null && var.template != \"\" ? var.template : null}",
-            "interface": "${coalesce(try(var.resource.disk_interface, null), \"virtio\")}",
+            "interface": "${coalesce(try(var.resource.disk_interface, null), \"virtio0\")}",
             "iothread": "${coalesce(try(var.resource.iothread, null), true)}",
             "size": "${try(var.resource.disk_gb, 8)}"
           }

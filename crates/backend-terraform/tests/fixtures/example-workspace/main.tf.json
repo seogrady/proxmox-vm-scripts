@@ -19,7 +19,7 @@
         "depends_on": [],
         "description": "Kodi living room HTPC VM managed by vmctl",
         "disk_gb": 32,
-        "disk_interface": "scsi",
+        "disk_interface": "scsi0",
         "features": {
           "htpc": {
             "autostart": true,
@@ -119,7 +119,7 @@
         ],
         "description": "Media stack VM managed by vmctl",
         "disk_gb": 64,
-        "disk_interface": "scsi",
+        "disk_interface": "scsi0",
         "features": {
           "docker": {
             "enabled": true

@@ -427,8 +427,8 @@ fn apply_command(
     guard.checkpoint("passthrough prepare")?;
     prepare_passthrough_inner(&desired, false, false)?;
     ensure_passthrough_ready(&desired)?;
-    guard.checkpoint("existing VM runtime repair")?;
-    repair_existing_vm_runtime_settings(&desired)?;
+    guard.checkpoint("runtime repair before apply")?;
+    repair_existing_runtime_settings(&desired)?;
 
     guard.checkpoint("backend validation")?;
     let validation = progress.run("validating generated OpenTofu workspace", || {
@@ -456,6 +456,8 @@ fn apply_command(
             )
         })?
     };
+    guard.checkpoint("runtime repair after apply")?;
+    repair_existing_runtime_settings(&desired)?;
     guard.checkpoint("lockfile write")?;
     progress.run("writing vmctl.lock", || {
         write_lockfile(&workspace, &desired)
@@ -661,46 +663,101 @@ enum VmRuntimeRepair {
     ScsiHardware { value: &'static str },
 }
 
-fn repair_existing_vm_runtime_settings(desired: &DesiredState) -> Result<()> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LxcRuntimeRepair {
+    TunDevice { slot: String },
+    RootAuthorizedKey { local_key_file: String },
+}
+
+fn repair_existing_runtime_settings(desired: &DesiredState) -> Result<()> {
     for resource in desired.normalized_resources.values() {
-        if resource.kind != "vm" && resource.kind != "lxc" {
-            continue;
-        }
         let Some(vmid) = resource.vmid else {
             continue;
         };
         let vmid_string = vmid.to_string();
-        let Some(config) =
-            safe_command_output("qm", &["config", &vmid_string], Duration::from_secs(20))
-        else {
-            continue;
-        };
-        for repair in vm_runtime_repairs(resource, &config) {
-            match repair {
-                VmRuntimeRepair::Memory { desired_mib } => {
-                    let desired_mib_string = desired_mib.to_string();
-                    run_command_with_context(
-                        "qm",
-                        &["set", &vmid_string, "--memory", &desired_mib_string],
-                        "failed to update existing VM memory before Terraform apply",
-                    )?;
-                    println!(
-                        "[proxmox] repaired `{}` memory to {} MiB before backend apply",
-                        resource.name, desired_mib
-                    );
-                }
-                VmRuntimeRepair::ScsiHardware { value } => {
-                    run_command_with_context(
-                        "qm",
-                        &["set", &vmid_string, "--scsihw", value],
-                        "failed to update SCSI controller for iothread compatibility",
-                    )?;
-                    println!(
-                        "[proxmox] repaired `{}` SCSI controller to {value} for iothread compatibility",
-                        resource.name
-                    );
+        match resource.kind.as_str() {
+            "vm" => {
+                let Some(config) =
+                    safe_command_output("qm", &["config", &vmid_string], Duration::from_secs(20))
+                else {
+                    continue;
+                };
+                for repair in vm_runtime_repairs(resource, &config) {
+                    match repair {
+                        VmRuntimeRepair::Memory { desired_mib } => {
+                            let desired_mib_string = desired_mib.to_string();
+                            run_command_with_context(
+                                "qm",
+                                &["set", &vmid_string, "--memory", &desired_mib_string],
+                                "failed to update existing VM memory before Terraform apply",
+                            )?;
+                            println!(
+                                "[proxmox] repaired `{}` memory to {} MiB before backend apply",
+                                resource.name, desired_mib
+                            );
+                        }
+                        VmRuntimeRepair::ScsiHardware { value } => {
+                            run_command_with_context(
+                                "qm",
+                                &["set", &vmid_string, "--scsihw", value],
+                                "failed to update SCSI controller for iothread compatibility",
+                            )?;
+                            println!(
+                                "[proxmox] repaired `{}` SCSI controller to {value} for iothread compatibility",
+                                resource.name
+                            );
+                        }
+                    }
                 }
             }
+            "lxc" => {
+                let Some(config) =
+                    safe_command_output("pct", &["config", &vmid_string], Duration::from_secs(20))
+                else {
+                    continue;
+                };
+                for repair in lxc_runtime_repairs(resource, &config) {
+                    match repair {
+                        LxcRuntimeRepair::TunDevice { slot } => {
+                            let slot_flag = format!("-{slot}");
+                            run_command_with_context(
+                                "pct",
+                                &["set", &vmid_string, &slot_flag, "/dev/net/tun,mode=0666"],
+                                "failed to configure /dev/net/tun passthrough for LXC",
+                            )?;
+                            println!(
+                                "[proxmox] repaired `{}` LXC {} passthrough for /dev/net/tun",
+                                resource.name, slot
+                            );
+                        }
+                        LxcRuntimeRepair::RootAuthorizedKey { local_key_file } => {
+                            let remote_key_path = "/tmp/vmctl-root-authorized_keys";
+                            run_command_with_context(
+                                "pct",
+                                &["push", &vmid_string, &local_key_file, remote_key_path],
+                                "failed to upload root SSH authorized key into LXC",
+                            )?;
+                            run_command_with_context(
+                                "pct",
+                                &[
+                                    "exec",
+                                    &vmid_string,
+                                    "--",
+                                    "sh",
+                                    "-lc",
+                                    "mkdir -p /root/.ssh && install -m 600 /tmp/vmctl-root-authorized_keys /root/.ssh/authorized_keys",
+                                ],
+                                "failed to install root SSH authorized key in LXC",
+                            )?;
+                            println!(
+                                "[proxmox] repaired `{}` root SSH authorized_keys from {}",
+                                resource.name, local_key_file
+                            );
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
     Ok(())
@@ -725,6 +782,29 @@ fn vm_runtime_repairs(
     repairs
 }
 
+fn lxc_runtime_repairs(
+    resource: &vmctl_domain::NormalizedResource,
+    config: &str,
+) -> Vec<LxcRuntimeRepair> {
+    let mut repairs = Vec::new();
+    if resource_requires_lxc_tun_passthrough(resource) && !lxc_has_tun_passthrough(config) {
+        if let Some(slot) = lxc_next_device_slot(config) {
+            repairs.push(LxcRuntimeRepair::TunDevice { slot });
+        }
+    }
+    if let Some(local_key_file) = resource
+        .cloud_init
+        .as_ref()
+        .and_then(|cloud_init| cloud_init.ssh_key_file.as_deref())
+        .filter(|value| !value.trim().is_empty())
+        .filter(|path| Path::new(path).is_file())
+        .map(str::to_string)
+    {
+        repairs.push(LxcRuntimeRepair::RootAuthorizedKey { local_key_file });
+    }
+    repairs
+}
+
 fn qm_config_memory_mib(config: &str) -> Option<u32> {
     config_value(config, "memory")?.parse().ok()
 }
@@ -739,6 +819,25 @@ fn qm_config_has_scsi_iothread(config: &str) -> bool {
             .map(|(key, value)| key.starts_with("scsi") && value.contains("iothread=1"))
             .unwrap_or(false)
     })
+}
+
+fn lxc_has_tun_passthrough(config: &str) -> bool {
+    config
+        .lines()
+        .any(|line| line.contains("/dev/net/tun") && line.starts_with("dev"))
+}
+
+fn lxc_next_device_slot(config: &str) -> Option<String> {
+    let used = config
+        .lines()
+        .filter_map(|line| {
+            let (key, _value) = line.split_once(':')?;
+            key.strip_prefix("dev")?.parse::<u8>().ok()
+        })
+        .collect::<BTreeSet<_>>();
+    (0u8..16)
+        .find(|slot| !used.contains(slot))
+        .map(|slot| format!("dev{slot}"))
 }
 
 fn ensure_provision_hosts_resolve(desired: &DesiredState) -> Result<()> {
@@ -782,8 +881,8 @@ fn ensure_provision_hosts_resolve(desired: &DesiredState) -> Result<()> {
 
         let discovered_ip = resource
             .vmid
-            .and_then(|vmid| discover_resource_ipv4(&resource.kind, vmid).ok().flatten());
-        let resolved_ip = discovered_ip.or_else(|| resolve_host_ipv4(host));
+            .and_then(|vmid| discover_resource_ipv4_with_retries(&resource.kind, vmid));
+        let resolved_ip = select_provision_ip(resource.vmid, discovered_ip, resolve_host_ipv4(host));
         let Some(ip) = resolved_ip else {
             if resource.vmid.is_none() {
                 bail!(
@@ -792,7 +891,7 @@ fn ensure_provision_hosts_resolve(desired: &DesiredState) -> Result<()> {
                 );
             }
             bail!(
-                "provision host `{host}` for `{}` does not resolve and vmctl could not discover its DHCP address from Proxmox/ARP",
+                "vmctl could not discover a current DHCP address for managed resource `{}` (host `{host}`). Wait for the guest to boot networking and rerun apply.",
                 resource.name
             );
         };
@@ -821,6 +920,48 @@ fn resolve_host_ipv4(host: &str) -> Option<String> {
         .filter_map(|line| line.split_whitespace().next())
         .find(|value| value.parse::<std::net::Ipv4Addr>().is_ok())
         .map(str::to_string)
+}
+
+fn select_provision_ip(
+    vmid: Option<u32>,
+    discovered_ip: Option<String>,
+    resolved_ip: Option<String>,
+) -> Option<String> {
+    if vmid.is_some() {
+        discovered_ip
+    } else {
+        discovered_ip.or(resolved_ip)
+    }
+}
+
+fn discover_resource_ipv4_with_retries(kind: &str, vmid: u32) -> Option<String> {
+    let attempts = if cfg!(test) { 1 } else { 12 };
+    let retry_delay = if cfg!(test) {
+        Duration::from_millis(0)
+    } else {
+        Duration::from_secs(5)
+    };
+    discover_with_retry(attempts, retry_delay, || {
+        discover_resource_ipv4(kind, vmid).ok().flatten()
+    })
+}
+
+fn discover_with_retry<F>(attempts: u32, retry_delay: Duration, mut discover: F) -> Option<String>
+where
+    F: FnMut() -> Option<String>,
+{
+    if attempts == 0 {
+        return None;
+    }
+    for attempt in 1..=attempts {
+        if let Some(ip) = discover() {
+            return Some(ip);
+        }
+        if attempt < attempts && !retry_delay.is_zero() {
+            std::thread::sleep(retry_delay);
+        }
+    }
+    None
 }
 
 fn discover_resource_ipv4(kind: &str, vmid: u32) -> Result<Option<String>> {
@@ -943,49 +1084,55 @@ fn validate_apply_preflight_with_host_memory(
 ) -> Result<()> {
     let mut failures = Vec::new();
     for resource in desired.normalized_resources.values() {
-        if resource.kind != "vm" {
-            continue;
-        }
-        if resource.machine.as_deref() == Some("q35")
-            && vmctl_util::command_exists("qm")
-            && !Path::new("/usr/share/qemu-server/pve-q35.cfg").exists()
-        {
-            failures.push(format!(
-                "resource `{}` requests machine=q35 but local Proxmox q35 config is missing",
-                resource.name
-            ));
-        }
-        let disk_interface = resource.disk_interface.as_deref().unwrap_or("virtio");
-        if resource.iothread.unwrap_or(true) && !disk_interface.starts_with("virtio") {
-            failures.push(format!(
-                "resource `{}` sets iothread=true with disk_interface={disk_interface}; use virtio or set iothread=false",
-                resource.name
-            ));
-        }
-        if let (Some(memory_mib), Some(host_memory_mib)) = (resource.memory, host_memory_mib) {
-            let memory_mib = u64::from(memory_mib);
-            if memory_mib + MIN_HOST_MEMORY_RESERVE_MIB > host_memory_mib {
-                failures.push(format!(
-                    "resource `{}` memory={} MiB leaves less than {} MiB for the Proxmox host (host MemTotal={} MiB); lower VM memory or use a larger host before starting it",
-                    resource.name,
-                    memory_mib,
-                    MIN_HOST_MEMORY_RESERVE_MIB,
-                    host_memory_mib
-                ));
-            }
-        }
-        if let Some(cloud_init) = &resource.cloud_init {
-            if cloud_init
-                .ssh_key_file
-                .as_deref()
-                .unwrap_or_default()
-                .trim()
-                .is_empty()
+        if resource.kind == "vm" {
+            if resource.machine.as_deref() == Some("q35")
+                && vmctl_util::command_exists("qm")
+                && !Path::new("/usr/share/qemu-server/pve-q35.cfg").exists()
             {
                 failures.push(format!(
-                    "resource `{}` cloud_init requires ssh_key_file",
+                    "resource `{}` requests machine=q35 but local Proxmox q35 config is missing",
                     resource.name
                 ));
+            }
+            let raw_disk_interface = resource.disk_interface.as_deref().unwrap_or("virtio0");
+            let Some(disk_interface) = canonical_vm_disk_interface(raw_disk_interface) else {
+                failures.push(format!(
+                    "resource `{}` sets disk_interface={raw_disk_interface}; expected slot syntax like virtio0/scsi0/sata0/ide0",
+                    resource.name
+                ));
+                continue;
+            };
+            if resource.iothread.unwrap_or(true) && !disk_interface.starts_with("virtio") {
+                failures.push(format!(
+                    "resource `{}` sets iothread=true with disk_interface={disk_interface}; use virtio or set iothread=false",
+                    resource.name
+                ));
+            }
+            if let (Some(memory_mib), Some(host_memory_mib)) = (resource.memory, host_memory_mib) {
+                let memory_mib = u64::from(memory_mib);
+                if memory_mib + MIN_HOST_MEMORY_RESERVE_MIB > host_memory_mib {
+                    failures.push(format!(
+                        "resource `{}` memory={} MiB leaves less than {} MiB for the Proxmox host (host MemTotal={} MiB); lower VM memory or use a larger host before starting it",
+                        resource.name,
+                        memory_mib,
+                        MIN_HOST_MEMORY_RESERVE_MIB,
+                        host_memory_mib
+                    ));
+                }
+            }
+            if let Some(cloud_init) = &resource.cloud_init {
+                if cloud_init
+                    .ssh_key_file
+                    .as_deref()
+                    .unwrap_or_default()
+                    .trim()
+                    .is_empty()
+                {
+                    failures.push(format!(
+                        "resource `{}` cloud_init requires ssh_key_file",
+                        resource.name
+                    ));
+                }
             }
         }
     }
@@ -1011,6 +1158,28 @@ fn parse_memtotal_mib(meminfo: &str) -> Option<u64> {
         rest.split_whitespace().next()?.parse::<u64>().ok()
     })?;
     Some(kb / 1024)
+}
+
+fn canonical_vm_disk_interface(value: &str) -> Option<&str> {
+    let value = value.trim();
+    let prefixes = ["virtio", "scsi", "sata", "ide"];
+    let prefix = prefixes.iter().find(|prefix| value.starts_with(**prefix))?;
+    let suffix = &value[prefix.len()..];
+    if suffix.is_empty() || !suffix.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    Some(value)
+}
+
+fn resource_requires_lxc_tun_passthrough(resource: &vmctl_domain::NormalizedResource) -> bool {
+    resource.kind == "lxc"
+        && resource
+            .features
+            .get("tailscale")
+            .and_then(toml::Value::as_table)
+            .and_then(|feature| feature.get("enabled"))
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false)
 }
 
 struct ApplyGuard {
@@ -2576,14 +2745,14 @@ mod tests {
             resources: Vec::new(),
             normalized_resources: BTreeMap::from([(
                 "media-stack".to_string(),
-                vmctl_domain::NormalizedResource {
-                    name: "media-stack".to_string(),
-                    kind: "vm".to_string(),
-                    vmid: Some(210),
-                    disk_interface: Some("virtio".to_string()),
-                    iothread: Some(true),
-                    ..vmctl_domain::NormalizedResource::default()
-                },
+                    vmctl_domain::NormalizedResource {
+                        name: "media-stack".to_string(),
+                        kind: "vm".to_string(),
+                        vmid: Some(210),
+                        disk_interface: Some("virtio0".to_string()),
+                        iothread: Some(true),
+                        ..vmctl_domain::NormalizedResource::default()
+                    },
             )]),
             expansions: BTreeMap::new(),
         };
@@ -2865,6 +3034,58 @@ mod tests {
     }
 
     #[test]
+    fn apply_preflight_rejects_unindexed_vm_disk_interface() {
+        let desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::new(),
+            resources: Vec::new(),
+            normalized_resources: BTreeMap::from([(
+                "media-stack".to_string(),
+                vmctl_domain::NormalizedResource {
+                    name: "media-stack".to_string(),
+                    kind: "vm".to_string(),
+                    disk_interface: Some("scsi".to_string()),
+                    iothread: Some(false),
+                    ..vmctl_domain::NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::new(),
+        };
+
+        let err = validate_apply_preflight(&desired).unwrap_err();
+
+        assert!(err.to_string().contains("disk_interface=scsi"));
+        assert!(err.to_string().contains("scsi0"));
+    }
+
+    #[test]
+    fn apply_preflight_allows_lxc_tailscale_when_disk_and_memory_are_valid() {
+        let desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::new(),
+            resources: Vec::new(),
+            normalized_resources: BTreeMap::from([(
+                "tailscale-gateway".to_string(),
+                vmctl_domain::NormalizedResource {
+                    name: "tailscale-gateway".to_string(),
+                    kind: "lxc".to_string(),
+                    features: BTreeMap::from([(
+                        "tailscale".to_string(),
+                        toml::Value::Table(toml::map::Map::from_iter([(
+                            "enabled".to_string(),
+                            toml::Value::Boolean(true),
+                        )])),
+                    )]),
+                    ..vmctl_domain::NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::new(),
+        };
+
+        validate_apply_preflight(&desired).unwrap();
+    }
+
+    #[test]
     fn parses_memtotal_from_proc_meminfo() {
         assert_eq!(
             parse_memtotal_mib("MemTotal:       16144204 kB\nMemFree:        13306740 kB\n"),
@@ -2960,6 +3181,84 @@ scsihw: virtio-scsi-single
     }
 
     #[test]
+    fn lxc_runtime_repairs_adds_tun_passthrough_when_missing() {
+        let resource = vmctl_domain::NormalizedResource {
+            name: "tailscale-gateway".to_string(),
+            kind: "lxc".to_string(),
+            features: BTreeMap::from([(
+                "tailscale".to_string(),
+                toml::Value::Table(toml::map::Map::from_iter([(
+                    "enabled".to_string(),
+                    toml::Value::Boolean(true),
+                )])),
+            )]),
+            ..vmctl_domain::NormalizedResource::default()
+        };
+        let config = "\
+arch: amd64
+cores: 1
+net0: name=eth0,bridge=vmbr0,ip=dhcp,type=veth
+";
+
+        assert_eq!(
+            lxc_runtime_repairs(&resource, config),
+            vec![LxcRuntimeRepair::TunDevice {
+                slot: "dev0".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn lxc_runtime_repairs_skip_when_tun_passthrough_present() {
+        let resource = vmctl_domain::NormalizedResource {
+            name: "tailscale-gateway".to_string(),
+            kind: "lxc".to_string(),
+            features: BTreeMap::from([(
+                "tailscale".to_string(),
+                toml::Value::Table(toml::map::Map::from_iter([(
+                    "enabled".to_string(),
+                    toml::Value::Boolean(true),
+                )])),
+            )]),
+            ..vmctl_domain::NormalizedResource::default()
+        };
+        let config = "\
+dev0: /dev/net/tun,mode=0666
+net0: name=eth0,bridge=vmbr0,ip=dhcp,type=veth
+";
+
+        assert!(lxc_runtime_repairs(&resource, config).is_empty());
+    }
+
+    #[test]
+    fn lxc_runtime_repairs_include_root_authorized_key_when_public_key_exists() {
+        let root = unique_temp_dir();
+        std::fs::create_dir_all(&root).unwrap();
+        let key_path = root.join("id_ed25519.pub");
+        std::fs::write(&key_path, "ssh-ed25519 AAAATESTKEY root@mini\n").unwrap();
+        let resource = vmctl_domain::NormalizedResource {
+            name: "tailscale-gateway".to_string(),
+            kind: "lxc".to_string(),
+            cloud_init: Some(vmctl_domain::CloudInitConfig {
+                user: None,
+                ssh_key_file: Some(key_path.to_string_lossy().to_string()),
+            }),
+            ..vmctl_domain::NormalizedResource::default()
+        };
+        let config = "net0: name=eth0,bridge=vmbr0,ip=dhcp,type=veth\n";
+
+        let repairs = lxc_runtime_repairs(&resource, config);
+
+        assert!(repairs.iter().any(|repair| matches!(
+            repair,
+            LxcRuntimeRepair::RootAuthorizedKey { local_key_file }
+            if local_key_file == &key_path.to_string_lossy()
+        )));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn parses_primary_vm_mac_and_bridge() {
         let config = "net0: virtio=BC:24:11:1D:8A:AE,bridge=vmbr0,firewall=0\n";
 
@@ -2987,6 +3286,34 @@ Interface: vmbr0
             ip_for_mac_from_arp_scan(output, "BC:24:11:1D:8A:AE"),
             Some("192.168.86.103".to_string())
         );
+    }
+
+    #[test]
+    fn select_provision_ip_for_managed_resource_requires_discovery() {
+        assert_eq!(
+            select_provision_ip(
+                Some(101),
+                Some("192.168.86.110".to_string()),
+                Some("192.168.86.106".to_string())
+            ),
+            Some("192.168.86.110".to_string())
+        );
+        assert_eq!(
+            select_provision_ip(Some(101), None, Some("192.168.86.106".to_string())),
+            None
+        );
+    }
+
+    #[test]
+    fn discover_with_retry_returns_successful_attempt() {
+        let mut attempts = 0u32;
+        let resolved = discover_with_retry(3, Duration::from_millis(0), || {
+            attempts += 1;
+            (attempts == 2).then(|| "192.168.86.110".to_string())
+        });
+
+        assert_eq!(resolved, Some("192.168.86.110".to_string()));
+        assert_eq!(attempts, 2);
     }
 
     #[test]

@@ -206,6 +206,7 @@ if [[ -n "$JELLYFIN_ADMIN_PASSWORD" ]]; then
 from datetime import UTC, datetime
 import json
 import os
+import sys
 import urllib.error
 import urllib.request
 
@@ -234,22 +235,32 @@ try:
         "/Users/AuthenticateByName",
         {"Username": username, "Pw": password},
     )
-except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
+except urllib.error.HTTPError as exc:
+    if exc.code in (401, 403):
+        print(
+            "warning: Jellyfin credentials rejected (401/403), skipping Kodi Jellyfin token bootstrap",
+            file=sys.stderr,
+        )
+        auth = None
+    else:
+        raise SystemExit(f"failed to create Kodi Jellyfin credentials: {exc}")
+except (urllib.error.URLError, TimeoutError) as exc:
     raise SystemExit(f"failed to create Kodi Jellyfin credentials: {exc}")
 
-server = {
-    "AccessToken": auth["AccessToken"],
-    "DateLastAccessed": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    "Id": auth.get("ServerId") or public_info["Id"],
-    "Name": public_info.get("ServerName", "media-stack"),
-    "UserId": auth["User"]["Id"],
-    "Users": [{"Id": auth["User"]["Id"], "IsSignedInOffline": True}],
-    "address": base,
-}
+if auth:
+    server = {
+        "AccessToken": auth["AccessToken"],
+        "DateLastAccessed": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "Id": auth.get("ServerId") or public_info["Id"],
+        "Name": public_info.get("ServerName", "media-stack"),
+        "UserId": auth["User"]["Id"],
+        "Users": [{"Id": auth["User"]["Id"], "IsSignedInOffline": True}],
+        "address": base,
+    }
 
-os.makedirs(addon_data, exist_ok=True)
-with open(os.path.join(addon_data, "data.json"), "w", encoding="utf-8") as handle:
-    json.dump({"Servers": [server]}, handle, indent=4, sort_keys=True)
+    os.makedirs(addon_data, exist_ok=True)
+    with open(os.path.join(addon_data, "data.json"), "w", encoding="utf-8") as handle:
+        json.dump({"Servers": [server]}, handle, indent=4, sort_keys=True)
 PY
 fi
 

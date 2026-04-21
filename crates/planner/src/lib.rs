@@ -236,7 +236,9 @@ fn normalize_resource(
         template_storage: string_setting(resource, "template_storage"),
         machine: string_setting(resource, "machine").or_else(|| inferred_machine(resource)),
         scsi_hardware: string_setting(resource, "scsi_hardware"),
-        disk_interface: string_setting(resource, "disk_interface"),
+        disk_interface: string_setting(resource, "disk_interface")
+            .as_deref()
+            .map(normalize_vm_disk_interface),
         iothread: bool_setting(resource, "iothread"),
         clone_vmid,
         cores: u32_setting(resource, "cores"),
@@ -334,6 +336,23 @@ fn string_array_setting(resource: &Resource, key: &str) -> Vec<String> {
 
 fn template_as_vmid(resource: &Resource) -> Option<u32> {
     string_setting(resource, "template").and_then(|value| value.parse().ok())
+}
+
+fn normalize_vm_disk_interface(value: &str) -> String {
+    let trimmed = value.trim().to_ascii_lowercase();
+    if trimmed.is_empty() {
+        return "virtio0".to_string();
+    }
+    if trimmed.chars().last().is_some_and(|ch| ch.is_ascii_digit()) {
+        return trimmed;
+    }
+    match trimmed.as_str() {
+        "virtio" => "virtio0".to_string(),
+        "scsi" => "scsi0".to_string(),
+        "sata" => "sata0".to_string(),
+        "ide" => "ide0".to_string(),
+        _ => trimmed,
+    }
 }
 
 fn network_config(resource: &Resource) -> Option<NetworkConfig> {
@@ -685,6 +704,19 @@ mod tests {
         assert_eq!(normalized.machine, Some("q35".to_string()));
         assert_eq!(normalized.disk_interface, Some("virtio0".to_string()));
         assert_eq!(normalized.iothread, Some(true));
+    }
+
+    #[test]
+    fn normalizes_vm_disk_interface_without_slot_suffix() {
+        let mut input = resource("media-stack", "vm", vec![]);
+        input.settings.insert(
+            "disk_interface".to_string(),
+            toml::Value::String("scsi".to_string()),
+        );
+
+        let normalized = normalize_resource(&input, &BTreeMap::new()).unwrap();
+
+        assert_eq!(normalized.disk_interface, Some("scsi0".to_string()));
     }
 
     #[test]

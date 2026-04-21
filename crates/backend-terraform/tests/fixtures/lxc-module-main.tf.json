@@ -15,15 +15,6 @@
             "size": "${try(var.resource.rootfs_gb, 8)}"
           }
         ],
-        "dynamic": {
-          "device_passthrough": {
-            "content": {
-              "mode": "0666",
-              "path": "/dev/net/tun"
-            },
-            "for_each": "${try(var.resource.features.tailscale.enabled, false) ? [1] : []}"
-          }
-        },
         "features": [
           {
             "nesting": "${try(var.resource.features.lxc.nesting, false)}"
@@ -81,7 +72,7 @@
         "operating_system": [
           {
             "template_file_id": "${strcontains(var.template, \":\") ? var.template : format(\"%s:vztmpl/%s\", try(var.resource.template_storage, var.storage), var.template)}",
-            "type": "${try(var.resource.os_type, \"debian\")}"
+            "type": "${coalesce(try(var.resource.os_type, null), \"debian\")}"
           }
         ],
         "start_on_boot": "${try(var.resource.start_on_boot, true)}",
