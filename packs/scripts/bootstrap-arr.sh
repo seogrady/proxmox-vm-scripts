@@ -75,6 +75,8 @@ CONFIG_PATH = os.environ.get("CONFIG_PATH", "/opt/media/config")
 VPN_ENABLED = os.environ.get("MEDIA_VPN_ENABLED", "").lower() == "true"
 QBIT_HOST = "gluetun" if VPN_ENABLED else "qbittorrent-vpn"
 QBIT_PORT = int(os.environ.get("QBITTORRENT_WEBUI_PORT", "8080"))
+QBIT_USERNAME = os.environ.get("QBITTORRENT_USERNAME", "admin")
+QBIT_PASSWORD = os.environ.get("QBITTORRENT_PASSWORD", "adminadmin")
 
 
 def read_api_key(app):
@@ -176,13 +178,31 @@ def ensure_qbittorrent_download_client(app, url, api_key, category):
     existing = request("GET", f"{url}/api/v3/downloadclient", api_key) or []
     for item in existing:
         if item.get("name") == "qBittorrent":
+            updated = dict(item)
+            fields = updated.get("fields", [])
+            changed = False
+            desired = {
+                "host": QBIT_HOST,
+                "port": QBIT_PORT,
+                "urlBase": "",
+                "username": QBIT_USERNAME,
+                "password": QBIT_PASSWORD,
+                "category": category,
+            }
+            for field in fields:
+                name = field.get("name")
+                if name in desired and field.get("value") != desired[name]:
+                    field["value"] = desired[name]
+                    changed = True
+            if changed:
+                request("PUT", f"{url}/api/v3/downloadclient/{item['id']}", api_key, updated)
             return
     fields = [
         {"name": "host", "value": QBIT_HOST},
         {"name": "port", "value": QBIT_PORT},
         {"name": "urlBase", "value": ""},
-        {"name": "username", "value": ""},
-        {"name": "password", "value": ""},
+        {"name": "username", "value": QBIT_USERNAME},
+        {"name": "password", "value": QBIT_PASSWORD},
         {"name": "category", "value": category},
         {"name": "recentTvPriority", "value": 0},
         {"name": "olderTvPriority", "value": 0},

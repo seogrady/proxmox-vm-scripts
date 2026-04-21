@@ -1853,6 +1853,28 @@ mod tests {
     }
 
     #[test]
+    fn media_jellyseerr_bootstrap_initializes_and_wires_integrations() {
+        let script = include_str!(
+            "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-jellyseerr.sh"
+        );
+        assert!(script.contains("settings[\"public\"][\"initialized\"] = True"));
+        assert!(script.contains("settings[\"jellyfin\"]"));
+        assert!(script.contains("settings[\"sonarr\"]"));
+        assert!(script.contains("settings[\"radarr\"]"));
+        assert!(script.contains("jellyseerr failed to finish initialization bootstrap"));
+    }
+
+    #[test]
+    fn media_arr_bootstrap_sets_qbittorrent_credentials() {
+        let script = include_str!(
+            "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-arr.sh"
+        );
+        assert!(script.contains("QBIT_USERNAME = os.environ.get(\"QBITTORRENT_USERNAME\""));
+        assert!(script.contains("QBIT_PASSWORD = os.environ.get(\"QBITTORRENT_PASSWORD\""));
+        assert!(script.contains("request(\"PUT\", f\"{url}/api/v3/downloadclient/{item['id']}\""));
+    }
+
+    #[test]
     fn media_caddy_fixture_uses_service_port_mode_without_prefix_routes() {
         let caddy =
             include_str!("../tests/fixtures/example-workspace/resources/media-stack/caddyfile.media");
@@ -1988,6 +2010,12 @@ mod tests {
             &root.join("generated/resources/media-stack/scripts/bootstrap-arr.sh"),
             include_str!(
                 "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-arr.sh"
+            ),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/media-stack/scripts/bootstrap-jellyseerr.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-jellyseerr.sh"
             ),
         );
         assert_file_fixture(
