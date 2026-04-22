@@ -56,7 +56,7 @@ digest = "sha256:1936aefac902f77b492259cbf9649c367de2fa7c0e743ca47614e9acbefabea
 
 [[artifacts]]
 path = "desired-state.json"
-digest = "sha256:7a0cdf345d085d1dc7fd722c62e046b418e8be6282186130f7a240826217b1f5"
+digest = "sha256:6dad98400398f0cbe475a8108c46d1eb34f3f563eb9be71b744abee069ae9fc6"
 
 [[artifacts]]
 path = "main.tf.json"
@@ -139,6 +139,10 @@ path = "resources/media-stack/scripts/bootstrap-arr.sh"
 digest = "sha256:d38a104d667dbe791ff0aa0c8e3c83dfa938aceb3d342de25d51302e023af64f"
 
 [[artifacts]]
+path = "resources/media-stack/scripts/bootstrap-homarr.sh"
+digest = "sha256:7f11d9c27d82b5ca75ad4c39e03e5146c40a753bd0417a7465c2e085df0be13b"
+
+[[artifacts]]
 path = "resources/media-stack/scripts/bootstrap-jellyfin.sh"
 digest = "sha256:aa7d657692419fbe2fb1034a5480af65e2ea24b5747117725a30dd4b1a59005e"
 
@@ -148,7 +152,7 @@ digest = "sha256:743f9c1a9d97b0b46d0620e83157324619649ebb143bc517db823c2eacf4b64
 
 [[artifacts]]
 path = "resources/media-stack/scripts/bootstrap-media.sh"
-digest = "sha256:73302094e8eac4805c73ecdd0019ad34c78fe19fea788f8dec098be76014bfdc"
+digest = "sha256:a9c2cf3df7fe52dbd7a46372a19f2c025f75be5d025cbf5ad911192743ef7581"
 
 [[artifacts]]
 path = "resources/media-stack/scripts/bootstrap-node.sh"
@@ -184,7 +188,7 @@ digest = "sha256:4188c24c4b5763aaf0f9391824dfeebad16f90b6492ffe01b0264783ce62744
 
 [[artifacts]]
 path = "terraform.tfstate"
-digest = "sha256:79c255a7e4a759f877920073605bcb5981bacd1ba9e454bddd214e26bd2fc19f"
+digest = "sha256:a54b0baf62d0b44e64caafd79d7ace3c81ffdea97f066f16ca7474fee07d3179"
 
 [[artifacts]]
 path = "terraform.tfstate.1776751520.backup"
@@ -192,11 +196,11 @@ digest = "sha256:e671ed0896848f962f4011997fb8470a86dff0c9f69d9dc6f562e8b4fb3153f
 
 [[artifacts]]
 path = "terraform.tfstate.backup"
-digest = "sha256:25dfcbc399affeb5d876f761363081c7d64acbcb68472391e40b4e60eb97be5f"
+digest = "sha256:6b806b5fd2ea01db49fa857f64d7b12ef7912c9beb50cd1268f4f14b74ba04ce"
 
 [[artifacts]]
 path = "terraform.tfvars.json"
-digest = "sha256:e4d0beb1c613a687defc7f874bed8b7e47b3657b5a621b71994308fb24467cde"
+digest = "sha256:87d29796798226d9b75475467524736ba15e0f614066a57d843b2a496af9d800"
 
 [[artifacts]]
 path = "variables.tf.json"

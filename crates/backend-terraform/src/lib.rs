@@ -1875,6 +1875,31 @@ mod tests {
     }
 
     #[test]
+    fn media_bootstrap_preserves_env_and_repairs_jellystat_db_password() {
+        let script = include_str!(
+            "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-media.sh"
+        );
+        assert!(script.contains("if [[ ! -f \"$STACK_DIR/.env\" ]]; then"));
+        assert!(script.contains("install -m 0644 \"$RESOURCE_DIR/media.env\" \"$STACK_DIR/.env\""));
+        assert!(script.contains("MEDIA_SERVICES_CSV="));
+        assert!(script.contains("service_enabled()"));
+        assert!(!script.contains("chown -R 1000:1000 \"$STACK_DIR/config\""));
+        assert!(script.contains("chown -R 70:70 \"$STACK_DIR/config/jellystat-db\""));
+        assert!(script.contains("recover_jellystat_db()"));
+        assert!(script.contains("credential drift detected; recreating database volume"));
+    }
+
+    #[test]
+    fn media_homarr_bootstrap_initializes_admin_credentials() {
+        let script = include_str!(
+            "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-homarr.sh"
+        );
+        assert!(script.contains("node /app/apps/cli/cli.cjs users list"));
+        assert!(script.contains("node /app/apps/cli/cli.cjs recreate-admin --username"));
+        assert!(script.contains("node /app/apps/cli/cli.cjs users update-password"));
+    }
+
+    #[test]
     fn media_caddy_fixture_uses_service_port_mode_without_prefix_routes() {
         let caddy =
             include_str!("../tests/fixtures/example-workspace/resources/media-stack/caddyfile.media");
@@ -1992,6 +2017,12 @@ mod tests {
             &root.join("generated/resources/media-stack/scripts/bootstrap-media.sh"),
             include_str!(
                 "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-media.sh"
+            ),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/media-stack/scripts/bootstrap-homarr.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-homarr.sh"
             ),
         );
         assert_file_fixture(
