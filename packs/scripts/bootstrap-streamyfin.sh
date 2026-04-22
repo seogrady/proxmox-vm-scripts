@@ -29,12 +29,13 @@ fi
 python3 <<'PY'
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
 
-PLUGIN_ID = "1e9e5d38-6e67-4615-8719-e98a5c34f004"
-BASE_URL = (os.environ.get("JELLYFIN_URL") or "http://localhost:8096").rstrip("/")
+PLUGIN_ID = "1e9e5d386e6746158719e98a5c34f004"
+BASE_URL = "http://127.0.0.1:8096"
 ADMIN_USER = os.environ.get("JELLYFIN_ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.environ.get("JELLYFIN_ADMIN_PASSWORD", "")
 SEERR_URL = (os.environ.get("JELLYSEERR_INTERNAL_URL") or "http://jellyseerr:5055").rstrip("/")
@@ -90,7 +91,8 @@ for _ in range(120):
             raise
     time.sleep(2)
 if config is None:
-    raise RuntimeError("streamyfin plugin configuration endpoint unavailable")
+    print("warning: streamyfin plugin configuration endpoint unavailable; skipping config patch")
+    sys.exit(0)
 
 settings = config.setdefault("Config", {}).setdefault("settings", {})
 seerr = settings.setdefault("seerrServerUrl", {})
@@ -100,16 +102,22 @@ changed = False
 if seerr.get("value") != SEERR_URL:
     seerr["value"] = SEERR_URL
     changed = True
-if hidden.get("value") != "[]":
-    hidden["value"] = "[]"
+if hidden.get("value") != []:
+    hidden["value"] = []
     changed = True
 
 if changed:
-    request_json(
-        "POST",
-        f"/Plugins/{PLUGIN_ID}/Configuration",
-        config,
-        token=token,
-        allow=(),
-    )
+    try:
+        request_json(
+            "POST",
+            f"/Plugins/{PLUGIN_ID}/Configuration",
+            config,
+            token=token,
+            allow=(),
+        )
+    except urllib.error.HTTPError as err:
+        if err.code >= 500:
+            print(f"warning: streamyfin configuration patch failed ({err.code}); leaving defaults")
+        else:
+            raise
 PY

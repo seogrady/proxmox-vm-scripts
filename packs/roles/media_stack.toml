@@ -7,11 +7,6 @@ requires = ["docker"]
 [features.media_services]
 enabled = true
 minimal = true
-jellyfin_base_url = "/jellyfin"
-sonarr_base_url = ""
-radarr_base_url = ""
-prowlarr_base_url = ""
-qbittorrent_base_url = "/"
 services = [
   "caddy",
   "gluetun",

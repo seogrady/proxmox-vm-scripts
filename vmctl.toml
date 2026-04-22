@@ -138,8 +138,7 @@ tags = ["${default_tailnet_tag}"]
 enabled = true
 minimal = true
 services = ["caddy", "gluetun", "jellyfin", "meilisearch", "jellysearch", "sonarr", "radarr", "prowlarr", "qbittorrent-vpn", "jellyseerr", "bazarr", "jellystat-db", "jellystat"]
-jellyfin_url = "http://media-stack.${domain}/jellyfin"
-jellyfin_base_url = "/jellyfin"
+jellyfin_url = "http://media-stack.${domain}:8096"
 jellyfin_admin_user = "${JELLYFIN_ADMIN_USER}"
 jellyfin_admin_password = "${JELLYFIN_ADMIN_PASSWORD}"
 ui_homepage_enabled = true
@@ -213,6 +212,6 @@ tailscale_https_target = "http://127.0.0.1:8080"
 
 [resources.features.jellyfin]
 enabled = true
-server_url = "http://media-stack.${domain}/jellyfin"
+server_url = "http://media-stack.${domain}:8096"
 username = "${JELLYFIN_ADMIN_USER}"
 password = "${JELLYFIN_ADMIN_PASSWORD}"

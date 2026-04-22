@@ -37,10 +37,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-PLUGIN_ID = "e874be83-fe36-4568-abac-f5ce0574b409"
+PLUGIN_ID = "e874be83fe364568abacf5ce0574b409"
 env_file = Path(os.sys.argv[1])
 
-base_url = (os.environ.get("JELLYFIN_URL") or "http://localhost:8096").rstrip("/")
+api_base_url = "http://127.0.0.1:8096"
+lan_public_base = (os.environ.get("JELLYFIN_URL") or "http://localhost:8096").rstrip("/")
 admin_user = os.environ.get("JELLYFIN_ADMIN_USER", "admin")
 admin_password = os.environ.get("JELLYFIN_ADMIN_PASSWORD", "")
 stremio_user = (os.environ.get("JELLYFIN_STREMIO_USER") or "stremio").strip()
@@ -70,7 +71,7 @@ def set_env_value(path: Path, key: str, value: str) -> None:
 
 
 def request_json(method: str, path: str, payload=None, token=None, allow=(200, 204)):
-    url = f"{base_url}{path}"
+    url = f"{api_base_url}{path}"
     data = None
     headers = {
         "Content-Type": "application/json",
@@ -108,7 +109,7 @@ def wait_for_jellyfin() -> None:
             return
         except Exception:
             time.sleep(2)
-    raise RuntimeError(f"jellyfin did not become ready at {base_url}")
+    raise RuntimeError(f"jellyfin did not become ready at {api_base_url}")
 
 
 def ensure_user(admin_token: str) -> str:
@@ -169,6 +170,13 @@ def b64url(payload: dict) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
+def hyphenate_guid(value: str) -> str:
+    compact = (value or "").replace("-", "").strip()
+    if len(compact) != 32:
+        return value
+    return f"{compact[:8]}-{compact[8:12]}-{compact[12:16]}-{compact[16:20]}-{compact[20:]}"
+
+
 def tailscale_dns_name() -> str:
     try:
         out = subprocess.check_output(["tailscale", "status", "--json"], text=True)
@@ -227,9 +235,9 @@ request_json(
     allow=(),
 )
 
-lan_base = base_url.rstrip("/")
+lan_base = lan_public_base.rstrip("/")
 tail_dns = tailscale_dns_name()
-tailnet_base = f"https://{tail_dns}/jellyfin" if tail_dns else ""
+tailnet_base = f"http://{tail_dns}:8096" if tail_dns else ""
 cloudflare_enabled = bool(cloudflare_base and cloudflare_token)
 
 
@@ -237,7 +245,7 @@ def make_manifest(base: str) -> str:
     payload = {
         "ServerName": host_server_name,
         "AuthToken": stremio_token,
-        "LibrariesGuids": libraries,
+        "LibrariesGuids": [hyphenate_guid(lib) for lib in libraries],
         "PublicBaseUrl": base,
     }
     if seerr_api_key:

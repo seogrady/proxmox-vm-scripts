@@ -49,5 +49,5 @@ def wait_ok(url: str, timeout: int = 240) -> None:
 
 
 wait_ok("http://127.0.0.1:7700/health")
-wait_ok("http://127.0.0.1/jellyfin/Items?SearchTerm=test&Limit=1")
+wait_ok("http://127.0.0.1:5000/Items?SearchTerm=test&Limit=1")
 PY

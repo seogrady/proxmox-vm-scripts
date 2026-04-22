@@ -4,7 +4,7 @@ set -euo pipefail
 STACK_DIR="/opt/media"
 ENV_FILE="$STACK_DIR/.env"
 COMPOSE_FILE="$STACK_DIR/docker-compose.yml"
-PLUGIN_DIR="$STACK_DIR/config/jellyfin/plugins"
+PLUGIN_DIR="$STACK_DIR/config/jellyfin/data/plugins"
 
 if [[ ! -f "$ENV_FILE" || ! -f "$COMPOSE_FILE" ]]; then
   exit 0
