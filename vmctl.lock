@@ -136,11 +136,11 @@ digest = "sha256:99d357ea3da2d86c3b0dc3233d4065fbd5c0c3ddaf22f400cf538453c77cb6f
 
 [[artifacts]]
 path = "resources/media-stack/scripts/bootstrap-arr.sh"
-digest = "sha256:bcaac95b95ce0160e286ac6bacb1b501cf2e123145f251645aa82b4e0a84e7eb"
+digest = "sha256:b18ecdc3e020920fb2b90bac1a4fa383f8cbed5c5143bb60d256e525133ef626"
 
 [[artifacts]]
 path = "resources/media-stack/scripts/bootstrap-homarr.sh"
-digest = "sha256:5f3dc28361d73bd635aded13250d877e7040e535674161d05b58f1f433360b74"
+digest = "sha256:59f01fa9089ce81912c5714aa8636498ceb946d71996b4aa04b0484d845d243f"
 
 [[artifacts]]
 path = "resources/media-stack/scripts/bootstrap-jellyfin.sh"
@@ -156,7 +156,7 @@ digest = "sha256:ee5d296d9dd18b3a765c9c6d628b1953508dddb45631d05d07ea8d69a69e2ec
 
 [[artifacts]]
 path = "resources/media-stack/scripts/bootstrap-media.sh"
-digest = "sha256:13316752f7180b8be15665bdfb1be956ba756a183dd6551487a1ac1b25120dfc"
+digest = "sha256:23b7c6d60e1209e442c199ab9680584c28d4fb3bb8ab000045ebe246cfa2f12b"
 
 [[artifacts]]
 path = "resources/media-stack/scripts/bootstrap-node.sh"
@@ -192,7 +192,7 @@ digest = "sha256:4188c24c4b5763aaf0f9391824dfeebad16f90b6492ffe01b0264783ce62744
 
 [[artifacts]]
 path = "terraform.tfstate"
-digest = "sha256:c264b361210311324fd84de33f84144447d0580a8e1f523298988c42cb31f61f"
+digest = "sha256:3b1d147feeb7888042b531eb995cdfaf16e1f7e3c2559de6e415a6e5bc1c5387"
 
 [[artifacts]]
 path = "terraform.tfstate.1776751520.backup"
@@ -200,7 +200,7 @@ digest = "sha256:e671ed0896848f962f4011997fb8470a86dff0c9f69d9dc6f562e8b4fb3153f
 
 [[artifacts]]
 path = "terraform.tfstate.backup"
-digest = "sha256:1d9c28800462072f4a2d26828b22d63c35b032653eb74e7824bad97f62c11391"
+digest = "sha256:3ff75a3b873075a534bb3a33063d8911ffc5fe1579603af91fc4c70882724e62"
 
 [[artifacts]]
 path = "terraform.tfvars.json"

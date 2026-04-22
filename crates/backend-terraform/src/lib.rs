@@ -1878,10 +1878,14 @@ mod tests {
         );
         assert!(script.contains("QBIT_USERNAME = os.environ.get(\"QBITTORRENT_USERNAME\""));
         assert!(script.contains("QBIT_PASSWORD = os.environ.get(\"QBITTORRENT_PASSWORD\""));
+        assert!(script.contains("\"AuthenticationMethod\": \"External\""));
+        assert!(script.contains("\"AuthenticationRequired\": \"DisabledForLocalAddresses\""));
         assert!(script.contains("request(\"PUT\", f\"{url}/api/v3/downloadclient/{item['id']}\""));
         assert!(script.contains("PROWLARR_INTERNAL_URL"));
         assert!(script.contains("ensure_default_indexers"));
-        assert!(script.contains("existing_names = {item.get(\"name\") for item in existing if item.get(\"name\")}"));
+        assert!(script.contains(
+            "existing_names = {item.get(\"name\") for item in existing if item.get(\"name\")}"
+        ));
         assert!(script.contains("\"Nyaa.si\""));
         assert!(script.contains("\"The Cowboy TV\""));
         assert!(script.contains("\"YTS\""));
@@ -1902,6 +1906,10 @@ mod tests {
         assert!(script.contains("chown -R 70:70 \"$STACK_DIR/config/jellystat-db\""));
         assert!(script.contains("recover_jellystat_db()"));
         assert!(script.contains("credential drift detected; recreating database volume"));
+        assert!(script.contains("configure_bazarr()"));
+        assert!(script.contains("\"enabled_integrations\": [\"sonarr\", \"radarr\"]"));
+        assert!(script.contains("\"use_sonarr\": True"));
+        assert!(script.contains("\"use_radarr\": True"));
     }
 
     #[test]
@@ -1914,6 +1922,11 @@ mod tests {
         assert!(script.contains("run_homarr_cli users update-password"));
         assert!(script.contains("run_homarr_cli()"));
         assert!(script.contains("UPDATE onboarding SET previous_step = step, step = 'completed'"));
+        assert!(script.contains("seed_homarr_dashboard()"));
+        assert!(script.contains("Media Stack"));
+        assert!(script.contains("Applications"));
+        assert!(script.contains("icon_url = f\"https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/{spec['icon']}.svg\""));
+        assert!(script.contains("\"appId\""));
     }
 
     #[test]
@@ -1921,7 +1934,9 @@ mod tests {
         let script = include_str!(
             "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-jellystat.sh"
         );
-        assert!(script.contains("if ! service_enabled \"jellystat\" || ! service_enabled \"jellystat-db\"; then"));
+        assert!(script.contains(
+            "if ! service_enabled \"jellystat\" || ! service_enabled \"jellystat-db\"; then"
+        ));
         assert!(script.contains("/auth/createuser"));
         assert!(script.contains("/auth/configSetup"));
         assert!(script.contains("JELLYFIN_INTERNAL_URL"));
@@ -1931,8 +1946,9 @@ mod tests {
 
     #[test]
     fn media_caddy_fixture_uses_service_port_mode_without_prefix_routes() {
-        let caddy =
-            include_str!("../tests/fixtures/example-workspace/resources/media-stack/caddyfile.media");
+        let caddy = include_str!(
+            "../tests/fixtures/example-workspace/resources/media-stack/caddyfile.media"
+        );
         assert!(caddy.contains("handle_path /healthz"));
         assert!(caddy.contains("handle / {"));
         assert!(!caddy.contains("handle /sonarr*"));
@@ -1944,8 +1960,9 @@ mod tests {
 
     #[test]
     fn media_index_fixture_links_to_service_ports() {
-        let index =
-            include_str!("../tests/fixtures/example-workspace/resources/media-stack/media-index.html");
+        let index = include_str!(
+            "../tests/fixtures/example-workspace/resources/media-stack/media-index.html"
+        );
         assert!(index.contains("data-service-port=\"8096\""));
         assert!(index.contains("data-service-port=\"8989\""));
         assert!(index.contains("data-service-port=\"7878\""));
@@ -2006,15 +2023,23 @@ mod tests {
             .render(&workspace, &desired, &registry)
             .unwrap();
 
-        let main: Value =
-            serde_json::from_str(&std::fs::read_to_string(root.join("generated/main.tf.json")).unwrap())
-                .unwrap();
-        assert!(main["module"]["media_stack"]["resource"]["features"]["media_services"]["ui_routes"].is_null());
-        assert!(main["module"]["media_stack"]["resource"]["features"]["media_services"]["upstreams"].is_null());
+        let main: Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("generated/main.tf.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            main["module"]["media_stack"]["resource"]["features"]["media_services"]["ui_routes"]
+                .is_null()
+        );
+        assert!(
+            main["module"]["media_stack"]["resource"]["features"]["media_services"]["upstreams"]
+                .is_null()
+        );
 
-        let provider: Value =
-            serde_json::from_str(&std::fs::read_to_string(root.join("generated/provider.tf.json")).unwrap())
-                .unwrap();
+        let provider: Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("generated/provider.tf.json")).unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             provider["provider"]["proxmox"]["api_token"],
             "${var.proxmox_api_token}"
@@ -2027,11 +2052,15 @@ mod tests {
         );
         assert_file_fixture(
             &root.join("generated/resources/media-stack/caddyfile.media"),
-            include_str!("../tests/fixtures/example-workspace/resources/media-stack/caddyfile.media"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/media-stack/caddyfile.media"
+            ),
         );
         assert_file_fixture(
             &root.join("generated/resources/media-stack/media-index.html"),
-            include_str!("../tests/fixtures/example-workspace/resources/media-stack/media-index.html"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/media-stack/media-index.html"
+            ),
         );
         assert_file_fixture(
             &root.join("generated/resources/media-stack/media.env"),

@@ -65,6 +65,7 @@ if service_enabled "jellyseerr"; then
 fi
 if service_enabled "bazarr"; then
   install -d "$STACK_DIR/config/bazarr"
+  install -d "$STACK_DIR/config/bazarr/config"
 fi
 if service_enabled "homarr"; then
   install -d "$STACK_DIR/config/homarr"
@@ -210,3 +211,134 @@ docker compose --env-file "$STACK_DIR/.env" -f "$STACK_DIR/docker-compose.yml" p
 docker compose --env-file "$STACK_DIR/.env" -f "$STACK_DIR/docker-compose.yml" up -d --remove-orphans
 recover_jellystat_db
 docker compose --env-file "$STACK_DIR/.env" -f "$STACK_DIR/docker-compose.yml" up -d jellystat
+
+configure_bazarr() {
+  if ! service_enabled "bazarr" || ! service_enabled "sonarr" || ! service_enabled "radarr"; then
+    return 0
+  fi
+
+  python3 <<'PY'
+import json
+import os
+import pathlib
+import time
+import urllib.parse
+import xml.etree.ElementTree as ET
+
+config_root = pathlib.Path(os.environ.get("CONFIG_PATH", "/opt/media/config"))
+bazarr_path = config_root / "bazarr" / "config" / "config.yaml"
+targets = {
+    "sonarr": {
+        "section": "sonarr",
+        "url": os.environ.get("SONARR_INTERNAL_URL", "http://sonarr:8989"),
+        "base_url": os.environ.get("SONARR_BASE_URL", "/"),
+    },
+    "radarr": {
+        "section": "radarr",
+        "url": os.environ.get("RADARR_INTERNAL_URL", "http://radarr:7878"),
+        "base_url": os.environ.get("RADARR_BASE_URL", "/"),
+    },
+}
+
+def wait_for_api_key(service):
+    path = config_root / service / "config.xml"
+    for _ in range(180):
+        if path.exists():
+            try:
+                root = ET.parse(path).getroot()
+            except ET.ParseError:
+                time.sleep(2)
+                continue
+            key = (root.findtext("ApiKey") or "").strip()
+            if key:
+                return key
+        time.sleep(2)
+    raise RuntimeError(f"could not read API key for {service} from {path}")
+
+def split_url(url):
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname or parsed.netloc or url
+    port = parsed.port or (8989 if host == "sonarr" else 7878)
+    return host, port
+
+def yaml_value(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(json.dumps(item) for item in value) + "]"
+    return json.dumps(value)
+
+def update_yaml(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = path.read_text().splitlines() if path.exists() else []
+    updates = {
+        "general": {
+            "use_sonarr": True,
+            "use_radarr": True,
+            "enabled_integrations": ["sonarr", "radarr"],
+        },
+        "sonarr": {
+            "apikey": wait_for_api_key("sonarr"),
+            "ip": split_url(targets["sonarr"]["url"])[0],
+            "port": split_url(targets["sonarr"]["url"])[1],
+            "base_url": targets["sonarr"]["base_url"] or "/",
+        },
+        "radarr": {
+            "apikey": wait_for_api_key("radarr"),
+            "ip": split_url(targets["radarr"]["url"])[0],
+            "port": split_url(targets["radarr"]["url"])[1],
+            "base_url": targets["radarr"]["base_url"] or "/",
+        },
+    }
+
+    out = []
+    section = None
+    seen_sections = set()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if stripped.endswith(":") and not line.startswith(" "):
+            section = stripped[:-1]
+            seen_sections.add(section)
+            out.append(line)
+            i += 1
+            section_lines = []
+            while i < len(lines) and (lines[i].startswith("  ") or not lines[i].strip()):
+                section_lines.append(lines[i])
+                i += 1
+            if section in updates:
+                present = set()
+                for entry in section_lines:
+                    entry_stripped = entry.strip()
+                    if ":" in entry_stripped and not entry_stripped.startswith("#"):
+                        key = entry_stripped.split(":", 1)[0].strip()
+                        if key in updates[section]:
+                            out.append(f"  {key}: {yaml_value(updates[section][key])}")
+                            present.add(key)
+                            continue
+                    out.append(entry)
+                for key, value in updates[section].items():
+                    if key not in present:
+                        out.append(f"  {key}: {yaml_value(value)}")
+            else:
+                out.extend(section_lines)
+            continue
+        out.append(line)
+        i += 1
+
+    for section_name, values in updates.items():
+        if section_name not in seen_sections:
+            out.append(f"{section_name}:")
+            for key, value in values.items():
+                out.append(f"  {key}: {yaml_value(value)}")
+
+    path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+
+update_yaml(bazarr_path)
+PY
+}
+
+configure_bazarr

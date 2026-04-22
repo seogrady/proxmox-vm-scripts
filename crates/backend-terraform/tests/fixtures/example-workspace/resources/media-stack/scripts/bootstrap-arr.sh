@@ -18,6 +18,7 @@ export ARR_RESTART_MARKER
 
 python3 <<'PY'
 import os
+import time
 import xml.etree.ElementTree as ET
 
 config_root = os.environ.get("CONFIG_ROOT", "/opt/media/config")
@@ -30,6 +31,10 @@ apps = {
 changed = []
 for app, base in apps.items():
     xml_path = os.path.join(config_root, app, "config.xml")
+    for _ in range(120):
+        if os.path.exists(xml_path):
+            break
+        time.sleep(1)
     if not os.path.exists(xml_path):
         continue
     normalized = (base or "").strip()
@@ -43,10 +48,31 @@ for app, base in apps.items():
     if node is None:
         node = ET.SubElement(root, "UrlBase")
     current = (node.text or "").strip()
+    dirty = False
     if current != normalized:
         node.text = normalized
-        ET.ElementTree(root).write(xml_path, encoding="utf-8", xml_declaration=True)
+        dirty = True
         changed.append(app)
+
+    auth_settings = {
+        "AuthenticationMethod": "External",
+        "AuthenticationRequired": "DisabledForLocalAddresses",
+    }
+    auth_changed = False
+    for key, value in auth_settings.items():
+        auth_node = root.find(key)
+        if auth_node is None:
+            auth_node = ET.SubElement(root, key)
+        current_auth = (auth_node.text or "").strip()
+        if current_auth != value:
+            auth_node.text = value
+            auth_changed = True
+    if auth_changed:
+        dirty = True
+    if dirty:
+        ET.ElementTree(root).write(xml_path, encoding="utf-8", xml_declaration=True)
+        if app not in changed:
+            changed.append(app)
 
 marker = os.environ.get("ARR_RESTART_MARKER", "/tmp/vmctl-arr-restart.list")
 with open(marker, "w", encoding="utf-8") as handle:
