@@ -11,6 +11,9 @@ published = ["5055:5055"]
 [volumes]
 mounts = ["${CONFIG_PATH}/jellyseerr:/app/config"]
 
+[environment]
+API_KEY = "${JELLYSEERR_API_KEY}"
+
 [ui]
 enabled = true
 port = 5055

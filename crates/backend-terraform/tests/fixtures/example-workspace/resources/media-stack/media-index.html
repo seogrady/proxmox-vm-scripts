@@ -18,49 +18,51 @@
   <h1>Media Stack</h1>
   <ul>
     <li>
-      <a href="#" data-service-port="8096" data-service-path="/">Jellyfin</a>
+      <a href="/jellyfin">Jellyfin</a>
       <p>Media server</p>
     </li>
     <li>
-      <a href="#" data-service-port="8989" data-service-path="/">Sonarr</a>
-      <p>TV automation</p>
-    </li>
-    <li>
-      <a href="#" data-service-port="7878" data-service-path="/">Radarr</a>
-      <p>Movie automation</p>
-    </li>
-    <li>
-      <a href="#" data-service-port="9696" data-service-path="/">Prowlarr</a>
-      <p>Indexer manager</p>
-    </li>
-    <li>
-      <a href="#" data-service-port="8080" data-service-path="/">qBittorrent</a>
-      <p>Torrent client</p>
-    </li>
-    <li>
-      <a href="#" data-service-port="5055" data-service-path="/">Jellyseerr</a>
+      <a href="/jellyseerr">Jellyseerr</a>
       <p>Request management</p>
     </li>
     <li>
-      <a href="#" data-service-port="6767" data-service-path="/">Bazarr</a>
-      <p>Subtitle automation</p>
+      <a href="/jellyfin/jellio/configure">Jellio+ Configure</a>
+      <p>Build and test the Stremio addon config.</p>
     </li>
     <li>
-      <a href="#" data-service-port="3000" data-service-path="/">Jellystat</a>
-      <p>Usage analytics</p>
+      <a id="jellio-manifest-lan-link" href="#">Stremio Manifest (LAN)</a>
+      <p>Use this on LAN devices that can install HTTP addon manifests.</p>
+    </li>
+    <li>
+      <a id="jellio-manifest-tailnet-link" href="#">Stremio Manifest (Tailnet)</a>
+      <p>Primary manifest for private HTTPS access over Tailscale.</p>
+    </li>
+    <li>
+      <a id="jellio-manifest-cloudflare-link" href="#">Stremio Manifest (Cloudflare optional)</a>
+      <p>Only active when Cloudflare tunnel is explicitly configured.</p>
     </li>
   </ul>
   <script>
     (function () {
-      var host = window.location.hostname;
-      var links = document.querySelectorAll("a[data-service-port]");
-      links.forEach(function (link) {
-        var port = link.getAttribute("data-service-port");
-        var path = link.getAttribute("data-service-path") || "/";
-        if (!path.startsWith("/")) path = "/" + path;
-        if (!port) return;
-        link.href = "http://" + host + ":" + port + path;
-      });
+      function wire(id, path) {
+        fetch(path, { cache: "no-store" })
+          .then(function (res) { return res.ok ? res.text() : ""; })
+          .then(function (text) {
+            var link = document.getElementById(id);
+            if (!link) return;
+            var url = (text || "").trim();
+            if (!url) {
+              link.style.opacity = "0.4";
+              link.style.pointerEvents = "none";
+              return;
+            }
+            link.href = url;
+          })
+          .catch(function () {});
+      }
+      wire("jellio-manifest-lan-link", "/jellio-manifest.lan.url");
+      wire("jellio-manifest-tailnet-link", "/jellio-manifest.tailnet.url");
+      wire("jellio-manifest-cloudflare-link", "/jellio-manifest.cloudflare.url");
     })();
   </script>
 </body>

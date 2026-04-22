@@ -2,7 +2,7 @@
 set -euo pipefail
 
 missing=()
-for package in ca-certificates curl python3 nfs-kernel-server; do
+for package in ca-certificates curl python3 unzip nfs-kernel-server; do
   dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'install ok installed' || missing+=("$package")
 done
 if ((${#missing[@]} > 0)); then
@@ -47,6 +47,9 @@ if service_enabled "caddy"; then
 fi
 if service_enabled "jellyfin"; then
   install -d "$STACK_DIR/config/jellyfin"
+fi
+if service_enabled "meilisearch"; then
+  install -d "$STACK_DIR/config/meilisearch"
 fi
 if service_enabled "sonarr"; then
   install -d "$STACK_DIR/config/sonarr"
@@ -93,7 +96,19 @@ import sys
 
 template_path = Path(sys.argv[1])
 env_path = Path(sys.argv[2])
-preserve = {"SECRET_ENCRYPTION_KEY", "POSTGRES_PASSWORD", "JWT_SECRET"}
+preserve = {
+    "SECRET_ENCRYPTION_KEY",
+    "POSTGRES_PASSWORD",
+    "JWT_SECRET",
+    "MEILI_MASTER_KEY",
+    "JELLYFIN_STREMIO_PASSWORD",
+    "JELLIO_STREMIO_MANIFEST_URL_LAN",
+    "JELLIO_STREMIO_MANIFEST_URL_TAILNET",
+    "JELLIO_STREMIO_MANIFEST_URL_CLOUDFLARE",
+    "CLOUDFLARE_PUBLIC_BASE_URL",
+    "CLOUDFLARED_TOKEN",
+    "JELLYSEERR_API_KEY",
+}
 
 
 def parse_env(path):
@@ -191,6 +206,9 @@ ensure_env_value "$STACK_DIR/.env" "POSTGRES_PASSWORD" "$(random_hex 24)"
 ensure_env_value "$STACK_DIR/.env" "POSTGRES_IP" "jellystat-db"
 ensure_env_value "$STACK_DIR/.env" "POSTGRES_PORT" "5432"
 ensure_env_value "$STACK_DIR/.env" "JWT_SECRET" "$(random_hex 32)"
+ensure_env_value "$STACK_DIR/.env" "MEILI_MASTER_KEY" "$(random_hex 32)"
+ensure_env_value "$STACK_DIR/.env" "JELLYSEERR_API_KEY" "$(random_hex 24)"
+ensure_env_value "$STACK_DIR/.env" "JELLYFIN_STREMIO_PASSWORD" "$(random_hex 20)"
 
 recover_jellystat_db() {
   if ! service_enabled "jellystat-db"; then
@@ -241,6 +259,9 @@ if service_enabled "caddy"; then
 fi
 if service_enabled "jellyfin"; then
   chown -R 1000:1000 "$STACK_DIR/config/jellyfin"
+fi
+if service_enabled "meilisearch"; then
+  chown -R 1000:1000 "$STACK_DIR/config/meilisearch"
 fi
 if service_enabled "sonarr"; then
   chown -R 1000:1000 "$STACK_DIR/config/sonarr"

@@ -5,6 +5,18 @@
     respond "ok" 200
   }
 
+  handle_path /jellyfin/* {
+    @jellysearch expression `{query.searchTerm} != "" || {query.SearchTerm} != ""`
+    handle @jellysearch {
+      reverse_proxy jellysearch:5000
+    }
+    reverse_proxy jellyfin:8096
+  }
+
+  handle_path /jellyseerr/* {
+    reverse_proxy jellyseerr:5055
+  }
+
   handle / {
     root * /srv/ui-index
     file_server

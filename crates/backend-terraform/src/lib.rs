@@ -1945,9 +1945,11 @@ mod tests {
             "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-media.sh"
         );
         assert!(script.contains("sync_env_from_template()"));
-        assert!(script.contains(
-            "preserve = {\"SECRET_ENCRYPTION_KEY\", \"POSTGRES_PASSWORD\", \"JWT_SECRET\"}"
-        ));
+        assert!(script.contains("\"MEILI_MASTER_KEY\""));
+        assert!(script.contains("\"JELLYFIN_STREMIO_PASSWORD\""));
+        assert!(script.contains("\"JELLIO_STREMIO_MANIFEST_URL_TAILNET\""));
+        assert!(script.contains("\"CLOUDFLARED_TOKEN\""));
+        assert!(script.contains("ensure_env_value \"$STACK_DIR/.env\" \"JELLYSEERR_API_KEY\""));
         assert!(script.contains("html.unescape(value)"));
         assert!(script.contains("ipv4 = [part for part in parts if \":\" not in part]"));
         assert!(script.contains("MEDIA_SERVICES_CSV="));
@@ -1981,31 +1983,30 @@ mod tests {
     }
 
     #[test]
-    fn media_caddy_fixture_uses_service_port_mode_without_prefix_routes() {
+    fn media_caddy_fixture_uses_jellyfin_prefix_and_search_proxy() {
         let caddy = include_str!(
             "../tests/fixtures/example-workspace/resources/media-stack/caddyfile.media"
         );
         assert!(caddy.contains("handle_path /healthz"));
         assert!(caddy.contains("handle / {"));
-        assert!(!caddy.contains("handle /sonarr*"));
-        assert!(!caddy.contains("handle /radarr*"));
-        assert!(!caddy.contains("handle /prowlarr*"));
-        assert!(!caddy.contains("handle /qbittorrent*"));
-        assert!(!caddy.contains("reverse_proxy sonarr:8989"));
+        assert!(caddy.contains("handle_path /jellyfin/*"));
+        assert!(caddy.contains("reverse_proxy jellyfin:8096"));
+        assert!(caddy.contains("reverse_proxy jellysearch:5000"));
+        assert!(caddy.contains("handle_path /jellyseerr/*"));
+        assert!(caddy.contains("reverse_proxy jellyseerr:5055"));
     }
 
     #[test]
-    fn media_index_fixture_links_to_service_ports() {
+    fn media_index_fixture_links_to_path_routes_and_manifest_files() {
         let index = include_str!(
             "../tests/fixtures/example-workspace/resources/media-stack/media-index.html"
         );
-        assert!(index.contains("data-service-port=\"8096\""));
-        assert!(index.contains("data-service-port=\"8989\""));
-        assert!(index.contains("data-service-port=\"7878\""));
-        assert!(index.contains("data-service-port=\"9696\""));
-        assert!(index.contains("data-service-port=\"8080\""));
-        assert!(index.contains("data-service-path=\"/\""));
-        assert!(index.contains("link.href = \"http://\" + host + \":\" + port + path;"));
+        assert!(index.contains("href=\"/jellyfin\""));
+        assert!(index.contains("href=\"/jellyseerr\""));
+        assert!(index.contains("href=\"/jellyfin/jellio/configure\""));
+        assert!(index.contains("wire(\"jellio-manifest-lan-link\", \"/jellio-manifest.lan.url\");"));
+        assert!(index.contains("wire(\"jellio-manifest-tailnet-link\", \"/jellio-manifest.tailnet.url\");"));
+        assert!(index.contains("wire(\"jellio-manifest-cloudflare-link\", \"/jellio-manifest.cloudflare.url\");"));
     }
 
     #[test]

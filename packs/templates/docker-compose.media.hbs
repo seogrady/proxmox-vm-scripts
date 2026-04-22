@@ -7,6 +7,9 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+{{#if settings.command}}
+    command: {{settings.command}}
+{{/if}}
     cap_add:
       - NET_ADMIN
     devices:
@@ -18,6 +21,11 @@ services:
       - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
       - SERVER_CITIES=${VPN_SERVER_CITIES}
       - FIREWALL_INPUT_PORTS=8080,6881
+{{#if environment}}
+{{#each environment}}
+      - "{{@key}}={{this}}"
+{{/each}}
+{{/if}}
 {{#if ports.published}}
     ports:
 {{#each ports.published}}
@@ -37,6 +45,9 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+{{#if settings.command}}
+    command: {{settings.command}}
+{{/if}}
 {{#if vpn_route_through_gluetun}}
 {{#if @root.vpn.enabled}}
     network_mode: "service:gluetun"
@@ -62,6 +73,12 @@ services:
     volumes:
 {{#each volumes.mounts}}
       - "{{this}}"
+{{/each}}
+{{/if}}
+{{#if environment}}
+    environment:
+{{#each environment}}
+      - "{{@key}}={{this}}"
 {{/each}}
 {{/if}}
 {{/if}}

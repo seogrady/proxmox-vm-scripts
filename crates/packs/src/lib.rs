@@ -48,6 +48,8 @@ pub struct ServicePack {
     #[serde(default)]
     pub image: BTreeMap<String, Value>,
     #[serde(default)]
+    pub environment: BTreeMap<String, Value>,
+    #[serde(default)]
     pub ports: BTreeMap<String, Value>,
     #[serde(default)]
     pub volumes: BTreeMap<String, Value>,

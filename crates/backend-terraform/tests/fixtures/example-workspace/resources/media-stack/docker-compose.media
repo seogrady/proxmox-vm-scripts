@@ -19,6 +19,32 @@ services:
     volumes:
       - "${MEDIA_PATH}:/media"
       - "${CONFIG_PATH}/jellyfin:/config"
+  meilisearch:
+    image: "getmeili/meilisearch:v1.9"
+    env_file:
+      - .env
+    restart: unless-stopped
+    ports:
+      - "7700:7700"
+    volumes:
+      - "${CONFIG_PATH}/meilisearch:/meili_data"
+    environment:
+      - "MEILI_MASTER_KEY=${MEILI_MASTER_KEY}"
+  jellysearch:
+    image: "domistyle/jellysearch:latest"
+    env_file:
+      - .env
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - "${CONFIG_PATH}/jellyfin:/config:ro"
+    environment:
+      - "INDEX_CRON=0 0/5 * ? * * *"
+      - "JELLYFIN_CONFIG_DIR=/config"
+      - "JELLYFIN_URL=http://jellyfin:8096"
+      - "MEILI_MASTER_KEY=${MEILI_MASTER_KEY}"
+      - "MEILI_URL=http://meilisearch:7700"
   sonarr:
     image: "lscr.io/linuxserver/sonarr:latest"
     env_file:
@@ -69,6 +95,8 @@ services:
       - "5055:5055"
     volumes:
       - "${CONFIG_PATH}/jellyseerr:/app/config"
+    environment:
+      - "API_KEY=${JELLYSEERR_API_KEY}"
   bazarr:
     image: "lscr.io/linuxserver/bazarr:latest"
     env_file:

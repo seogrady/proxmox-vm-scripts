@@ -7,7 +7,7 @@ requires = ["docker"]
 [features.media_services]
 enabled = true
 minimal = true
-jellyfin_base_url = ""
+jellyfin_base_url = "/jellyfin"
 sonarr_base_url = ""
 radarr_base_url = ""
 prowlarr_base_url = ""
@@ -16,6 +16,8 @@ services = [
   "caddy",
   "gluetun",
   "jellyfin",
+  "meilisearch",
+  "jellysearch",
   "sonarr",
   "radarr",
   "prowlarr",
@@ -38,4 +40,19 @@ type = "wireguard"
 templates = ["docker-compose.media.hbs", "media.env.hbs", "caddyfile.media.hbs", "media-index.html.hbs", "tailscale-setup.sh.hbs"]
 
 [scripts]
-bootstrap = ["bootstrap-node.sh", "bootstrap-tailscale.sh", "bootstrap-media.sh", "bootstrap-jellyfin.sh", "bootstrap-jellystat.sh", "bootstrap-qbittorrent.sh", "bootstrap-arr.sh", "bootstrap-jellyseerr.sh", "bootstrap-ui-routing.sh"]
+bootstrap = [
+  "bootstrap-node.sh",
+  "bootstrap-tailscale.sh",
+  "bootstrap-media.sh",
+  "bootstrap-ui-routing.sh",
+  "bootstrap-jellyfin.sh",
+  "bootstrap-jellysearch.sh",
+  "bootstrap-jellyfin-plugins.sh",
+  "bootstrap-jellyseerr.sh",
+  "bootstrap-streamyfin.sh",
+  "bootstrap-jellio.sh",
+  "bootstrap-jellystat.sh",
+  "bootstrap-qbittorrent.sh",
+  "bootstrap-arr.sh",
+  "bootstrap-validate-streaming-stack.sh",
+]
