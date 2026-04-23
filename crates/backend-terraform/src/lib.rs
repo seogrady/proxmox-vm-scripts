@@ -1946,7 +1946,9 @@ mod tests {
         );
         assert!(script.contains("sync_env_from_template()"));
         assert!(script.contains("\"MEILI_MASTER_KEY\""));
+        assert!(script.contains("\"MEDIA_PUBLIC_BASE_URL_LAN\""));
         assert!(script.contains("\"JELLYFIN_STREMIO_PASSWORD\""));
+        assert!(script.contains("\"JELLYFIN_STREMIO_AUTH_TOKEN\""));
         assert!(script.contains("\"JELLIO_STREMIO_MANIFEST_URL_TAILNET\""));
         assert!(script.contains("\"CLOUDFLARED_TOKEN\""));
         assert!(script.contains("ensure_env_value \"$STACK_DIR/.env\" \"JELLYSEERR_API_KEY\""));
@@ -1983,18 +1985,40 @@ mod tests {
     }
 
     #[test]
-    fn media_caddy_fixture_uses_service_port_mode_without_prefix_routes() {
+    fn media_caddy_fixture_uses_service_port_mode_with_stremio_jellyfin_proxy() {
         let caddy = include_str!(
             "../tests/fixtures/example-workspace/resources/media-stack/caddyfile.media"
         );
+        assert!(caddy.contains("auto_https off"));
+        assert!(caddy.contains("media-stack:80, media-stack.home.arpa:80, :80"));
         assert!(caddy.contains("handle_path /healthz"));
+        assert!(caddy.contains("header -Strict-Transport-Security"));
         assert!(caddy.contains("handle {"));
         assert!(caddy.contains("handle /jellio/*"));
+        assert!(caddy.contains("handle_path /jf/*"));
+        assert!(caddy.contains("handle /Items/*"));
+        assert!(caddy.contains("handle /Videos/*"));
+        assert!(caddy.contains("header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}"));
         assert!(!caddy.contains("handle /sonarr*"));
         assert!(!caddy.contains("handle /radarr*"));
         assert!(!caddy.contains("handle /prowlarr*"));
         assert!(!caddy.contains("handle /qbittorrent*"));
         assert!(!caddy.contains("reverse_proxy sonarr:8989"));
+    }
+
+    #[test]
+    fn media_jellio_bootstrap_uses_jf_public_base_for_streams_and_artwork() {
+        let script = include_str!(
+            "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-jellio.sh"
+        );
+        assert!(script.contains("MEDIA_PUBLIC_BASE_URL_LAN"));
+        assert!(script.contains("jellyfin_public_base = f\"{addon_base.rstrip('/')}/jf\""));
+        assert!(script.contains("\"PublicBaseUrl\": jellyfin_public_base"));
+        assert!(
+            script.contains("return f\"{addon_base.rstrip('/')}/jellio/{encoded}/manifest.json\"")
+        );
+        assert!(script
+            .contains("set_env_value(env_file, \"JELLYFIN_STREMIO_AUTH_TOKEN\", stremio_token)"));
     }
 
     #[test]
@@ -2011,8 +2035,11 @@ mod tests {
         assert!(index.contains("data-service-path=\"/\""));
         assert!(index.contains("link.href = \"http://\" + host + \":\" + port + path;"));
         assert!(index.contains("wire(\"jellio-manifest-lan-link\", \"/jellio-manifest.lan.url\");"));
-        assert!(index.contains("wire(\"jellio-manifest-tailnet-link\", \"/jellio-manifest.tailnet.url\");"));
-        assert!(index.contains("wire(\"jellio-manifest-cloudflare-link\", \"/jellio-manifest.cloudflare.url\");"));
+        assert!(index
+            .contains("wire(\"jellio-manifest-tailnet-link\", \"/jellio-manifest.tailnet.url\");"));
+        assert!(index.contains(
+            "wire(\"jellio-manifest-cloudflare-link\", \"/jellio-manifest.cloudflare.url\");"
+        ));
         assert!(!index.contains("Jellyfin (Auto Auth)"));
         assert!(!index.contains("Jellyseerr (Auto Auth)"));
     }

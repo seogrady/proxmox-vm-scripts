@@ -41,7 +41,7 @@ PLUGIN_ID = "e874be83fe364568abacf5ce0574b409"
 env_file = Path(os.sys.argv[1])
 
 api_base_url = (os.environ.get("JELLYFIN_INTERNAL_URL") or "http://127.0.0.1:8096").rstrip("/")
-lan_public_base = "http://media-stack"
+lan_public_base = (os.environ.get("MEDIA_PUBLIC_BASE_URL_LAN") or "http://media-stack").strip().rstrip("/")
 admin_user = os.environ.get("JELLYFIN_ADMIN_USER", "admin")
 admin_password = os.environ.get("JELLYFIN_ADMIN_PASSWORD", "")
 stremio_user = (os.environ.get("JELLYFIN_STREMIO_USER") or "stremio").strip()
@@ -241,19 +241,20 @@ tailnet_base = f"https://{tail_dns}" if tail_dns else ""
 cloudflare_enabled = bool(cloudflare_base and cloudflare_token)
 
 
-def make_manifest(base: str) -> str:
+def make_manifest(addon_base: str) -> str:
+    jellyfin_public_base = f"{addon_base.rstrip('/')}/jf"
     payload = {
         "ServerName": host_server_name,
         "AuthToken": stremio_token,
         "LibrariesGuids": [hyphenate_guid(lib) for lib in libraries],
-        "PublicBaseUrl": base,
+        "PublicBaseUrl": jellyfin_public_base,
     }
     if seerr_api_key:
         payload["JellyseerrEnabled"] = True
         payload["JellyseerrUrl"] = seerr_url
         payload["JellyseerrApiKey"] = seerr_api_key
     encoded = b64url(payload)
-    return f"{base}/jellio/{encoded}/manifest.json"
+    return f"{addon_base.rstrip('/')}/jellio/{encoded}/manifest.json"
 
 
 lan_manifest = make_manifest(lan_base)
@@ -261,6 +262,7 @@ tailnet_manifest = make_manifest(tailnet_base) if tailnet_base else ""
 cloudflare_manifest = make_manifest(cloudflare_base) if cloudflare_enabled else ""
 
 set_env_value(env_file, "JELLYFIN_STREMIO_PASSWORD", stremio_password)
+set_env_value(env_file, "JELLYFIN_STREMIO_AUTH_TOKEN", stremio_token)
 set_env_value(env_file, "JELLIO_STREMIO_MANIFEST_URL_LAN", lan_manifest)
 set_env_value(env_file, "JELLIO_STREMIO_MANIFEST_URL_TAILNET", tailnet_manifest)
 set_env_value(env_file, "JELLIO_STREMIO_MANIFEST_URL_CLOUDFLARE", cloudflare_manifest)

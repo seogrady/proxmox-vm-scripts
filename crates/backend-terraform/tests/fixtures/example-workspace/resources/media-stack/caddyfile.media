@@ -1,12 +1,36 @@
-:80 {
+{
+  auto_https off
+}
+
+media-stack:80, media-stack.home.arpa:80, :80 {
   encode gzip
 
   handle_path /healthz {
     respond "ok" 200
   }
 
+  header -Strict-Transport-Security
+
   handle /jellio/* {
     reverse_proxy {$JELLYFIN_INTERNAL_URL}
+  }
+
+  handle_path /jf/* {
+    reverse_proxy {$JELLYFIN_INTERNAL_URL} {
+      header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}
+    }
+  }
+
+  handle /Items/* {
+    reverse_proxy {$JELLYFIN_INTERNAL_URL} {
+      header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}
+    }
+  }
+
+  handle /Videos/* {
+    reverse_proxy {$JELLYFIN_INTERNAL_URL} {
+      header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}
+    }
   }
 
   handle {

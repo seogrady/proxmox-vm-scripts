@@ -58,6 +58,31 @@ check_http_no_auth() {
   esac
 }
 
+check_http_no_redirect() {
+  local url="$1"
+  local label="$2"
+  local headers code
+  headers="$(curl -sS -D - -o /dev/null --max-time 20 "$url" || true)"
+  code="$(printf '%s\n' "$headers" | awk 'NR==1 {print $2}')"
+  case "$code" in
+    200|204) ;;
+    301|302|307|308)
+      echo "validation failed: ${label} redirected instead of serving HTTP (${url})" >&2
+      printf '%s\n' "$headers" >&2
+      return 1
+      ;;
+    *)
+      echo "validation failed: ${label} returned HTTP ${code:-unknown} (${url})" >&2
+      printf '%s\n' "$headers" >&2
+      return 1
+      ;;
+  esac
+  if printf '%s\n' "$headers" | grep -qi '^Strict-Transport-Security:'; then
+    echo "validation failed: ${label} returned Strict-Transport-Security on LAN HTTP (${url})" >&2
+    return 1
+  fi
+}
+
 check_container_running() {
   local name="$1"
   if ! docker ps --format '{{.Names}}' | grep -qx "$name"; then
@@ -69,6 +94,7 @@ check_container_running() {
 python3 <<'PY'
 import json
 import os
+import base64
 import subprocess
 import urllib.error
 import urllib.request
@@ -135,6 +161,14 @@ for key in ("JELLIO_STREMIO_MANIFEST_URL_LAN", "JELLIO_STREMIO_MANIFEST_URL_TAIL
         manifest = get_json(value)
         if "resources" not in manifest:
             raise RuntimeError(f"{key} does not point to a valid stremio manifest")
+        encoded = value.rstrip("/").split("/jellio/", 1)[1].split("/", 1)[0]
+        padded = encoded + ("=" * (-len(encoded) % 4))
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        public_base = (payload.get("PublicBaseUrl") or "").rstrip("/")
+        if not public_base.endswith("/jf"):
+            raise RuntimeError(f"{key} PublicBaseUrl must use the /jf Jellyfin proxy, got {public_base!r}")
+        if "/jf/jellio/" in value:
+            raise RuntimeError(f"{key} manifest URL must stay on the /jellio addon route")
     except (urllib.error.HTTPError, urllib.error.URLError) as err:
         print(f"warning: unable to validate {key}: {err}")
 
@@ -154,6 +188,8 @@ PY
 if service_enabled "caddy"; then
   check_container_running "media-caddy-1"
   check_http_ok "http://127.0.0.1:80/" "caddy portal"
+  check_http_no_redirect "http://media-stack/healthz" "media-stack LAN HTTP"
+  check_http_no_redirect "http://media-stack.home.arpa/healthz" "media-stack.home.arpa LAN HTTP"
 fi
 
 if service_enabled "jellyfin"; then
@@ -161,6 +197,8 @@ if service_enabled "jellyfin"; then
   check_http_ok "${JELLYFIN_INTERNAL_URL:-http://127.0.0.1:8096}/System/Info/Public" "jellyfin public info"
   if service_enabled "caddy"; then
     check_http_no_auth "http://127.0.0.1:8097/Users/Me" "jellyfin no-login proxy"
+    check_http_ok "http://media-stack/jf/System/Info/Public" "jellyfin stremio proxy"
+    check_http_ok "http://media-stack.home.arpa/jf/System/Info/Public" "jellyfin stremio proxy fqdn"
     autologin_url="$(curl -fsS http://127.0.0.1:80/jellyfin-autologin.url | tr -d '\n\r' || true)"
     if [[ -z "$autologin_url" ]]; then
       echo "validation failed: empty jellyfin autologin URL" >&2
