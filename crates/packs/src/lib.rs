@@ -363,11 +363,7 @@ fn ui_service_context(service: &ServicePack) -> Option<serde_json::Value> {
         .ui
         .port
         .or_else(|| first_published_host_port(&service.ports))?;
-    let path = service
-        .ui
-        .path
-        .clone()
-        .unwrap_or_else(|| "/".to_string());
+    let path = service.ui.path.clone().unwrap_or_else(|| "/".to_string());
     let name = service
         .ui
         .name
@@ -700,9 +696,7 @@ mod tests {
                 "media_services".to_string(),
                 toml::Value::Table(toml::map::Map::from_iter([(
                     "services".to_string(),
-                    toml::Value::Array(vec![
-                        toml::Value::String("jellyfin".to_string()),
-                    ]),
+                    toml::Value::Array(vec![toml::Value::String("jellyfin".to_string())]),
                 )])),
             )]),
             settings: BTreeMap::new(),
@@ -822,8 +816,14 @@ mod tests {
             "vpn".to_string(),
             toml::Value::Table(toml::map::Map::from_iter([
                 ("enabled".to_string(), toml::Value::Boolean(true)),
-                ("provider".to_string(), toml::Value::String("mullvad".to_string())),
-                ("type".to_string(), toml::Value::String("wireguard".to_string())),
+                (
+                    "provider".to_string(),
+                    toml::Value::String("mullvad".to_string()),
+                ),
+                (
+                    "type".to_string(),
+                    toml::Value::String("wireguard".to_string()),
+                ),
                 (
                     "wireguard_private_key".to_string(),
                     toml::Value::String("".to_string()),
@@ -842,8 +842,14 @@ mod tests {
             "vpn".to_string(),
             toml::Value::Table(toml::map::Map::from_iter([
                 ("enabled".to_string(), toml::Value::Boolean(true)),
-                ("provider".to_string(), toml::Value::String("mullvad".to_string())),
-                ("type".to_string(), toml::Value::String("wireguard".to_string())),
+                (
+                    "provider".to_string(),
+                    toml::Value::String("mullvad".to_string()),
+                ),
+                (
+                    "type".to_string(),
+                    toml::Value::String("wireguard".to_string()),
+                ),
                 (
                     "wireguard_private_key".to_string(),
                     toml::Value::String("key".to_string()),

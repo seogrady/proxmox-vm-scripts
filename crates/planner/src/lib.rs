@@ -460,8 +460,31 @@ fn validate_normalized_resources(resources: &BTreeMap<String, NormalizedResource
                 );
             }
         }
+        if media_services_enabled(resource)
+            && resource
+                .searchdomain
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .is_empty()
+        {
+            bail!(
+                "resource `{}` media_services requires searchdomain; set defaults.searchdomain or resources.searchdomain",
+                resource.name
+            );
+        }
     }
     Ok(())
+}
+
+fn media_services_enabled(resource: &NormalizedResource) -> bool {
+    resource
+        .features
+        .get("media_services")
+        .and_then(toml::Value::as_table)
+        .and_then(|feature| feature.get("enabled"))
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn validate_dependencies(resources: &[Resource]) -> Result<()> {
@@ -682,6 +705,28 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("cloud_init requires ssh_key_file"));
+    }
+
+    #[test]
+    fn rejects_media_services_without_searchdomain() {
+        let mut input = resource("media-stack", "vm", vec![]);
+        input.features.insert(
+            "media_services".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([(
+                "enabled".to_string(),
+                toml::Value::Boolean(true),
+            )])),
+        );
+
+        let err = validate_normalized_resources(&BTreeMap::from([(
+            input.name.clone(),
+            normalize_resource(&input, &BTreeMap::new()).unwrap(),
+        )]))
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("media_services requires searchdomain"));
     }
 
     #[test]

@@ -299,19 +299,14 @@ impl<'a> Interpolator<'a> {
         .ok_or_else(|| anyhow!("missing {namespace} binding `{key}`"))?;
 
         let resolved = match value {
-            Value::String(input)
-                if namespace == "env" && input == &format!("${{{key}}}") =>
-            {
-                self.process_env
-                    .get(key)
-                    .cloned()
-                    .ok_or_else(|| anyhow!("missing environment variable `{key}`"))?
-            }
-            Value::String(input) if namespace == "env" && input.trim().is_empty() => self
+            Value::String(input) if namespace == "env" && input == &format!("${{{key}}}") => self
                 .process_env
                 .get(key)
                 .cloned()
-                .unwrap_or_default(),
+                .ok_or_else(|| anyhow!("missing environment variable `{key}`"))?,
+            Value::String(input) if namespace == "env" && input.trim().is_empty() => {
+                self.process_env.get(key).cloned().unwrap_or_default()
+            }
             Value::String(input) => self.resolve_string(input, stack)?,
             scalar if is_scalar(scalar) => scalar_to_string(scalar),
             _ => bail!("{namespace}.{key} must resolve to a scalar value"),
@@ -393,7 +388,9 @@ fn parse_shell_assignment(line: &str) -> Option<(String, String)> {
             .chars()
             .next()
             .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
-        || !key.chars().all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        || !key
+            .chars()
+            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
     {
         return None;
     }
@@ -556,8 +553,12 @@ mod tests {
         )
         .unwrap();
 
-        let merged = process_env_with_shell_fallback_from_home(&BTreeMap::new(), Some(&root)).unwrap();
-        assert_eq!(merged.get("WIREGUARD_PRIVATE_KEY").map(String::as_str), Some("wg-key"));
+        let merged =
+            process_env_with_shell_fallback_from_home(&BTreeMap::new(), Some(&root)).unwrap();
+        assert_eq!(
+            merged.get("WIREGUARD_PRIVATE_KEY").map(String::as_str),
+            Some("wg-key")
+        );
         assert_eq!(
             merged.get("WIREGUARD_ADDRESSES").map(String::as_str),
             Some("10.67.87.73/32,fc00:bbbb:bbbb:bb01::4:5748/128")
@@ -576,7 +577,8 @@ mod tests {
         )
         .unwrap();
 
-        let merged = process_env_with_shell_fallback_from_home(&BTreeMap::new(), Some(&root)).unwrap();
+        let merged =
+            process_env_with_shell_fallback_from_home(&BTreeMap::new(), Some(&root)).unwrap();
         assert_eq!(
             merged.get("VPN_SERVER_CITIES").map(String::as_str),
             Some("Melbourne")

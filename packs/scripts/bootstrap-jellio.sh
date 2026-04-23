@@ -41,7 +41,9 @@ PLUGIN_ID = "e874be83fe364568abacf5ce0574b409"
 env_file = Path(os.sys.argv[1])
 
 api_base_url = (os.environ.get("JELLYFIN_INTERNAL_URL") or "http://127.0.0.1:8096").rstrip("/")
-lan_public_base = (os.environ.get("MEDIA_PUBLIC_BASE_URL_LAN") or "http://media-stack").strip().rstrip("/")
+host_server_name = (os.environ.get("VMCTL_RESOURCE_NAME") or "media-stack").strip()
+default_lan_base = os.environ.get("VMCTL_HTTP_BASE_URL_SHORT") or f"http://{host_server_name}"
+lan_public_base = (os.environ.get("MEDIA_PUBLIC_BASE_URL_LAN") or default_lan_base).strip().rstrip("/")
 admin_user = os.environ.get("JELLYFIN_ADMIN_USER", "admin")
 admin_password = os.environ.get("JELLYFIN_ADMIN_PASSWORD", "")
 stremio_user = (os.environ.get("JELLYFIN_STREMIO_USER") or "stremio").strip()
@@ -52,7 +54,6 @@ seerr_api_key = (os.environ.get("JELLYSEERR_API_KEY") or "").strip()
 seerr_url = (os.environ.get("JELLYSEERR_INTERNAL_URL") or "http://jellyseerr:5055").rstrip("/")
 cloudflare_base = (os.environ.get("CLOUDFLARE_PUBLIC_BASE_URL") or "").strip().rstrip("/")
 cloudflare_token = (os.environ.get("CLOUDFLARED_TOKEN") or "").strip()
-host_server_name = "media-stack"
 
 
 def set_env_value(path: Path, key: str, value: str) -> None:

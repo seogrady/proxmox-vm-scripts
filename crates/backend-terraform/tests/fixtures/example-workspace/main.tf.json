@@ -136,6 +136,8 @@
               "caddy",
               "gluetun",
               "jellyfin",
+              "meilisearch",
+              "jellysearch",
               "sonarr",
               "radarr",
               "prowlarr",

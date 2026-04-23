@@ -1958,6 +1958,9 @@ mod tests {
         assert!(script.contains("service_enabled()"));
         assert!(script.contains("sync_template_env_defaults()"));
         assert!(script.contains("sync_template_env_defaults \"$RESOURCE_DIR/media.env\""));
+        assert!(script.contains("VMCTL_HOST_SHORT"));
+        assert!(script.contains("VMCTL_HOST_FQDN"));
+        assert!(script.contains("host_aliases"));
         assert!(!script.contains("chown -R 1000:1000 \"$STACK_DIR/config\""));
         assert!(script.contains("chown -R 70:70 \"$STACK_DIR/config/jellystat-db\""));
         assert!(script.contains("recover_jellystat_db()"));
@@ -1993,11 +1996,20 @@ mod tests {
         assert!(caddy.contains("media-stack:80, media-stack.home.arpa:80, :80"));
         assert!(caddy.contains("handle_path /healthz"));
         assert!(caddy.contains("header -Strict-Transport-Security"));
+        assert!(caddy.contains("log {"));
         assert!(caddy.contains("handle {"));
         assert!(caddy.contains("handle /jellio/*"));
         assert!(caddy.contains("handle_path /jf/*"));
         assert!(caddy.contains("handle /Items/*"));
+        assert!(caddy.contains("handle /items/*"));
+        assert!(caddy.contains("@tizen_stream"));
+        assert!(caddy.contains("@tizen_jf_stream"));
+        assert!(caddy.contains("path_regexp tizen_stream ^/[Vv]ideos/([^/]+)/stream$"));
+        assert!(caddy.contains("path_regexp tizen_jf_stream ^/jf/[Vv]ideos/([^/]+)/stream$"));
+        assert!(caddy.contains("rewrite * /Videos/{re.tizen_stream.1}/master.m3u8"));
+        assert!(caddy.contains("rewrite * /Videos/{re.tizen_jf_stream.1}/master.m3u8"));
         assert!(caddy.contains("handle /Videos/*"));
+        assert!(caddy.contains("handle /videos/*"));
         assert!(caddy.contains("header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}"));
         assert!(!caddy.contains("handle /sonarr*"));
         assert!(!caddy.contains("handle /radarr*"));
@@ -2012,6 +2024,8 @@ mod tests {
             "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-jellio.sh"
         );
         assert!(script.contains("MEDIA_PUBLIC_BASE_URL_LAN"));
+        assert!(script.contains("VMCTL_HTTP_BASE_URL_SHORT"));
+        assert!(script.contains("host_server_name = (os.environ.get(\"VMCTL_RESOURCE_NAME\")"));
         assert!(script.contains("jellyfin_public_base = f\"{addon_base.rstrip('/')}/jf\""));
         assert!(script.contains("\"PublicBaseUrl\": jellyfin_public_base"));
         assert!(
@@ -2019,6 +2033,30 @@ mod tests {
         );
         assert!(script
             .contains("set_env_value(env_file, \"JELLYFIN_STREMIO_AUTH_TOKEN\", stremio_token)"));
+    }
+
+    #[test]
+    fn media_env_fixture_derives_public_hosts_from_resource_identity() {
+        let env =
+            include_str!("../tests/fixtures/example-workspace/resources/media-stack/media.env");
+        assert!(env.contains("VMCTL_RESOURCE_NAME=media-stack"));
+        assert!(env.contains("VMCTL_SEARCHDOMAIN=home.arpa"));
+        assert!(env.contains("VMCTL_HOST_SHORT=media-stack"));
+        assert!(env.contains("VMCTL_HOST_FQDN=media-stack.home.arpa"));
+        assert!(env.contains("VMCTL_HTTP_BASE_URL_SHORT=http://media-stack"));
+        assert!(env.contains("VMCTL_HTTP_BASE_URL_FQDN=http://media-stack.home.arpa"));
+        assert!(env.contains("MEDIA_PUBLIC_BASE_URL_LAN=http://media-stack"));
+    }
+
+    #[test]
+    fn streaming_validation_fixture_checks_tizen_catalogs() {
+        let script = include_str!(
+            "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-validate-streaming-stack.sh"
+        );
+        assert!(script.contains("TIZEN_STREMIO_USER_AGENT"));
+        assert!(script.contains("Accept-Encoding\": \"identity"));
+        assert!(script.contains("Tizen-like Jellio catalog requests returned empty metas"));
+        assert!(script.contains("#EXTM3U"));
     }
 
     #[test]

@@ -13,7 +13,9 @@ fi
 KODI_USER="${KODI_USER:-kodi}"
 KODI_HOME="${KODI_HOME:-/home/$KODI_USER}"
 KODI_WEB_PORT="${KODI_WEB_PORT:-80}"
-JELLYFIN_URL="${JELLYFIN_URL:-http://media-stack.home.arpa:8096}"
+VMCTL_HOST_SHORT="${VMCTL_HOST_SHORT:-media-stack}"
+VMCTL_HOST_FQDN="${VMCTL_HOST_FQDN:-${VMCTL_HOST_SHORT}.${VMCTL_SEARCHDOMAIN:-home.arpa}}"
+JELLYFIN_URL="${JELLYFIN_URL:-http://${VMCTL_HOST_FQDN}:8096}"
 JELLYFIN_ADMIN_USER="${JELLYFIN_ADMIN_USER:-admin}"
 JELLYFIN_ADMIN_PASSWORD="${JELLYFIN_ADMIN_PASSWORD:-}"
 
@@ -30,7 +32,7 @@ import urllib.request
 configured = os.environ["JELLYFIN_URL"].rstrip("/")
 parsed = urllib.parse.urlparse(configured)
 scheme = parsed.scheme or "http"
-host = parsed.hostname or "media-stack"
+host = parsed.hostname or os.environ.get("VMCTL_HOST_SHORT") or "media-stack"
 port = parsed.port or 8096
 short_host = host.split(".")[0]
 
@@ -178,7 +180,7 @@ EOF
 cat > "$KODI_HOME/.kodi/userdata/addon_data/plugin.video.jellyfin/settings.xml" <<EOF
 <settings version="2">
   <setting id="username">${JELLYFIN_ADMIN_USER}</setting>
-  <setting id="serverName">media-stack</setting>
+  <setting id="serverName">${VMCTL_HOST_SHORT}</setting>
   <setting id="server">${JELLYFIN_URL}</setting>
   <setting id="connectMsg">false</setting>
   <setting id="useDirectPaths">false</setting>
@@ -191,7 +193,7 @@ cat > "$KODI_HOME/.kodi/userdata/addon_data/service.jellyfin/settings.xml" <<EOF
   <setting id="username">${JELLYFIN_ADMIN_USER}</setting>
   <setting id="password">${JELLYFIN_ADMIN_PASSWORD}</setting>
   <setting id="server">${JELLYFIN_URL}</setting>
-  <setting id="serverName">media-stack</setting>
+  <setting id="serverName">${VMCTL_HOST_SHORT}</setting>
   <setting id="enableContext">true</setting>
   <setting id="remoteControl">true</setting>
 </settings>
@@ -252,7 +254,7 @@ if auth:
         "AccessToken": auth["AccessToken"],
         "DateLastAccessed": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "Id": auth.get("ServerId") or public_info["Id"],
-        "Name": public_info.get("ServerName", "media-stack"),
+        "Name": public_info.get("ServerName", os.environ.get("VMCTL_HOST_SHORT", "media-stack")),
         "UserId": auth["User"]["Id"],
         "Users": [{"Id": auth["User"]["Id"], "IsSignedInOffline": True}],
         "address": base,

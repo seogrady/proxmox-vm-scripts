@@ -212,8 +212,9 @@ settings["main"]["mediaServerType"] = 2
 jellyfin_internal = urllib.parse.urlparse(JELLYFIN_INTERNAL_URL)
 jellyfin_external = urllib.parse.urlparse(JELLYFIN_URL)
 jellyfin_settings = settings["jellyfin"]
+server_name = (os.environ.get("VMCTL_RESOURCE_NAME") or jellyfin_settings.get("name") or "media-stack").strip()
 settings["jellyfin"] = {
-    "name": jellyfin_settings.get("name", "media-stack"),
+    "name": jellyfin_settings.get("name", server_name),
     "ip": jellyfin_internal.hostname or "jellyfin",
     "port": jellyfin_internal.port or (443 if jellyfin_internal.scheme == "https" else 8096),
     "useSsl": jellyfin_internal.scheme == "https",
