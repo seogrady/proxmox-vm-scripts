@@ -3,6 +3,7 @@ set -euo pipefail
 
 STACK_DIR="/opt/media"
 ENV_FILE="$STACK_DIR/.env"
+COMPOSE_FILE="$STACK_DIR/docker-compose.yml"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   exit 0
@@ -13,6 +14,10 @@ set -a
 set +a
 
 MEDIA_SERVICES_CSV="${MEDIA_SERVICES:-}"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-media}"
+docker_compose() {
+  docker compose -p "$COMPOSE_PROJECT_NAME" --project-directory "$STACK_DIR" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+}
 
 service_enabled() {
   local name="$1"
@@ -265,15 +270,45 @@ def make_manifest(addon_base: str) -> str:
     encoded = b64url(payload)
     return f"{addon_base.rstrip('/')}/jellio/{encoded}/manifest.json"
 
+def make_manifest_with_config(addon_base: str) -> tuple[str, str]:
+    jellyfin_public_base = f"{addon_base.rstrip('/')}/jf"
+    payload = {
+        "ServerName": host_server_name,
+        "AuthToken": stremio_token,
+        "LibrariesGuids": [hyphenate_guid(lib) for lib in libraries],
+        "PublicBaseUrl": jellyfin_public_base,
+    }
+    if seerr_api_key:
+        payload["JellyseerrEnabled"] = True
+        payload["JellyseerrUrl"] = seerr_url
+        payload["JellyseerrApiKey"] = seerr_api_key
+    encoded = b64url(payload)
+    return encoded, f"{addon_base.rstrip('/')}/jellio/{encoded}/manifest.json"
 
-lan_manifest = make_manifest(lan_base)
-lan_short_manifest = make_manifest(lan_short_public_base)
-lan_ip_manifest = make_manifest(lan_ip_public_base) if lan_ip_public_base else ""
-tailnet_manifest = make_manifest(tailnet_base) if tailnet_base else ""
-cloudflare_manifest = make_manifest(cloudflare_base) if cloudflare_enabled else ""
+
+lan_b64, lan_manifest = make_manifest_with_config(lan_base)
+lan_short_b64, lan_short_manifest = make_manifest_with_config(lan_short_public_base)
+lan_ip_b64, lan_ip_manifest = make_manifest_with_config(lan_ip_public_base) if lan_ip_public_base else ("", "")
+tailnet_b64, tailnet_manifest = make_manifest_with_config(tailnet_base) if tailnet_base else ("", "")
+cloudflare_b64, cloudflare_manifest = make_manifest_with_config(cloudflare_base) if cloudflare_enabled else ("", "")
+
+# Stremio clients appear to have a relatively strict URL length limit for manifest URLs.
+# The generated /jellio/<b64>/manifest.json URL can exceed it (especially for tailnet HTTPS).
+# To keep manifests addable, we expose short aliases that are rewritten by Caddy to the full path.
+lan_manifest_alias = f"{lan_base.rstrip('/')}/jellio-lan/manifest.json"
+lan_short_manifest_alias = f"{lan_short_public_base.rstrip('/')}/jellio-lan-short/manifest.json"
+lan_ip_manifest_alias = f"{lan_ip_public_base.rstrip('/')}/jellio-lan-ip/manifest.json" if lan_ip_public_base else ""
+tailnet_manifest_alias = f"{tailnet_base.rstrip('/')}/jellio-tailnet/manifest.json" if tailnet_base else ""
+cloudflare_manifest_alias = f"{cloudflare_base.rstrip('/')}/jellio-cloudflare/manifest.json" if cloudflare_enabled else ""
 
 set_env_value(env_file, "JELLYFIN_STREMIO_PASSWORD", stremio_password)
 set_env_value(env_file, "JELLYFIN_STREMIO_AUTH_TOKEN", stremio_token)
+# Config selectors used by Caddy alias routes.
+set_env_value(env_file, "JELLIO_CONFIG_B64_LAN", lan_b64)
+set_env_value(env_file, "JELLIO_CONFIG_B64_LAN_SHORT", lan_short_b64)
+set_env_value(env_file, "JELLIO_CONFIG_B64_LAN_IP", lan_ip_b64)
+set_env_value(env_file, "JELLIO_CONFIG_B64_TAILNET", tailnet_b64)
+set_env_value(env_file, "JELLIO_CONFIG_B64_CLOUDFLARE", cloudflare_b64)
 set_env_value(env_file, "JELLIO_STREMIO_MANIFEST_URL_LAN", lan_manifest)
 set_env_value(env_file, "JELLIO_STREMIO_MANIFEST_URL_LAN_IP", lan_ip_manifest)
 set_env_value(env_file, "JELLIO_STREMIO_MANIFEST_URL_LAN_SHORT", lan_short_manifest)
@@ -282,9 +317,14 @@ set_env_value(env_file, "JELLIO_STREMIO_MANIFEST_URL_CLOUDFLARE", cloudflare_man
 
 ui_index = Path("/opt/media/config/caddy/ui-index")
 ui_index.mkdir(parents=True, exist_ok=True)
-(ui_index / "jellio-manifest.lan.url").write_text(lan_manifest + "\n", encoding="utf-8")
-(ui_index / "jellio-manifest.lan-ip.url").write_text((lan_ip_manifest or "") + "\n", encoding="utf-8")
-(ui_index / "jellio-manifest.lan-short.url").write_text(lan_short_manifest + "\n", encoding="utf-8")
-(ui_index / "jellio-manifest.tailnet.url").write_text((tailnet_manifest or "") + "\n", encoding="utf-8")
-(ui_index / "jellio-manifest.cloudflare.url").write_text((cloudflare_manifest or "") + "\n", encoding="utf-8")
+(ui_index / "jellio-manifest.lan.url").write_text(lan_manifest_alias + "\n", encoding="utf-8")
+(ui_index / "jellio-manifest.lan-ip.url").write_text((lan_ip_manifest_alias or "") + "\n", encoding="utf-8")
+(ui_index / "jellio-manifest.lan-short.url").write_text(lan_short_manifest_alias + "\n", encoding="utf-8")
+(ui_index / "jellio-manifest.tailnet.url").write_text((tailnet_manifest_alias or "") + "\n", encoding="utf-8")
+(ui_index / "jellio-manifest.cloudflare.url").write_text((cloudflare_manifest_alias or "") + "\n", encoding="utf-8")
 PY
+
+# Caddy expands env vars at load time, so we must recreate it after writing JELLIO_CONFIG_B64_*.
+if docker_compose config --services 2>/dev/null | grep -qx "caddy"; then
+  docker_compose up -d --force-recreate caddy
+fi
