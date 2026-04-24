@@ -10,6 +10,7 @@ minimal = true
 services = [
   "caddy",
   "gluetun",
+  "jellio-shim",
   "jellyfin",
   "meilisearch",
   "jellysearch",
@@ -32,7 +33,7 @@ provider = "mullvad"
 type = "wireguard"
 
 [render]
-templates = ["docker-compose.media.hbs", "media.env.hbs", "caddyfile.media.hbs", "media-index.html.hbs", "tailscale-setup.sh.hbs"]
+templates = ["docker-compose.media.hbs", "media.env.hbs", "caddyfile.media.hbs", "media-index.html.hbs", "tailscale-setup.sh.hbs", "jellio-shim.py.hbs"]
 
 [scripts]
 bootstrap = [

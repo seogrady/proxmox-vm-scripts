@@ -15,6 +15,11 @@ set +a
 
 MEDIA_SERVICES_CSV="${MEDIA_SERVICES:-}"
 
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-media}"
+docker_compose() {
+  docker compose -p "$COMPOSE_PROJECT_NAME" --project-directory "$STACK_DIR" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+}
+
 service_enabled() {
   local name="$1"
   case ",${MEDIA_SERVICES_CSV}," in
@@ -27,7 +32,7 @@ if ! service_enabled "meilisearch" || ! service_enabled "jellysearch"; then
   exit 0
 fi
 
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d meilisearch jellysearch
+docker_compose up -d meilisearch jellysearch
 
 python3 <<'PY'
 import time

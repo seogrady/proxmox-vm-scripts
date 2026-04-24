@@ -3,6 +3,7 @@ set -euo pipefail
 
 STACK_DIR="/opt/media"
 ENV_FILE="$STACK_DIR/.env"
+COMPOSE_FILE="$STACK_DIR/docker-compose.yml"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   exit 0
@@ -25,6 +26,11 @@ service_enabled() {
     *,"$name",*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-media}"
+docker_compose() {
+  docker compose -p "$COMPOSE_PROJECT_NAME" --project-directory "$STACK_DIR" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
 }
 
 check_http_ok() {
@@ -89,9 +95,10 @@ check_http_no_redirect() {
 }
 
 check_container_running() {
-  local name="$1"
-  if ! docker ps --format '{{.Names}}' | grep -qx "$name"; then
-    echo "validation failed: container not running: $name" >&2
+  local service="$1"
+  if ! docker_compose ps --status running --services | grep -qx "$service"; then
+    echo "validation failed: compose service not running: $service" >&2
+    docker_compose ps >&2 || true
     return 1
   fi
 }
@@ -191,14 +198,14 @@ if os.environ.get("TAILSCALE_HTTPS_ENABLED", "true").lower() not in {"false", "0
 PY
 
 if service_enabled "caddy"; then
-  check_container_running "media-caddy-1"
+  check_container_running "caddy"
   check_http_ok "http://127.0.0.1:80/" "caddy portal"
   check_http_no_redirect "${VMCTL_HTTP_BASE_URL_SHORT}/healthz" "${VMCTL_HOST_SHORT} LAN HTTP"
   check_http_no_redirect "${VMCTL_HTTP_BASE_URL_FQDN}/healthz" "${VMCTL_HOST_FQDN} LAN HTTP"
 fi
 
 if service_enabled "jellyfin"; then
-  check_container_running "media-jellyfin-1"
+  check_container_running "jellyfin"
   check_http_ok "${JELLYFIN_INTERNAL_URL:-http://127.0.0.1:8096}/System/Info/Public" "jellyfin public info"
   if service_enabled "caddy"; then
     check_http_no_auth "http://127.0.0.1:8097/Users/Me" "jellyfin no-login proxy"
@@ -213,7 +220,7 @@ if service_enabled "jellyfin"; then
 fi
 
 if service_enabled "jellyseerr"; then
-  check_container_running "media-jellyseerr-1"
+  check_container_running "jellyseerr"
   check_http_ok "http://127.0.0.1:5055/api/v1/status" "jellyseerr status"
   if service_enabled "caddy"; then
     check_http_ok "http://127.0.0.1:5056/api/v1/settings/public" "jellyseerr proxied public settings"
@@ -377,43 +384,43 @@ PY
 fi
 
 if service_enabled "bazarr"; then
-  check_container_running "media-bazarr-1"
+  check_container_running "bazarr"
   check_http_ok "http://127.0.0.1:6767" "bazarr ui"
   check_http_no_auth "http://127.0.0.1:6767" "bazarr no-login ui"
 fi
 
 if service_enabled "jellystat"; then
-  check_container_running "media-jellystat-1"
+  check_container_running "jellystat"
   check_http_ok "http://127.0.0.1:3000" "jellystat ui"
   check_http_no_auth "http://127.0.0.1:3000" "jellystat no-login ui"
 fi
 
 if service_enabled "sonarr"; then
-  check_container_running "media-sonarr-1"
+  check_container_running "sonarr"
   check_http_ok "http://127.0.0.1:8989/ping" "sonarr ping"
   check_http_no_auth "http://127.0.0.1:8989/ping" "sonarr no-login ping"
 fi
 
 if service_enabled "radarr"; then
-  check_container_running "media-radarr-1"
+  check_container_running "radarr"
   check_http_ok "http://127.0.0.1:7878/ping" "radarr ping"
   check_http_no_auth "http://127.0.0.1:7878/ping" "radarr no-login ping"
 fi
 
 if service_enabled "prowlarr"; then
-  check_container_running "media-prowlarr-1"
+  check_container_running "prowlarr"
   check_http_ok "http://127.0.0.1:9696/ping" "prowlarr ping"
   check_http_no_auth "http://127.0.0.1:9696/ping" "prowlarr no-login ping"
 fi
 
 if service_enabled "jellysearch"; then
-  check_container_running "media-jellysearch-1"
+  check_container_running "jellysearch"
   check_http_ok "http://127.0.0.1:5000/Items?SearchTerm=test&Limit=1" "jellysearch query"
   check_http_no_auth "http://127.0.0.1:5000/Items?SearchTerm=test&Limit=1" "jellysearch no-login query"
 fi
 
 if service_enabled "qbittorrent-vpn"; then
-  check_container_running "media-qbittorrent-vpn-1"
+  check_container_running "qbittorrent-vpn"
   check_http_no_auth "http://127.0.0.1:${QBITTORRENT_WEBUI_PORT:-8080}/api/v2/app/version" "qbittorrent no-login api"
 fi
 

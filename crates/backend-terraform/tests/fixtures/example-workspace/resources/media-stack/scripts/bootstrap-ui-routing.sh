@@ -47,10 +47,12 @@ PY
 
 tailscale_https_enabled="${TAILSCALE_HTTPS_ENABLED:-true}"
 tailscale_https_target="${TAILSCALE_HTTPS_TARGET:-http://127.0.0.1:80}"
+tailscale_funnel_enabled="${TAILSCALE_FUNNEL_ENABLED:-false}"
 
 if [[ "${tailscale_https_enabled,,}" == "false" || "${tailscale_https_enabled}" == "0" ]]; then
   if command -v tailscale >/dev/null 2>&1; then
     tailscale serve reset >/dev/null 2>&1 || true
+    tailscale funnel reset >/dev/null 2>&1 || true
   fi
   exit 0
 fi
@@ -80,4 +82,8 @@ if [[ "$tailscale_ready" != "1" ]]; then
   exit 0
 fi
 
-tailscale serve --yes --bg "$tailscale_https_target"
+if [[ "${tailscale_funnel_enabled,,}" == "true" || "${tailscale_funnel_enabled}" == "1" ]]; then
+  tailscale funnel --yes --bg "$tailscale_https_target"
+else
+  tailscale serve --yes --bg "$tailscale_https_target"
+fi

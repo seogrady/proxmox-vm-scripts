@@ -1861,8 +1861,11 @@ mod tests {
             "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-ui-routing.sh"
         );
         assert!(script.contains("TAILSCALE_HTTPS_ENABLED"));
+        assert!(script.contains("TAILSCALE_FUNNEL_ENABLED"));
+        assert!(script.contains("tailscale funnel --yes --bg"));
         assert!(script.contains("tailscale serve --yes --bg"));
         assert!(script.contains("tailscale serve reset"));
+        assert!(script.contains("tailscale funnel reset"));
     }
 
     #[test]

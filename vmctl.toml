@@ -138,7 +138,7 @@ tags = ["${default_tailnet_tag}"]
 [resources.features.media_services]
 enabled = true
 minimal = true
-services = ["caddy", "gluetun", "jellyfin", "meilisearch", "jellysearch", "sonarr", "radarr", "prowlarr", "qbittorrent-vpn", "jellyseerr", "bazarr", "jellystat-db", "jellystat"]
+services = ["caddy", "gluetun", "jellio-shim", "jellyfin", "meilisearch", "jellysearch", "sonarr", "radarr", "prowlarr", "qbittorrent-vpn", "jellyseerr", "bazarr", "jellystat-db", "jellystat"]
 jellyfin_url = "http://${media_stack}.${domain}:8096"
 jellyfin_admin_user = "${JELLYFIN_ADMIN_USER}"
 jellyfin_admin_password = "${JELLYFIN_ADMIN_PASSWORD}"

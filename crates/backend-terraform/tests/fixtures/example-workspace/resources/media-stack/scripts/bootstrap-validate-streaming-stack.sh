@@ -377,43 +377,43 @@ PY
 fi
 
 if service_enabled "bazarr"; then
-  check_container_running "media-bazarr-1"
+  check_container_running "bazarr"
   check_http_ok "http://127.0.0.1:6767" "bazarr ui"
   check_http_no_auth "http://127.0.0.1:6767" "bazarr no-login ui"
 fi
 
 if service_enabled "jellystat"; then
-  check_container_running "media-jellystat-1"
+  check_container_running "jellystat"
   check_http_ok "http://127.0.0.1:3000" "jellystat ui"
   check_http_no_auth "http://127.0.0.1:3000" "jellystat no-login ui"
 fi
 
 if service_enabled "sonarr"; then
-  check_container_running "media-sonarr-1"
+  check_container_running "sonarr"
   check_http_ok "http://127.0.0.1:8989/ping" "sonarr ping"
   check_http_no_auth "http://127.0.0.1:8989/ping" "sonarr no-login ping"
 fi
 
 if service_enabled "radarr"; then
-  check_container_running "media-radarr-1"
+  check_container_running "radarr"
   check_http_ok "http://127.0.0.1:7878/ping" "radarr ping"
   check_http_no_auth "http://127.0.0.1:7878/ping" "radarr no-login ping"
 fi
 
 if service_enabled "prowlarr"; then
-  check_container_running "media-prowlarr-1"
+  check_container_running "prowlarr"
   check_http_ok "http://127.0.0.1:9696/ping" "prowlarr ping"
   check_http_no_auth "http://127.0.0.1:9696/ping" "prowlarr no-login ping"
 fi
 
 if service_enabled "jellysearch"; then
-  check_container_running "media-jellysearch-1"
+  check_container_running "jellysearch"
   check_http_ok "http://127.0.0.1:5000/Items?SearchTerm=test&Limit=1" "jellysearch query"
   check_http_no_auth "http://127.0.0.1:5000/Items?SearchTerm=test&Limit=1" "jellysearch no-login query"
 fi
 
 if service_enabled "qbittorrent-vpn"; then
-  check_container_running "media-qbittorrent-vpn-1"
+  check_container_running "qbittorrent-vpn"
   check_http_no_auth "http://127.0.0.1:${QBITTORRENT_WEBUI_PORT:-8080}/api/v2/app/version" "qbittorrent no-login api"
 fi
 

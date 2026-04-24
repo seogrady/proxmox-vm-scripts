@@ -16,6 +16,11 @@ set +a
 
 MEDIA_SERVICES_CSV="${MEDIA_SERVICES:-}"
 
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-media}"
+docker_compose() {
+  docker compose -p "$COMPOSE_PROJECT_NAME" --project-directory "$STACK_DIR" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+}
+
 service_enabled() {
   local name="$1"
   case ",${MEDIA_SERVICES_CSV}," in
@@ -73,6 +78,6 @@ install_plugin "Streamyfin" "$STREAMYFIN_VERSION" "$STREAMYFIN_URL" "$STREAMYFIN
 install_plugin "Jellio" "$JELLIO_VERSION" "$JELLIO_URL" "$JELLIO_MD5"
 
 if [[ "$plugin_changed" == "1" ]]; then
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d jellyfin
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" restart jellyfin
+  docker_compose up -d jellyfin
+  docker_compose restart jellyfin
 fi
