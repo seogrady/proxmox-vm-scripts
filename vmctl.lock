@@ -120,7 +120,7 @@ digest = "sha256:6aa802c64bd08065b05755eb40fd15993cce4a95759d27e3a64d6c909c839cb
 
 [[artifacts]]
 path = "resources/media-stack/caddyfile.media"
-digest = "sha256:0d54a7183f5d9bfbc13c7580c4cd199e744d6aabdbbc59943c982b981a5c1d4c"
+digest = "sha256:2a26c244b4aa1900511df028ef39920de8ef2579cc2549aa1dc04510e79c4bd0"
 
 [[artifacts]]
 path = "resources/media-stack/docker-compose.media"
@@ -216,7 +216,7 @@ digest = "sha256:4188c24c4b5763aaf0f9391824dfeebad16f90b6492ffe01b0264783ce62744
 
 [[artifacts]]
 path = "terraform.tfstate"
-digest = "sha256:1be3498e8ba84f19e12be419b1744b5aaabf87405794cd3c03f234dc0eeffd98"
+digest = "sha256:04ab00d359c8eac2533a9157fdc779bb6d18d6c82e8cc9ccf19f84cdf8297743"
 
 [[artifacts]]
 path = "terraform.tfstate.1776751520.backup"
@@ -224,7 +224,7 @@ digest = "sha256:e671ed0896848f962f4011997fb8470a86dff0c9f69d9dc6f562e8b4fb3153f
 
 [[artifacts]]
 path = "terraform.tfstate.backup"
-digest = "sha256:270e90a8cf059bead4c119566b7d2262778770fb315f9c5d934b91350f94d88b"
+digest = "sha256:837b2b267870561304ecd2088a64469df079e57e27c0d3e0f6b74fa1606b8077"
 
 [[artifacts]]
 path = "terraform.tfvars.json"

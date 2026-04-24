@@ -20,11 +20,19 @@
   # `bootstrap-jellio.sh`. Without this, Tailscale manifests can exceed typical URL length limits
   # in some Stremio clients.
   handle_path /jellio-tailscale/* {
+    header {
+      Access-Control-Allow-Origin *
+      Access-Control-Allow-Methods "GET,HEAD,OPTIONS"
+      Access-Control-Allow-Headers *
+    }
     rewrite * /jellio/{$JELLIO_CONFIG_B64_TAILSCALE}{path}?{query}
     reverse_proxy jellio-shim:8098 {
       header_up Host {host}
       header_up X-Forwarded-Host {host}
       header_up X-Forwarded-Proto https
+      header_down -Access-Control-Allow-Origin
+      header_down -Access-Control-Allow-Methods
+      header_down -Access-Control-Allow-Headers
     }
   }
 
