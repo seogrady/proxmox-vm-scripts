@@ -225,6 +225,7 @@ if service_enabled "seerr"; then
   python3 <<'PY'
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -630,20 +631,27 @@ if service_enabled "caddy"; then
   python3 <<'PY'
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
+JELLYFIN_BASE = (os.environ.get("JELLYFIN_INTERNAL_URL") or "http://127.0.0.1:8096").rstrip("/")
 manifest_url = (os.environ.get("JELLIO_STREMIO_MANIFEST_URL_TAILSCALE") or "").strip()
 ua = os.environ.get("TIZEN_STREMIO_USER_AGENT") or "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.5) Stremio"
+admin_user = os.environ.get("JELLYFIN_ADMIN_USER", "admin")
+admin_password = os.environ.get("JELLYFIN_ADMIN_PASSWORD", "")
 if not manifest_url:
     raise SystemExit("validation failed: missing JELLIO_STREMIO_MANIFEST_URL_TAILSCALE")
 
 
-def get_json(url: str):
+def get_json(url: str, extra_headers: dict[str, str] | None = None):
+    headers = {"User-Agent": ua, "Accept": "application/json", "Accept-Encoding": "identity"}
+    if extra_headers:
+        headers.update(extra_headers)
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": ua, "Accept": "application/json", "Accept-Encoding": "identity"},
+        headers=headers,
         method="GET",
     )
     with urllib.request.urlopen(req, timeout=30) as response:
@@ -659,6 +667,22 @@ def addon_base(url: str) -> str:
     if not url.endswith("/manifest.json"):
         raise RuntimeError(f"manifest URL has unexpected shape: {url}")
     return url[: -len("/manifest.json")]
+
+
+def jellyfin_token() -> str:
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": 'MediaBrowser Client="vmctl", Device="validate", DeviceId="vmctl-validate", Version="1.0"',
+    }
+    req = urllib.request.Request(
+        f"{JELLYFIN_BASE}/Users/AuthenticateByName",
+        data=json.dumps({"Username": admin_user, "Pw": admin_password}).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return payload["AccessToken"]
 
 
 manifest = get_json(manifest_url)
@@ -686,21 +710,89 @@ for catalog in catalogs:
 if not non_empty:
     raise SystemExit("validation failed: Tizen-like Jellio catalog requests returned empty metas")
 
+token = jellyfin_token()
+headers = {
+    "Authorization": 'MediaBrowser Client="vmctl", Device="validate", DeviceId="vmctl-validate", Version="1.0"',
+    "X-Emby-Token": token,
+}
+with urllib.request.urlopen(
+    urllib.request.Request(f"{JELLYFIN_BASE}/Library/VirtualFolders", headers=headers, method="GET"),
+    timeout=20,
+) as response:
+    folders = json.loads(response.read().decode("utf-8"))
+expected_locations = {
+    "movies": "/data/media/movies",
+    "tv": "/data/media/tv",
+}
+for expected_name, expected_path in expected_locations.items():
+    match = None
+    for folder in folders:
+        if (folder.get("Name") or "").strip().lower() == expected_name:
+            match = folder
+            break
+    if not match:
+        raise SystemExit(f"validation failed: missing Jellyfin library {expected_name!r}")
+    locations = [str(location).rstrip("/") for location in (match.get("Locations") or []) if str(location).strip()]
+    if locations != [expected_path]:
+        raise SystemExit(
+            f"validation failed: Jellyfin library {expected_name} locations mismatch: {locations!r} != {[expected_path]!r}"
+        )
+
 if first_movie_meta and first_movie_meta[1]:
     stream_type = urllib.parse.quote(str(first_movie_meta[0]), safe="")
     stream_id = urllib.parse.quote(str(first_movie_meta[1]), safe="")
     stream_url = f"{base}/stream/{stream_type}/{stream_id}.json"
     try:
-        streams = get_json(stream_url).get("streams") or []
+        streams = get_json(
+            stream_url,
+            {
+                "X-Emby-Token": token,
+                "X-MediaBrowser-Token": token,
+            },
+        ).get("streams") or []
         if streams:
             url = streams[0].get("url") or streams[0].get("externalUrl") or ""
-            if "/videos/" in url.lower() and url.lower().endswith("/stream"):
-                req = urllib.request.Request(url, headers={"User-Agent": ua, "Accept-Encoding": "identity"}, method="GET")
-                with urllib.request.urlopen(req, timeout=30) as response:
-                    preview = response.read(7).decode("utf-8", errors="ignore")
-                    content_type = response.headers.get("Content-Type", "").lower()
-                    if response.status != 200 or "#EXTM3U" not in preview or "mpegurl" not in content_type:
-                        raise RuntimeError(f"Tizen stream did not return HLS playlist: HTTP {response.status}, {content_type!r}")
+            parsed = urllib.parse.urlparse(url)
+            if parsed.path.lower().startswith("/videos/") and parsed.path.lower().endswith("/stream"):
+                internal_url = f"{JELLYFIN_BASE}{parsed.path}"
+                if parsed.query:
+                    internal_url = f"{internal_url}?{parsed.query}"
+                candidate_urls = [url]
+                if internal_url != url:
+                    candidate_urls.append(internal_url)
+                stream_headers = [
+                    {"User-Agent": ua, "Accept-Encoding": "identity"},
+                    {
+                        "User-Agent": ua,
+                        "Accept-Encoding": "identity",
+                        "X-Emby-Token": token,
+                        "X-MediaBrowser-Token": token,
+                    },
+                ]
+                last_error = None
+                for _ in range(12):
+                    for candidate in candidate_urls:
+                        for headers in stream_headers:
+                            req = urllib.request.Request(candidate, headers=headers, method="GET")
+                            try:
+                                with urllib.request.urlopen(req, timeout=30) as response:
+                                    preview = response.read(7).decode("utf-8", errors="ignore")
+                                    content_type = response.headers.get("Content-Type", "").lower()
+                                    if response.status == 200 and "#EXTM3U" in preview and "mpegurl" in content_type:
+                                        last_error = None
+                                        break
+                                    last_error = RuntimeError(
+                                        f"Tizen stream did not return HLS playlist: HTTP {response.status}, {content_type!r}"
+                                    )
+                            except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+                                last_error = exc
+                        if last_error is None:
+                            break
+                    if last_error is None:
+                        break
+                    time.sleep(5)
+                if last_error is not None:
+                    raise last_error
     except (urllib.error.HTTPError, urllib.error.URLError, RuntimeError) as exc:
         raise SystemExit(f"validation failed: Tizen-like stream validation failed: {exc}")
 else:

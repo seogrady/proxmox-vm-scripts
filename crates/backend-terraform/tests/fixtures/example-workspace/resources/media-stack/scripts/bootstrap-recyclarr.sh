@@ -87,4 +87,13 @@ loop_path.chmod(0o755)
 PY
 
 docker_compose up -d recyclarr
-docker_compose exec -T recyclarr sh -lc '/app/recyclarr/recyclarr sync -c /config/recyclarr.yml'
+for attempt in $(seq 1 12); do
+  if docker_compose exec -T recyclarr sh -lc '/app/recyclarr/recyclarr sync -c /config/recyclarr.yml'; then
+    break
+  fi
+  if [[ "$attempt" -eq 12 ]]; then
+    exit 1
+  fi
+  echo "[recyclarr] sync attempt ${attempt} failed; retrying"
+  sleep 10
+done

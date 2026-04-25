@@ -103,24 +103,77 @@ def call(method, path, payload=None, token=None, allow=(200, 204)):
 
 def ensure_library(name, path, collection_type, token):
     current = call("GET", "/Library/VirtualFolders", token=token, allow=(200, 204)) or []
-    if any((item.get("Name") or "").lower() == name.lower() for item in current):
+    desired_path = path.rstrip("/")
+    canonical = None
+    canonical_locations = []
+    duplicates = []
+    for item in current:
+        item_name = (item.get("Name") or "").strip()
+        locations = [str(location).rstrip("/") for location in (item.get("Locations") or []) if str(location).strip()]
+        if item_name.lower() == name.lower():
+            canonical = item
+            canonical_locations = locations
+            continue
+        if desired_path in locations:
+            duplicates.append(item_name)
+
+    for duplicate in duplicates:
+        call(
+            "DELETE",
+            f"/Library/VirtualFolders?name={urllib.parse.quote(duplicate)}",
+            token=token,
+            allow=(200, 204, 404),
+        )
+
+    if canonical is None:
+        query = urllib.parse.urlencode(
+            {
+                "name": name,
+                "collectionType": collection_type,
+                "paths": path,
+                "refreshLibrary": "true",
+            },
+            doseq=True,
+        )
+        call(
+            "POST",
+            f"/Library/VirtualFolders?{query}",
+            {"LibraryOptions": {"Enabled": True, "PathInfos": [{"Path": path}]}},
+            token=token,
+            allow=(200, 204, 400),
+        )
+        if duplicates:
+            call("POST", "/Library/Refresh", token=token, allow=(200, 204, 400))
         return
-    query = urllib.parse.urlencode(
-        {
-            "name": name,
-            "collectionType": collection_type,
-            "paths": path,
-            "refreshLibrary": "true",
-        },
-        doseq=True,
-    )
-    call(
-        "POST",
-        f"/Library/VirtualFolders?{query}",
-        {"LibraryOptions": {"Enabled": True, "PathInfos": [{"Path": path}]}},
-        token=token,
-        allow=(200, 204, 400),
-    )
+
+    locations = canonical_locations
+    if locations == [desired_path]:
+        if duplicates:
+            call("POST", "/Library/Refresh", token=token, allow=(200, 204, 400))
+        return
+
+    # Jellyfin's library path API mutates Locations through the add/remove
+    # endpoints, not the media-path update endpoint. Remove stale paths first,
+    # then add the TRaSH-aligned path so the library converges deterministically.
+    for location in locations:
+        if location == desired_path:
+            continue
+        call(
+            "DELETE",
+            f"/Library/VirtualFolders/Paths?name={urllib.parse.quote(name)}&path={urllib.parse.quote(location, safe='')}",
+            token=token,
+            allow=(200, 204, 404),
+        )
+    if desired_path not in locations:
+        call(
+            "POST",
+            "/Library/VirtualFolders/Paths?refreshLibrary=true",
+            {"Name": name, "Path": desired_path},
+            token=token,
+            allow=(200, 204, 400),
+        )
+    # Re-run a refresh so Jellyfin reindexes items against the updated path.
+    call("POST", "/Library/Refresh", token=token, allow=(200, 204, 400))
 
 
 def set_env_value(path: Path, key: str, value: str) -> None:

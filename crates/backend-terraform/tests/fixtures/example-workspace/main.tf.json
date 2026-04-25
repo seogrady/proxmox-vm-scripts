@@ -6,6 +6,9 @@
   "module": {
     "kodi_htpc": {
       "bridge": "vmbr0",
+      "depends_on": [
+        "proxmox_virtual_environment_download_file.image_ubuntu_24_cloud_image"
+      ],
       "node_name": "mini",
       "resource": {
         "agent": true,
@@ -95,12 +98,13 @@
       },
       "source": "./modules/vm",
       "storage": "local-lvm",
-      "template": "local:import/noble-server-cloudimg-amd64.qcow2"
+      "template": "${proxmox_virtual_environment_download_file.image_ubuntu_24_cloud_image.id}"
     },
     "media_stack": {
       "bridge": "vmbr0",
       "depends_on": [
-        "module.tailscale_gateway"
+        "module.tailscale_gateway",
+        "proxmox_virtual_environment_download_file.image_ubuntu_24_cloud_image"
       ],
       "node_name": "mini",
       "resource": {
@@ -215,7 +219,7 @@
       },
       "source": "./modules/vm",
       "storage": "local-lvm",
-      "template": "local:import/noble-server-cloudimg-amd64.qcow2"
+      "template": "${proxmox_virtual_environment_download_file.image_ubuntu_24_cloud_image.id}"
     },
     "tailscale_gateway": {
       "bridge": "vmbr0",
@@ -293,6 +297,19 @@
       "source": "./modules/lxc",
       "storage": "local-lvm",
       "template": "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
+    }
+  },
+  "resource": {
+    "proxmox_virtual_environment_download_file": {
+      "image_ubuntu_24_cloud_image": {
+        "content_type": "import",
+        "datastore_id": "local",
+        "file_name": "noble-server-cloudimg-amd64.qcow2",
+        "node_name": "mini",
+        "overwrite": true,
+        "overwrite_unmanaged": true,
+        "url": "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+      }
     }
   },
   "terraform": {

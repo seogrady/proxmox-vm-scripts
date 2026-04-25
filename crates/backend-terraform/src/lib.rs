@@ -1848,11 +1848,15 @@ mod tests {
             "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-jellyfin.sh"
         );
         assert!(script.contains("ensure_library(name, path, collection_type, token)"));
+        assert!(script.contains("desired_path = path.rstrip(\"/\")"));
+        assert!(script.contains("/Library/VirtualFolders/Paths?name="));
+        assert!(script.contains("DELETE"));
+        assert!(script.contains("{\"Name\": name, \"Path\": desired_path}"));
+        assert!(script.contains("call(\"POST\", \"/Library/Refresh\", token=token"));
         assert!(script.contains("urllib.parse.urlencode"));
         assert!(script.contains("\"name\": name"));
         assert!(script.contains("\"collectionType\": collection_type"));
         assert!(script.contains("\"PathInfos\": [{\"Path\": path}]"));
-        assert!(script.contains("call(\"POST\", \"/Library/Refresh\", token=token"));
     }
 
     #[test]
@@ -2099,6 +2103,10 @@ mod tests {
             "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-validate-streaming-stack.sh"
         );
         assert!(script.contains("TIZEN_STREMIO_USER_AGENT"));
+        assert!(script.contains("JELLYFIN_BASE = (os.environ.get(\"JELLYFIN_INTERNAL_URL\")"));
+        assert!(script.contains("expected_locations = {"));
+        assert!(script.contains("locations mismatch"));
+        assert!(script.contains("parsed.path.lower().startswith(\"/videos/\")"));
         assert!(script.contains("settings/public\" \"seerr proxied public settings"));
         assert!(script.contains("settings_path = config_root / \"seerr\" / \"settings.json\""));
         assert!(script.contains("settings payload is missing applicationTitle"));
