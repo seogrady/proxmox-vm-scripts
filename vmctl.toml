@@ -42,8 +42,11 @@ DEFAULT_SSH_KEY_FILE = "${DEFAULT_SSH_KEY_FILE}"
 DEFAULT_SSH_PRIVATE_KEY_FILE = "${DEFAULT_SSH_PRIVATE_KEY_FILE}"
 JELLYFIN_ADMIN_USER = "admin"
 JELLYFIN_ADMIN_PASSWORD = "${JELLYFIN_ADMIN_PASSWORD}"
-JELLYSEERR_API_KEY = ""
+SEERR_API_KEY = ""
 CLOUDFLARED_TOKEN = ""
+SABNZBD_API_KEY = ""
+SONARR_DEFAULT_QUALITY_PROFILE = "WEB-1080p"
+RADARR_DEFAULT_QUALITY_PROFILE = "HD Bluray + WEB"
 CLOUDFLARE_PUBLIC_BASE_URL = ""
 WIREGUARD_PRIVATE_KEY = ""
 WIREGUARD_ADDRESSES = ""
@@ -136,7 +139,7 @@ tags = ["${default_tailnet_tag}"]
 [resources.features.media_services]
 enabled = true
 minimal = true
-services = ["caddy", "gluetun", "jellio-shim", "jellyfin", "meilisearch", "jellysearch", "sonarr", "radarr", "prowlarr", "qbittorrent-vpn", "jellyseerr", "bazarr", "jellystat-db", "jellystat"]
+services = ["caddy", "gluetun", "jellio-shim", "jellyfin", "meilisearch", "jellysearch", "recyclarr", "sabnzbd", "sonarr", "radarr", "prowlarr", "qbittorrent-vpn", "seerr", "bazarr", "jellystat-db", "jellystat"]
 jellyfin_url = "http://${media_stack}:8096"
 jellyfin_admin_user = "${JELLYFIN_ADMIN_USER}"
 jellyfin_admin_password = "${JELLYFIN_ADMIN_PASSWORD}"
@@ -148,8 +151,8 @@ tailscale_https_enabled = true
 tailscale_https_target = "http://127.0.0.1:80"
 
 [resources.features.storage]
-# Mount a NAS or external volume here later; containers still see it as /media.
-media_path = "/media"
+# Mount a NAS or external volume here later; containers still see it as /data.
+path = "/data"
 
 [resources.features.vpn]
 enabled = true

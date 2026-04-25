@@ -14,18 +14,20 @@ services = [
   "jellyfin",
   "meilisearch",
   "jellysearch",
+  "recyclarr",
+  "sabnzbd",
   "sonarr",
   "radarr",
   "prowlarr",
   "qbittorrent-vpn",
-  "jellyseerr",
+  "seerr",
   "bazarr",
   "jellystat-db",
   "jellystat",
 ]
 
 [features.storage]
-media_path = "/media"
+path = "/data"
 
 [features.vpn]
 enabled = false
@@ -44,12 +46,14 @@ bootstrap = [
   "bootstrap-jellyfin.sh",
   "bootstrap-jellysearch.sh",
   "bootstrap-jellyfin-plugins.sh",
-  "bootstrap-jellyseerr.sh",
+  "bootstrap-seerr.sh",
   "bootstrap-streamyfin.sh",
   "bootstrap-jellio.sh",
   "bootstrap-jellystat.sh",
   "bootstrap-qbittorrent.sh",
+  "bootstrap-sabnzbd.sh",
   "bootstrap-arr.sh",
+  "bootstrap-recyclarr.sh",
   "bootstrap-download-unpack.sh",
   "bootstrap-validate-streaming-stack.sh",
 ]

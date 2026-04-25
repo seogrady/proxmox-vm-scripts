@@ -154,23 +154,23 @@ Mitigation strategy in this plan:
 - Create a dedicated “stremio” Jellyfin user for the addon with limited libraries; do not use admin tokens in Stremio.
 - Avoid exposing Jellysearch directly to the public internet.
 
-## Stremio + Jellyseerr: What’s Possible
+## Stremio + Seerr: What’s Possible
 
 What you can achieve without writing a custom Stremio addon:
 
 - Global search and discovery happens in Stremio via Cinemeta (and other metadata addons).
 - Playback is provided by Jellio+ when the media exists in Jellyfin.
-- If the media does not exist, Jellio+ can return a “Request via Jellyseerr” stream entry for IMDB-based ids (`tt...`), which triggers a Jellyseerr request.
-- After Jellyseerr fulfills the request and Jellyfin indexes the media, the same Stremio title becomes streamable via Jellio+ (the stream endpoint checks Jellyfin each time).
+- If the media does not exist, Jellio+ can return a “Request via Seerr” stream entry for IMDB-based ids (`tt...`), which triggers a Seerr request.
+- After Seerr fulfills the request and Jellyfin indexes the media, the same Stremio title becomes streamable via Jellio+ (the stream endpoint checks Jellyfin each time).
 
 What you cannot do with stock Jellio+ today:
 
-- Replace Stremio’s search UI to be “Jellyseerr search” (Jellio+ catalogs/search are library-scoped; they do not query Jellyseerr discover/search endpoints).
+- Replace Stremio’s search UI to be “Seerr search” (Jellio+ catalogs/search are library-scoped; they do not query Seerr discover/search endpoints).
 - Auto-play on the TV “the moment it becomes available” without user action (Stremio does not provide an addon-driven push mechanism). You can approximate this with notifications (see below) and a manual retry.
 
 Optional future enhancement (custom dev):
 
-- Add Jellyseerr-backed Stremio catalogs (Trending, Popular, Requested, etc.) by extending Jellio+ to call Jellyseerr `/api/v1/discover/*` and `/api/v1/request` endpoints and returning `tt...` ids. This is feasible but out of scope for this implementation plan.
+- Add Seerr-backed Stremio catalogs (Trending, Popular, Requested, etc.) by extending Jellio+ to call Seerr `/api/v1/discover/*` and `/api/v1/request` endpoints and returning `tt...` ids. This is feasible but out of scope for this implementation plan.
 
 ## vmctl Integration (Concrete Repo Changes)
 
@@ -197,7 +197,7 @@ services = [
   "radarr",
   "prowlarr",
   "qbittorrent-vpn",
-  "jellyseerr",
+  "seerr",
   "bazarr",
   "jellystat-db",
   "jellystat",
@@ -298,9 +298,9 @@ JELLIO_STREMIO_MANIFEST_URL_CLOUDFLARE=
 CLOUDFLARE_PUBLIC_BASE_URL=
 CLOUDFLARED_TOKEN=
 
-# Jellyseerr request integration for Jellio+ (auto-generated and injected into the Jellyseerr container as API_KEY)
-JELLYSEERR_API_KEY=
-JELLYSEERR_INTERNAL_URL=http://jellyseerr:5055
+# Seerr request integration for Jellio+ (auto-generated and injected into the Seerr container as API_KEY)
+SEERR_API_KEY=
+SEERR_INTERNAL_URL=http://seerr:5055
 ```
 
 Rationale:
@@ -321,7 +321,7 @@ Rationale:
   - `JELLIO_STREMIO_MANIFEST_URL_CLOUDFLARE`
   - `CLOUDFLARE_PUBLIC_BASE_URL`
   - `CLOUDFLARED_TOKEN`
-  - `JELLYSEERR_API_KEY`
+  - `SEERR_API_KEY`
 
 #### 3.2 `packs/templates/docker-compose.media.hbs` (support per-service environment)
 
@@ -512,7 +512,7 @@ Recommended bootstrap ordering:
 5. `bootstrap-jellyfin-plugins.sh` (Streamyfin + Jellio plugin install, restart Jellyfin if changed)
 6. `bootstrap-streamyfin.sh` (Streamyfin plugin config + api key wiring)
 7. `bootstrap-jellio.sh` (Jellio config + generate Stremio manifest URL)
-8. Existing *arr/jellyseerr/jellystat* scripts (if you want Seerr integration values available early, run `bootstrap-jellyseerr.sh` before `bootstrap-streamyfin.sh` and `bootstrap-jellio.sh`)
+8. Existing *arr/seerr/jellystat* scripts (if you want Seerr integration values available early, run `bootstrap-seerr.sh` before `bootstrap-streamyfin.sh` and `bootstrap-jellio.sh`)
 
 ## Provisioning Scripts (Implementation-Ready)
 
@@ -603,7 +603,7 @@ Automation approach:
 2. GET Streamyfin plugin configuration via:
    - `GET /Plugins/1e9e5d38-6e67-4615-8719-e98a5c34f004/Configuration`
 3. Patch the JSON to set real URLs (no “Enter ...” values):
-   - `Config.settings.seerrServerUrl.value` = the Jellyseerr base you expose (LAN or tailnet)
+   - `Config.settings.seerrServerUrl.value` = the Seerr base you expose (LAN or tailnet)
    - `Config.settings.hiddenLibraries.value` = `[]`
 4. POST config back via:
    - `POST /Plugins/1e9e5d38-6e67-4615-8719-e98a5c34f004/Configuration`
@@ -616,9 +616,9 @@ Key detail:
 
 Config schema (from upstream `PluginConfiguration.cs`):
 
-- `JellyseerrEnabled` (bool)
-- `JellyseerrUrl` (string)
-- `JellyseerrApiKey` (string)
+- `SeerrEnabled` (bool)
+- `SeerrUrl` (string)
+- `SeerrApiKey` (string)
 - `PublicBaseUrl` (string)
 - `SelectedLibraries` (list of GUIDs)
 
@@ -628,11 +628,11 @@ Automated steps:
    - `GET /Library/VirtualFolders` to map to library GUIDs
 2. Set Jellio plugin config via Jellyfin plugin config API:
    - `POST /Plugins/e874be83-fe36-4568-abac-f5ce0574b409/Configuration`
-   - If `JELLYSEERR_API_KEY` is present, set:
-     - `JellyseerrEnabled = true`
-     - `JellyseerrUrl = ${JELLYSEERR_INTERNAL_URL}` (internal Docker URL)
-     - `JellyseerrApiKey = ${JELLYSEERR_API_KEY}`
-   - Otherwise set `JellyseerrEnabled = false` and omit Jellyseerr fields in the addon config payloads.
+   - If `SEERR_API_KEY` is present, set:
+     - `SeerrEnabled = true`
+     - `SeerrUrl = ${SEERR_INTERNAL_URL}` (internal Docker URL)
+     - `SeerrApiKey = ${SEERR_API_KEY}`
+   - Otherwise set `SeerrEnabled = false` and omit Seerr fields in the addon config payloads.
 3. Ensure a dedicated Jellyfin user exists for Stremio addon auth:
    - username: `stremio`
    - password: generated once and preserved in `/opt/media/.env` (`JELLYFIN_STREMIO_PASSWORD`)
@@ -663,16 +663,16 @@ Automated steps:
    - LAN config: `PublicBaseUrl = ${JELLYFIN_LAN_BASE_URL}`
    - Tailnet config: `PublicBaseUrl = ${JELLYFIN_TAILNET_BASE_URL}`
    - Cloudflare config (optional): `PublicBaseUrl = ${CLOUDFLARE_PUBLIC_BASE_URL}`
-   - If Jellyseerr integration is enabled, include `JellyseerrEnabled`, `JellyseerrUrl`, `JellyseerrApiKey` in each payload.
+   - If Seerr integration is enabled, include `SeerrEnabled`, `SeerrUrl`, `SeerrApiKey` in each payload.
 
 ```json
 {
   "ServerName": "media-stack",
   "AuthToken": "${STREMIO_ACCESS_TOKEN}",
   "LibrariesGuids": ["${LIB_GUID_1}", "${LIB_GUID_2}"],
-  "JellyseerrEnabled": true,
-  "JellyseerrUrl": "http://jellyseerr:5055",
-  "JellyseerrApiKey": "${JELLYSEERR_API_KEY}",
+  "SeerrEnabled": true,
+  "SeerrUrl": "http://seerr:5055",
+  "SeerrApiKey": "${SEERR_API_KEY}",
   "PublicBaseUrl": "${BASE_URL_FOR_THIS_MANIFEST}"
 }
 ```
@@ -748,14 +748,14 @@ command = "tunnel --no-autoupdate run --token ${CLOUDFLARED_TOKEN}"
 
 Stremio itself won’t auto-refresh, but you can deliver “request completed” notifications to phones/tablets via Streamyfin push notifications:
 
-- Configure Jellyseerr Webhook notifications to call Streamyfin’s notifications endpoint:
+- Configure Seerr Webhook notifications to call Streamyfin’s notifications endpoint:
   - endpoint: `${JELLYFIN_TAILNET_BASE_URL}/Streamyfin/notification`
   - header: `Authorization: MediaBrowser Token="<JELLYFIN_API_KEY>"`
 
 If you want this fully automated, extend provisioning to:
 
 - generate a Jellyfin API key dedicated to Streamyfin notifications
-- set Jellyseerr’s webhook agent configuration to post “Request Available” events to the endpoint
+- set Seerr’s webhook agent configuration to post “Request Available” events to the endpoint
 
 
 ### Cloudflare side (required when enabling)
@@ -807,8 +807,8 @@ This meets the “Streamyfin plugin + service” intent without deploying deprec
 
 ### C) Integration
 
-1. Ensure Streamyfin plugin’s `seerrServerUrl` points at your Jellyseerr URL.
-   - Tailnet-friendly value (no extra exposure): `https://${TAILSCALE_DNS_NAME}/jellyseerr` if you also route Jellyseerr through Caddy, otherwise keep it empty.
+1. Ensure Streamyfin plugin’s `seerrServerUrl` points at your Seerr URL.
+   - Tailnet-friendly value (no extra exposure): `https://${TAILSCALE_DNS_NAME}/seerr` if you also route Seerr through Caddy, otherwise keep it empty.
 2. Ensure Jellio manifests are generated for:
    - LAN: `JELLYFIN_LAN_BASE_URL = ${JELLYFIN_URL}`
    - Tailnet: `JELLYFIN_TAILNET_BASE_URL = https://${TAILSCALE_DNS_NAME}/jellyfin`

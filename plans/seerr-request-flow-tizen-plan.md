@@ -1,10 +1,10 @@
-# Jellyseerr + Request Flow + Stremio-on-Tizen Remediation Plan
+# Seerr + Request Flow + Stremio-on-Tizen Remediation Plan
 
 Date: 2026-04-24
 
 Scope:
-- Jellyseerr (UI regression + upgrade/migration to Seerr)
-- End-to-end request flow: Jellyseerr -> Sonarr/Radarr -> qBittorrent -> import -> Jellyfin library
+- Seerr (UI regression + upgrade/migration to Seerr)
+- End-to-end request flow: Seerr -> Sonarr/Radarr -> qBittorrent -> import -> Jellyfin library
 - Stremio on Samsung Tizen OS: catalogs empty and playback not yet testable
 
 Non-goals:
@@ -20,7 +20,7 @@ Non-goals:
 The media stack VM (`vmctl.toml`) enables these services:
 - `caddy` (ports `80`, `5056`, `8097`)
 - `jellyfin` (`lscr.io/linuxserver/jellyfin:latest`, host network)
-- `jellyseerr` (`fallenbagel/jellyseerr:latest`, port `5055`)
+- `seerr` (`fallenbagel/seerr:latest`, port `5055`)
 - `sonarr` (`lscr.io/linuxserver/sonarr:latest`, port `8989`)
 - `radarr` (`lscr.io/linuxserver/radarr:latest`, port `7878`)
 - `prowlarr` (`lscr.io/linuxserver/prowlarr:latest`, port `9696`)
@@ -28,18 +28,18 @@ The media stack VM (`vmctl.toml`) enables these services:
 
 Key files that define this wiring:
 - `vmctl.toml` (service list + feature flags)
-- `packs/services/jellyseerr.toml`, `packs/services/sonarr.toml`, `packs/services/radarr.toml`, `packs/services/qbittorrent-vpn.toml`
+- `packs/services/seerr.toml`, `packs/services/sonarr.toml`, `packs/services/radarr.toml`, `packs/services/qbittorrent-vpn.toml`
 - `packs/templates/media.env.hbs` (all inter-service URLs + secrets inputs)
 - `packs/templates/caddyfile.media.hbs` (public routes and proxy behavior)
-- `packs/scripts/bootstrap-jellyseerr.sh` (writes Jellyseerr `settings.json` and wires *arr + Jellyfin)
+- `packs/scripts/bootstrap-seerr.sh` (writes Seerr `settings.json` and wires *arr + Jellyfin)
 - `packs/scripts/bootstrap-arr.sh` (ensures root folders and qBittorrent download clients in Sonarr/Radarr + Prowlarr sync)
 - `packs/scripts/bootstrap-jellyfin.sh` (creates libraries `/media/movies`, `/media/tv`, refreshes library)
 - `packs/scripts/bootstrap-validate-streaming-stack.sh` (smoke validation, including Tizen-like addon requests)
 
 ### Request flow (intended)
 
-1. User requests a movie/TV series in Jellyseerr UI.
-2. Jellyseerr calls Radarr (movie) or Sonarr (TV) using API keys, creating the item.
+1. User requests a movie/TV series in Seerr UI.
+2. Seerr calls Radarr (movie) or Sonarr (TV) using API keys, creating the item.
 3. Radarr/Sonarr send the download to qBittorrent using configured download client + category (`movies` / `tv`).
 4. After download completes, Radarr/Sonarr import into:
    - `/media/movies` (Radarr)
@@ -63,18 +63,18 @@ Reported behavior on Samsung Tizen OS:
 
 Each section is written as: hypotheses -> evidence to gather -> exact checks -> prove/disprove criteria.
 
-### 1) Jellyseerr Media Pages Broken (UI)
+### 1) Seerr Media Pages Broken (UI)
 
 Symptom:
-- Clicking a media item in Jellyseerr shows “Oops, Return Home”
+- Clicking a media item in Seerr shows “Oops, Return Home”
 - Browser console: `TypeError: can't access property "applicationTitle", c is undefined`
 
 #### Architecture / request flow for this problem
 
-Browser -> Caddy (port `5056`) -> Jellyseerr container (port `5055`) -> Jellyseerr API (`/api/v1/...`) -> Jellyseerr SQLite + upstream providers (TMDB) + Jellyfin/*arr.
+Browser -> Caddy (port `5056`) -> Seerr container (port `5055`) -> Seerr API (`/api/v1/...`) -> Seerr SQLite + upstream providers (TMDB) + Jellyfin/*arr.
 
 `packs/templates/caddyfile.media.hbs` currently proxies:
-- `:5056` -> `reverse_proxy jellyseerr:5055` and sets `header_up X-API-Key {$JELLYSEERR_API_KEY}`
+- `:5056` -> `reverse_proxy seerr:5055` and sets `header_up X-API-Key {$SEERR_API_KEY}`
 
 This means the UI and API are always accessed through a proxy that injects an API key header (possibly empty).
 
@@ -90,10 +90,10 @@ H2. Proxy behavior is altering responses.
 - Injected `X-API-Key` could be changing auth flow/permissions or triggering a different code path.
 - Compression/content-encoding issues are less likely on modern browsers but still worth checking quickly.
 
-H3. `fallenbagel/jellyseerr:latest` is now a moving target and a bad/partial release got deployed; the error is a Jellyseerr regression.
+H3. `fallenbagel/seerr:latest` is now a moving target and a bad/partial release got deployed; the error is a Seerr regression.
 
 H4. Upstream provider failures (TMDB blocked / network issue) break the media-details API response and the UI crashes.
-- Jellyseerr docs note TMDB connectivity issues can break functionality; a UI crash on details pages is plausible if error handling regressed.
+- Seerr docs note TMDB connectivity issues can break functionality; a UI crash on details pages is plausible if error handling regressed.
 
 #### Evidence to gather
 
@@ -102,9 +102,9 @@ From the client (browser):
 - Response status code, response body (even if HTML error), and which endpoint is missing `applicationTitle`.
 
 From the server (media stack VM):
-- Current runtime Jellyseerr version/build and image digest.
-- Jellyseerr API health + settings endpoints via both direct container port and proxied port.
-- Jellyseerr logs around the time of the click.
+- Current runtime Seerr version/build and image digest.
+- Seerr API health + settings endpoints via both direct container port and proxied port.
+- Seerr logs around the time of the click.
 
 #### Exact checks to perform
 
@@ -114,8 +114,8 @@ On the media-stack VM:
 ```bash
 cd /opt/media
 docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
-docker inspect --format '{{.RepoDigests}}' media-jellyseerr-1
-docker logs --tail 200 media-jellyseerr-1
+docker inspect --format '{{.RepoDigests}}' media-seerr-1
+docker logs --tail 200 media-seerr-1
 curl -fsS http://127.0.0.1:5055/api/v1/status
 curl -fsS http://127.0.0.1:5055/api/v1/settings/public
 ```
@@ -133,7 +133,7 @@ curl -fsS http://127.0.0.1:5056/api/v1/settings/public | python3 -m json.tool >/
 If `5055` works and `5056` fails, the proxy is implicated.
 
 3) Identify which endpoint is missing `applicationTitle` (browser-based, fastest).
-- Open Jellyseerr in browser.
+- Open Seerr in browser.
 - DevTools:
   - Console: capture stack trace (file + line; even minified helps).
   - Network: filter `api/v1`, find non-200 responses.
@@ -142,7 +142,7 @@ If `5055` works and `5056` fails, the proxy is implicated.
 4) Check for upstream dependency failures that could break detail pages.
 
 ```bash
-docker logs --tail 400 media-jellyseerr-1 | grep -iE 'tmdb|error|exception|failed'
+docker logs --tail 400 media-seerr-1 | grep -iE 'tmdb|error|exception|failed'
 ```
 
 If TMDB calls fail systematically, this can explain “details pages broken” while the rest of the UI loads.
@@ -155,27 +155,27 @@ If TMDB calls fail systematically, this can explain “details pages broken” w
 - H2 confirmed if:
   - `5055` works but `5056` differs (status/body/headers) for the same endpoint.
 - H3 confirmed if:
-  - The running Jellyseerr build differs from previous known-good, or the same error is reported upstream for that version.
+  - The running Seerr build differs from previous known-good, or the same error is reported upstream for that version.
 - H4 confirmed if:
   - Media detail endpoints return 5xx/4xx due to TMDB failures; logs show provider errors at click time.
 
 ---
 
-### 2) Jellyseerr Requests Not Flowing Correctly (End-to-End)
+### 2) Seerr Requests Not Flowing Correctly (End-to-End)
 
 Symptom:
-- Jellyseerr requests behave inconsistently:
+- Seerr requests behave inconsistently:
   - not picked up by Jellyfin
   - not picked up by Sonarr
   - visible in Radarr
 
 Interpretation:
 - Movies might be working partially (Radarr sees them) while TV is broken (Sonarr doesn’t).
-- Or Jellyseerr is creating items in Radarr but the downstream download/import path is broken.
+- Or Seerr is creating items in Radarr but the downstream download/import path is broken.
 
 #### Architecture / request flow for this problem
 
-Jellyseerr creates requests -> Sonarr/Radarr items -> download client (qBittorrent) -> import to `/media/...` -> Jellyfin libraries.
+Seerr creates requests -> Sonarr/Radarr items -> download client (qBittorrent) -> import to `/media/...` -> Jellyfin libraries.
 
 Current bootstrap wiring (important details):
 - `packs/scripts/bootstrap-arr.sh` configures:
@@ -184,13 +184,13 @@ Current bootstrap wiring (important details):
   - qBittorrent host:
     - `gluetun` when VPN enabled
     - `qbittorrent-vpn` when VPN disabled
-- `packs/scripts/bootstrap-jellyseerr.sh` writes `settings.json` for:
+- `packs/scripts/bootstrap-seerr.sh` writes `settings.json` for:
   - Sonarr/Radarr internal hostnames + API keys (from `config.xml`)
   - Directories (root folders) based on *arr `/api/v3/rootfolder` discovery
 
 #### Primary hypotheses
 
-H1. Jellyseerr -> Sonarr connectivity/config is broken (bad API key, wrong host/port, wrong URL base).
+H1. Seerr -> Sonarr connectivity/config is broken (bad API key, wrong host/port, wrong URL base).
 - Would explain “TV requests not picked up by Sonarr”.
 
 H2. Sonarr/Radarr -> qBittorrent is misconfigured (wrong host due to VPN mode, auth mismatch, category mismatch).
@@ -202,11 +202,11 @@ H3. Import paths are inconsistent across containers (download path differs, inco
 H4. Jellyfin library paths differ from the actual import destination, or scans are not happening.
 - Would explain “download/import ok but Jellyfin doesn’t show it”.
 
-H5. Jellyseerr request policy settings are gating: requests remain pending approval or are routed to the wrong service (movie vs TV mapping).
+H5. Seerr request policy settings are gating: requests remain pending approval or are routed to the wrong service (movie vs TV mapping).
 
 #### Evidence to gather
 
-From Jellyseerr:
+From Seerr:
 - Services configuration snapshot (Sonarr/Radarr settings, default flags, root folders, quality profiles).
 - A single sample request history record for a movie and a TV series, including status transitions (requested -> approved -> processing -> available).
 
@@ -260,10 +260,10 @@ curl -fsS http://127.0.0.1:8080/api/v2/app/version
 
 If authentication is enabled, validate Sonarr/Radarr are using the configured username/password from `.env`.
 
-4) Validate Jellyseerr has *arr configured with correct internal hostnames.
+4) Validate Seerr has *arr configured with correct internal hostnames.
 
 ```bash
-cat /opt/media/config/jellyseerr/settings.json | python3 -m json.tool | sed -n '1,220p'
+cat /opt/media/config/seerr/settings.json | python3 -m json.tool | sed -n '1,220p'
 ```
 
 Confirm:
@@ -274,7 +274,7 @@ Confirm:
 - `preventSearch` matches desired behavior (see remediation section)
 
 5) Request-level tracing (single movie + single series).
-- In Jellyseerr UI:
+- In Seerr UI:
   - Pick one movie request and one TV request.
   - Capture their request IDs and status history.
 - In Radarr/Sonarr UI:
@@ -299,11 +299,11 @@ If files exist but Jellyfin doesn’t show them:
 
 #### Prove/disprove criteria
 
-- H1 confirmed if Sonarr is missing in Jellyseerr services settings or API calls fail (401/404/timeouts).
+- H1 confirmed if Sonarr is missing in Seerr services settings or API calls fail (401/404/timeouts).
 - H2 confirmed if download clients in *arr point at the wrong host/credentials or show failed test state; qBittorrent never receives torrents.
 - H3 confirmed if torrents download but *arr logs show import failures (permissions/path mismatch).
 - H4 confirmed if *arr imported successfully but Jellyfin library path/refresh is wrong.
-- H5 confirmed if Jellyseerr requests remain pending approval or are not routed to the expected service type.
+- H5 confirmed if Seerr requests remain pending approval or are not routed to the expected service type.
 
 ---
 
@@ -455,18 +455,18 @@ If curl returns non-empty `metas` but Tizen shows empty, the problem is client-s
 
 ## Implementation Strategy (Concrete Remediation)
 
-### 1) Fix Jellyseerr UI Regression + Evaluate Upgrade to Seerr v3.2.0
+### 1) Fix Seerr UI Regression + Evaluate Upgrade to Seerr v3.2.0
 
 #### Strategy overview
 
-1. Stop treating Jellyseerr as an unpinned moving target.
+1. Stop treating Seerr as an unpinned moving target.
 2. Isolate proxy side effects (remove “always inject X-API-Key” from the UI proxy unless proven necessary).
-3. If the bug is in Jellyseerr itself or if upstream has moved on: migrate to Seerr v3.2.0 and pin the image version.
+3. If the bug is in Seerr itself or if upstream has moved on: migrate to Seerr v3.2.0 and pin the image version.
 
 #### Implementation steps (code/config level)
 
 1) Make the deployed version explicit.
-- Change `packs/services/jellyseerr.toml` to use a pinned, reproducible image tag.
+- Change `packs/services/seerr.toml` to use a pinned, reproducible image tag.
 - Prefer the official Seerr image for long-term support:
   - `ghcr.io/seerr-team/seerr:v3.2.0` (pin exact version)
 - Add `init: true` in docker-compose for Seerr (the official docs require it).
@@ -485,7 +485,7 @@ tag = "v3.2.0"
 published = ["5055:5055"]
 
 [volumes]
-mounts = ["${CONFIG_PATH}/jellyseerr:/app/config"]
+mounts = ["${CONFIG_PATH}/seerr:/app/config"]
 
 [environment]
 LOG_LEVEL = "info"
@@ -501,22 +501,22 @@ services:
     ports:
       - "5055:5055"
     volumes:
-      - "${CONFIG_PATH}/jellyseerr:/app/config"
+      - "${CONFIG_PATH}/seerr:/app/config"
 ```
 
 2) Proxy correctness: split “UI proxy” from “API key injection”.
-- Update `packs/templates/caddyfile.media.hbs` so the Jellyseerr UI reverse proxy does not inject `X-API-Key` by default.
+- Update `packs/templates/caddyfile.media.hbs` so the Seerr UI reverse proxy does not inject `X-API-Key` by default.
 - If an API-key-based no-login endpoint is desired, create a separate, explicit route for that (different port or path) that injects the key only for those endpoints.
 
 Concrete approach:
 - `:5056` remains UI proxy (no header injection).
 - Optional `:5057` (or `/seerr-api/*`) injects `X-API-Key` and is used by automation/validators only.
 
-3) Upgrade/migration workflow (Jellyseerr -> Seerr).
+3) Upgrade/migration workflow (Seerr -> Seerr).
 - Back up config folder before changing anything:
-  - `/opt/media/config/jellyseerr/` including `db/db.sqlite3` and `settings.json`
+  - `/opt/media/config/seerr/` including `db/db.sqlite3` and `settings.json`
 - Ensure permissions match UID 1000 (Seerr runs as `node`/UID 1000 in official container):
-  - Current bootstrap already `chown -R 1000:1000 /opt/media/config/jellyseerr`; verify and keep.
+  - Current bootstrap already `chown -R 1000:1000 /opt/media/config/seerr`; verify and keep.
 - Roll forward:
   - Stop old container
   - Start Seerr container pointing at the same config volume
@@ -527,7 +527,7 @@ Concrete approach:
   - Restart the previous known-good image tag
 
 4) Add deterministic validation.
-- Extend `packs/scripts/bootstrap-validate-streaming-stack.sh` to include a strict Jellyseerr UI health check:
+- Extend `packs/scripts/bootstrap-validate-streaming-stack.sh` to include a strict Seerr UI health check:
   - `GET /api/v1/settings/public` must be `200` and JSON must contain `applicationTitle` (and any other keys confirmed by investigation).
   - Add a “details endpoint” sanity check with a known TMDB ID if TMDB connectivity is required.
 
@@ -542,7 +542,7 @@ Minimum checks:
 
 ---
 
-### 2) Fix Request Flow Determinism (Jellyseerr -> Arr -> qBittorrent -> Import -> Jellyfin)
+### 2) Fix Request Flow Determinism (Seerr -> Arr -> qBittorrent -> Import -> Jellyfin)
 
 #### Strategy overview
 
@@ -560,7 +560,7 @@ Centralize in `vmctl.toml` under `[const]` and `[env]`:
 
 Then:
 - `packs/scripts/bootstrap-arr.sh` reads from env (not literals)
-- `packs/scripts/bootstrap-jellyseerr.sh` reads from the same env
+- `packs/scripts/bootstrap-seerr.sh` reads from the same env
 - Validators also read from env
 
 #### Implementation steps
@@ -575,13 +575,13 @@ Add `/opt/media/validators.d/20-request-flow.sh` (generated by vmctl) that:
   - qBittorrent is reachable from within the Sonarr and Radarr containers:
     - `source /opt/media/.env; [[ "${MEDIA_VPN_ENABLED,,}" == "true" ]] && QBIT_HOST=gluetun || QBIT_HOST=qbittorrent-vpn; docker exec media-sonarr-1 curl -fsS "http://${QBIT_HOST}:8080/api/v2/app/version"`
     - `source /opt/media/.env; [[ "${MEDIA_VPN_ENABLED,,}" == "true" ]] && QBIT_HOST=gluetun || QBIT_HOST=qbittorrent-vpn; docker exec media-radarr-1 curl -fsS "http://${QBIT_HOST}:8080/api/v2/app/version"`
-- Verifies Jellyseerr settings reflect the same:
+- Verifies Seerr settings reflect the same:
   - Sonarr hostname, port, and activeDirectory
   - Radarr hostname, port, and activeDirectory
 
 2) Tighten bootstrap idempotency.
 
-Ensure `bootstrap-jellyseerr.sh` does not partially overwrite `settings.json` (and does not erase user changes unintentionally). Implementation should:
+Ensure `bootstrap-seerr.sh` does not partially overwrite `settings.json` (and does not erase user changes unintentionally). Implementation should:
 - Read current `settings.json`
 - Only mutate the specific nested fields needed (jellyfin/sonarr/radarr connection blocks)
 - Preserve user-facing UI settings
@@ -589,13 +589,13 @@ Ensure `bootstrap-jellyseerr.sh` does not partially overwrite `settings.json` (a
 3) Optional: add a “dry-run request” mode.
 
 To avoid triggering downloads:
-- Configure Jellyseerr to `preventSearch=true` during validator-run only.
-- Create a request via Jellyseerr API (requires a non-empty API key and a known TMDB ID).
+- Configure Seerr to `preventSearch=true` during validator-run only.
+- Create a request via Seerr API (requires a non-empty API key and a known TMDB ID).
 - Assert that:
   - Radarr has the movie in its list but no download was started
   - Sonarr has the series in its list (for TV) but no download was started
 
-If Jellyseerr cannot support “no-search” for requests without user impact, keep dry-run disabled and rely on the config/connection checks above plus one manual request per media type.
+If Seerr cannot support “no-search” for requests without user impact, keep dry-run disabled and rely on the config/connection checks above plus one manual request per media type.
 
 4) Make Jellyfin visibility deterministic.
 - Ensure `bootstrap-jellyfin.sh` libraries exist and are pinned to `/media/movies` and `/media/tv`.
@@ -668,12 +668,12 @@ If Caddy logging cannot capture enough detail, add a small debug service pack:
 This repo is best validated via a mix of:
 - Rust unit tests for generated artifacts (existing pattern in `crates/backend-terraform`)
 - Provision-time validators (`packs/scripts/bootstrap-validate-streaming-stack.sh` + `/opt/media/validators.d`)
-- Optional UI-level tests (Playwright) for Jellyseerr UI regression detection
+- Optional UI-level tests (Playwright) for Seerr UI regression detection
 
-### 1) Jellyseerr UI regression (TDD)
+### 1) Seerr UI regression (TDD)
 
 1. Reproduce:
-   - Open Jellyseerr UI and click a media item; confirm the console error.
+   - Open Seerr UI and click a media item; confirm the console error.
 2. Capture broken behavior:
    - Identify the first failing API request (endpoint + status code + body).
 3. Add failing check:
@@ -691,7 +691,7 @@ This repo is best validated via a mix of:
 1. Reproduce:
    - Create one movie request and one TV request; record outcomes at each hop.
 2. Capture broken behavior:
-   - Identify the first hop that diverges (Jellyseerr->Sonarr, Sonarr->qBit, import, Jellyfin).
+   - Identify the first hop that diverges (Seerr->Sonarr, Sonarr->qBit, import, Jellyfin).
 3. Add failing check:
    - Add `validators.d/20-request-flow.sh` checks that fail when the hop is misconfigured.
 4. Implement fix:
@@ -725,15 +725,15 @@ This repo is best validated via a mix of:
 
 ### Investigation
 
-1. Jellyseerr UI:
-   - Capture failing endpoint from browser DevTools and correlate with `docker logs media-jellyseerr-1`.
+1. Seerr UI:
+   - Capture failing endpoint from browser DevTools and correlate with `docker logs media-seerr-1`.
    - Compare direct port `5055` vs proxied `5056` behavior for the same endpoints.
    - Record actual running image digest and app version.
 
 2. Request flow:
    - Verify Sonarr/Radarr root folders and download clients via API.
    - Verify qBittorrent reachability from within Sonarr/Radarr containers.
-   - Verify Jellyseerr `settings.json` has correct hostnames, API keys, and directories.
+   - Verify Seerr `settings.json` has correct hostnames, API keys, and directories.
 
 3. Tizen:
    - Verify TV can reach `http://media-stack/healthz` and `http://media-stack.home.arpa/healthz`.
@@ -749,7 +749,7 @@ This repo is best validated via a mix of:
 
 ### Remediation
 
-1. Jellyseerr:
+1. Seerr:
    - Pin image version and remove `latest`.
    - Decide on migration to Seerr v3.2.0 and implement `init: true` support in compose generation.
    - Split “UI proxy” and “API-key proxy” responsibilities in Caddy.
@@ -765,7 +765,7 @@ This repo is best validated via a mix of:
 
 ### Validation
 
-1. Jellyseerr:
+1. Seerr:
    - Validator checks `settings/public` contains expected keys.
    - Manual UI click regression test: media details pages load and no console errors.
 
@@ -787,11 +787,11 @@ This repo is best validated via a mix of:
 
 ## Definition of Done (Must Be Verifiable)
 
-### Jellyseerr UI
+### Seerr UI
 - Media detail pages load without JS errors.
 - The `applicationTitle` undefined error is not reproducible.
-- Jellyseerr is either:
-  - pinned to a known-good Jellyseerr version, or
+- Seerr is either:
+  - pinned to a known-good Seerr version, or
   - migrated to Seerr v3.2.0 with documented rollback steps.
 
 ### Request Flow

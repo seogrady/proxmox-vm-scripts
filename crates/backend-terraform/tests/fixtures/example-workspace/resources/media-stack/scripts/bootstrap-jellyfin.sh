@@ -228,8 +228,8 @@ if token:
         config["BaseUrl"] = base_url
         call("POST", "/System/Configuration", config, token=token, allow=(200, 204, 400))
     for name, path, collection_type in [
-        ("Movies", "/media/movies", "movies"),
-        ("TV", "/media/tv", "tvshows"),
+        ("Movies", "/data/media/movies", "movies"),
+        ("TV", "/data/media/tv", "tvshows"),
     ]:
         os.makedirs(path, exist_ok=True)
         ensure_library(name, path, collection_type, token)

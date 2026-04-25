@@ -53,8 +53,8 @@ stremio_user = (os.environ.get("JELLYFIN_STREMIO_USER") or "stremio").strip()
 stremio_password = (os.environ.get("JELLYFIN_STREMIO_PASSWORD") or "").strip()
 if not stremio_password:
     stremio_password = secrets.token_hex(20)
-seerr_api_key = (os.environ.get("JELLYSEERR_API_KEY") or "").strip()
-seerr_url = (os.environ.get("JELLYSEERR_INTERNAL_URL") or "http://jellyseerr:5055").rstrip("/")
+seerr_api_key = (os.environ.get("SEERR_API_KEY") or "").strip()
+seerr_url = (os.environ.get("SEERR_INTERNAL_URL") or "http://seerr:5055").rstrip("/")
 cloudflare_base = (os.environ.get("CLOUDFLARE_PUBLIC_BASE_URL") or "").strip().rstrip("/")
 cloudflare_token = (os.environ.get("CLOUDFLARED_TOKEN") or "").strip()
 
@@ -223,13 +223,13 @@ if plugin_config is None:
     raise RuntimeError("jellio plugin configuration endpoint unavailable")
 
 plugin_config["SelectedLibraries"] = libraries
-plugin_config["JellyseerrEnabled"] = bool(seerr_api_key)
+plugin_config["SeerrEnabled"] = bool(seerr_api_key)
 if seerr_api_key:
-    plugin_config["JellyseerrUrl"] = seerr_url
-    plugin_config["JellyseerrApiKey"] = seerr_api_key
+    plugin_config["SeerrUrl"] = seerr_url
+    plugin_config["SeerrApiKey"] = seerr_api_key
 else:
-    plugin_config["JellyseerrUrl"] = ""
-    plugin_config["JellyseerrApiKey"] = ""
+    plugin_config["SeerrUrl"] = ""
+    plugin_config["SeerrApiKey"] = ""
 
 request_json(
     "POST",
@@ -253,9 +253,9 @@ def make_manifest(addon_base: str) -> str:
         "PublicBaseUrl": jellyfin_public_base,
     }
     if seerr_api_key:
-        payload["JellyseerrEnabled"] = True
-        payload["JellyseerrUrl"] = seerr_url
-        payload["JellyseerrApiKey"] = seerr_api_key
+        payload["SeerrEnabled"] = True
+        payload["SeerrUrl"] = seerr_url
+        payload["SeerrApiKey"] = seerr_api_key
     encoded = b64url(payload)
     return f"{addon_base.rstrip('/')}/jellio/{encoded}/manifest.json"
 
@@ -268,9 +268,9 @@ def make_manifest_with_config(addon_base: str) -> tuple[str, str]:
         "PublicBaseUrl": jellyfin_public_base,
     }
     if seerr_api_key:
-        payload["JellyseerrEnabled"] = True
-        payload["JellyseerrUrl"] = seerr_url
-        payload["JellyseerrApiKey"] = seerr_api_key
+        payload["SeerrEnabled"] = True
+        payload["SeerrUrl"] = seerr_url
+        payload["SeerrApiKey"] = seerr_api_key
     encoded = b64url(payload)
     return encoded, f"{addon_base.rstrip('/')}/jellio/{encoded}/manifest.json"
 

@@ -17,7 +17,11 @@ docker_compose() {
 }
 
 config_dir="${CONFIG_PATH:-/opt/media/config}/qbittorrent/qBittorrent"
-install -d "$config_dir" "${QBITTORRENT_DOWNLOADS:-/media/downloads/complete}" "${QBITTORRENT_INCOMPLETE:-/media/downloads/incomplete}"
+QBITTORRENT_DOWNLOADS="${QBITTORRENT_DOWNLOADS:-/data/torrents}"
+QBITTORRENT_INCOMPLETE="${QBITTORRENT_INCOMPLETE:-/data/torrents/.incomplete}"
+QBITTORRENT_CATEGORY_TV="${QBITTORRENT_CATEGORY_TV:-tv}"
+QBITTORRENT_CATEGORY_MOVIES="${QBITTORRENT_CATEGORY_MOVIES:-movies}"
+install -d "$config_dir" "$QBITTORRENT_DOWNLOADS/$QBITTORRENT_CATEGORY_TV" "$QBITTORRENT_DOWNLOADS/$QBITTORRENT_CATEGORY_MOVIES" "$QBITTORRENT_INCOMPLETE"
 QBITTORRENT_USERNAME="${QBITTORRENT_USERNAME:-admin}"
 QBITTORRENT_PASSWORD="${QBITTORRENT_PASSWORD:-adminadmin}"
 
@@ -27,9 +31,10 @@ FileLogger\\Enabled=true
 FileLogger\\Path=/config/qBittorrent/logs
 
 [BitTorrent]
-Session\\DefaultSavePath=${QBITTORRENT_DOWNLOADS:-/media/downloads/complete}
-Session\\TempPath=${QBITTORRENT_INCOMPLETE:-/media/downloads/incomplete}
+Session\\DefaultSavePath=${QBITTORRENT_DOWNLOADS}
+Session\\TempPath=${QBITTORRENT_INCOMPLETE}
 Session\\TempPathEnabled=true
+Session\\DisableAutoTMMByDefault=false
 
 [LegalNotice]
 Accepted=true
@@ -73,9 +78,10 @@ if [[ -n "$temporary_password" ]]; then
   "web_ui_username": "${QBITTORRENT_USERNAME}",
   "web_ui_password": "${QBITTORRENT_PASSWORD}",
   "web_ui_root_folder": "/",
-  "save_path": "${QBITTORRENT_DOWNLOADS:-/media/downloads/complete}",
-  "temp_path": "${QBITTORRENT_INCOMPLETE:-/media/downloads/incomplete}",
+  "save_path": "${QBITTORRENT_DOWNLOADS}",
+  "temp_path": "${QBITTORRENT_INCOMPLETE}",
   "temp_path_enabled": true,
+  "auto_tmm_enabled": true,
   "web_ui_host_header_validation_enabled": false,
   "web_ui_csrf_protection_enabled": false,
   "web_ui_clickjacking_protection_enabled": false
@@ -94,4 +100,13 @@ JSON
     sleep 2
   done
   rm -f "$preferences"
+
+  curl -fsS -b "$cookie_file" \
+    --data-urlencode "category=${QBITTORRENT_CATEGORY_TV}" \
+    --data-urlencode "savePath=${QBITTORRENT_CATEGORY_TV}" \
+    "http://localhost:${QBITTORRENT_WEBUI_PORT:-8080}/api/v2/torrents/createCategory" >/dev/null || true
+  curl -fsS -b "$cookie_file" \
+    --data-urlencode "category=${QBITTORRENT_CATEGORY_MOVIES}" \
+    --data-urlencode "savePath=${QBITTORRENT_CATEGORY_MOVIES}" \
+    "http://localhost:${QBITTORRENT_WEBUI_PORT:-8080}/api/v2/torrents/createCategory" >/dev/null || true
 fi

@@ -18,6 +18,8 @@ KODI_EVENT_SERVER_PORT="${KODI_EVENT_SERVER_PORT:-9777}"
 KODI_TAILSCALE_HTTPS_ENABLED="${KODI_TAILSCALE_HTTPS_ENABLED:-true}"
 KODI_TAILSCALE_HTTPS_TARGET="${KODI_TAILSCALE_HTTPS_TARGET:-http://127.0.0.1:${KODI_WEB_PORT}}"
 KODI_CHORUS2_REF="${KODI_CHORUS2_REF:-21.x-1.0.1}"
+KODI_MEDIA_EXPORT_PATH="${KODI_MEDIA_EXPORT_PATH:-/data}"
+KODI_MEDIA_NFS_HOST="${KODI_MEDIA_NFS_HOST:-media-stack.lan}"
 
 export DEBIAN_FRONTEND=noninteractive
 packages=(
@@ -47,13 +49,15 @@ if [[ -n "$kodi_binary" ]]; then
 fi
 
 install -d -o "$KODI_USER" -g "$KODI_USER" "$KODI_HOME/.kodi/userdata"
+# Clear stale/legacy mount state before enforcing the current media export path.
+umount -fl /media >/dev/null 2>&1 || true
 install -d /media
 
-if ! grep -qE '^media-stack:/media /media nfs4 ' /etc/fstab; then
-  cat >> /etc/fstab <<'EOF'
-media-stack:/media /media nfs4 ro,vers=4,proto=tcp,_netdev,nofail,x-systemd.automount 0 0
-EOF
-fi
+opts="ro,vers=4,proto=tcp,_netdev,nofail,x-systemd.automount"
+# Remove any legacy media-stack NFS /media entry (including media-stack.lan forms),
+# then add a single canonical mount line.
+sed -i -E '/^media-stack[^:]*:.+ \/media nfs4 /d' /etc/fstab
+echo "${KODI_MEDIA_NFS_HOST}:${KODI_MEDIA_EXPORT_PATH} /media nfs4 ${opts} 0 0" >> /etc/fstab
 
 for _ in {1..60}; do
   if mountpoint -q /media || mount /media; then
@@ -63,7 +67,7 @@ for _ in {1..60}; do
 done
 
 if ! mountpoint -q /media; then
-  echo "Kodi media mount failed: /media from media-stack"
+  echo "Kodi media mount failed: /media from ${KODI_MEDIA_NFS_HOST}:${KODI_MEDIA_EXPORT_PATH}"
   exit 1
 fi
 

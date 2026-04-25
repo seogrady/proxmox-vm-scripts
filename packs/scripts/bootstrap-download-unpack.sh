@@ -45,7 +45,7 @@ from pathlib import Path
 STACK_DIR = Path("/opt/media")
 ENV_FILE = STACK_DIR / ".env"
 CONFIG_ROOT = Path(os.environ.get("CONFIG_PATH") or "/opt/media/config")
-DOWNLOAD_ROOT = Path(os.environ.get("QBITTORRENT_DOWNLOADS") or "/media/downloads/complete")
+DOWNLOAD_ROOT = Path(os.environ.get("QBITTORRENT_DOWNLOADS") or "/data/torrents")
 STATE_FILE = Path("/var/lib/vmctl/download-unpack/processed.json")
 VIDEO_SUFFIXES = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".ts", ".webm", ".iso"}
 ARCHIVE_SUFFIXES = {".rar", ".r00", ".r01", ".r02", ".zip", ".7z"}

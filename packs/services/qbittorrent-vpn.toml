@@ -10,7 +10,7 @@ tag = "latest"
 published = ["8080:8080", "6881:6881", "6881:6881/udp"]
 
 [volumes]
-mounts = ["${MEDIA_PATH}:/media", "${CONFIG_PATH}/qbittorrent:/config"]
+mounts = ["${STORAGE_PATH}:/data", "${CONFIG_PATH}/qbittorrent:/config"]
 
 [ui]
 enabled = true

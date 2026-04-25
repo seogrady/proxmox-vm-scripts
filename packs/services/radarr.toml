@@ -9,7 +9,7 @@ tag = "latest"
 published = ["7878:7878"]
 
 [volumes]
-mounts = ["${MEDIA_PATH}:/media", "${CONFIG_PATH}/radarr:/config"]
+mounts = ["${STORAGE_PATH}:/data", "${CONFIG_PATH}/radarr:/config"]
 
 [ui]
 enabled = true

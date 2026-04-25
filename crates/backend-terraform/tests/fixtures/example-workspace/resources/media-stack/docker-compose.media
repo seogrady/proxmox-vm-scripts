@@ -14,7 +14,7 @@ services:
     environment:
       - "JELLYFIN_AUTO_AUTH_TOKEN=${JELLYFIN_AUTO_AUTH_TOKEN}"
       - "JELLYFIN_STREMIO_AUTH_TOKEN=${JELLYFIN_STREMIO_AUTH_TOKEN}"
-      - "JELLYSEERR_API_KEY=${JELLYSEERR_API_KEY}"
+      - "SEERR_API_KEY=${SEERR_API_KEY}"
   jellio-shim:
     image: "python:3.13-alpine"
     env_file:
@@ -33,7 +33,7 @@ services:
     restart: unless-stopped
     network_mode: "host"
     volumes:
-      - "${MEDIA_PATH}:/media"
+      - "${STORAGE_PATH}:/data"
       - "${CONFIG_PATH}/jellyfin:/config"
   meilisearch:
     image: "getmeili/meilisearch:v1.9"
@@ -61,6 +61,25 @@ services:
       - "JELLYFIN_URL=${JELLYFIN_INTERNAL_URL}"
       - "MEILI_MASTER_KEY=${MEILI_MASTER_KEY}"
       - "MEILI_URL=http://meilisearch:7700"
+  recyclarr:
+    image: "ghcr.io/recyclarr/recyclarr:latest"
+    env_file:
+      - .env
+    restart: unless-stopped
+    entrypoint: /bin/sh
+    command: /config/recyclarr-loop.sh
+    volumes:
+      - "${CONFIG_PATH}/recyclarr:/config"
+  sabnzbd:
+    image: "lscr.io/linuxserver/sabnzbd:latest"
+    env_file:
+      - .env
+    restart: unless-stopped
+    ports:
+      - "8085:8080"
+    volumes:
+      - "${STORAGE_PATH}:/data"
+      - "${CONFIG_PATH}/sabnzbd:/config"
   sonarr:
     image: "lscr.io/linuxserver/sonarr:latest"
     env_file:
@@ -69,7 +88,7 @@ services:
     ports:
       - "8989:8989"
     volumes:
-      - "${MEDIA_PATH}:/media"
+      - "${STORAGE_PATH}:/data"
       - "${CONFIG_PATH}/sonarr:/config"
   radarr:
     image: "lscr.io/linuxserver/radarr:latest"
@@ -79,7 +98,7 @@ services:
     ports:
       - "7878:7878"
     volumes:
-      - "${MEDIA_PATH}:/media"
+      - "${STORAGE_PATH}:/data"
       - "${CONFIG_PATH}/radarr:/config"
   prowlarr:
     image: "lscr.io/linuxserver/prowlarr:latest"
@@ -100,9 +119,9 @@ services:
       - "6881:6881"
       - "6881:6881/udp"
     volumes:
-      - "${MEDIA_PATH}:/media"
+      - "${STORAGE_PATH}:/data"
       - "${CONFIG_PATH}/qbittorrent:/config"
-  jellyseerr:
+  seerr:
     image: "ghcr.io/seerr-team/seerr:v3.2.0"
     env_file:
       - .env
@@ -111,9 +130,9 @@ services:
     ports:
       - "5055:5055"
     volumes:
-      - "${CONFIG_PATH}/jellyseerr:/app/config"
+      - "${CONFIG_PATH}/seerr:/app/config"
     environment:
-      - "API_KEY=${JELLYSEERR_API_KEY}"
+      - "API_KEY=${SEERR_API_KEY}"
   bazarr:
     image: "lscr.io/linuxserver/bazarr:latest"
     env_file:
@@ -122,7 +141,7 @@ services:
     ports:
       - "6767:6767"
     volumes:
-      - "${MEDIA_PATH}:/media"
+      - "${STORAGE_PATH}:/data"
       - "${CONFIG_PATH}/bazarr:/config"
   jellystat-db:
     image: "postgres:15-alpine"

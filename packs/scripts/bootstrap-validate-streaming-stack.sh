@@ -215,11 +215,11 @@ if service_enabled "jellyfin"; then
   fi
 fi
 
-if service_enabled "jellyseerr"; then
-  check_container_running "jellyseerr"
-  check_http_ok "http://127.0.0.1:5055/api/v1/status" "jellyseerr status"
+if service_enabled "seerr"; then
+  check_container_running "seerr"
+  check_http_ok "http://127.0.0.1:5055/api/v1/status" "seerr status"
   if service_enabled "caddy"; then
-    check_http_ok "http://127.0.0.1:5056/api/v1/settings/public" "jellyseerr proxied public settings"
+    check_http_ok "http://127.0.0.1:5056/api/v1/settings/public" "seerr proxied public settings"
   fi
 
   python3 <<'PY'
@@ -232,13 +232,13 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 config_root = Path(os.environ.get("CONFIG_PATH") or "/opt/media/config")
-settings_path = config_root / "jellyseerr" / "settings.json"
+settings_path = config_root / "seerr" / "settings.json"
 if not settings_path.exists():
-    raise SystemExit(f"validation failed: missing Jellyseerr settings file: {settings_path}")
+    raise SystemExit(f"validation failed: missing Seerr settings file: {settings_path}")
 
 settings = json.loads(settings_path.read_text(encoding="utf-8"))
 if not (settings.get("public") or {}).get("initialized"):
-    raise SystemExit("validation failed: Jellyseerr public settings are not initialized")
+    raise SystemExit("validation failed: Seerr public settings are not initialized")
 
 jellyfin_settings = settings.get("jellyfin") or {}
 configured_jellyfin = bool((jellyfin_settings.get("ip") or "").strip())
@@ -256,17 +256,19 @@ expected = {
     "sonarr": {
         "hostname": "sonarr",
         "port": 8989,
-        "root": "/media/tv",
+        "root": os.environ.get("SONARR_ROOT_FOLDER", "/data/media/tv"),
+        "profile": os.environ.get("SONARR_DEFAULT_QUALITY_PROFILE", "WEB-1080p"),
         "download_host": "gluetun" if (os.environ.get("MEDIA_VPN_ENABLED") or "").lower() == "true" else "qbittorrent-vpn",
-        "category": "tv",
+        "category": os.environ.get("QBITTORRENT_CATEGORY_TV", "tv"),
         "category_field": "tvCategory",
     },
     "radarr": {
         "hostname": "radarr",
         "port": 7878,
-        "root": "/media/movies",
+        "root": os.environ.get("RADARR_ROOT_FOLDER", "/data/media/movies"),
+        "profile": os.environ.get("RADARR_DEFAULT_QUALITY_PROFILE", "HD Bluray + WEB"),
         "download_host": "gluetun" if (os.environ.get("MEDIA_VPN_ENABLED") or "").lower() == "true" else "qbittorrent-vpn",
-        "category": "movies",
+        "category": os.environ.get("QBITTORRENT_CATEGORY_MOVIES", "movies"),
         "category_field": "movieCategory",
     },
 }
@@ -311,6 +313,10 @@ for app, status_url in (
         raise SystemExit(
             f"validation failed: {app} qBittorrent category mismatch: {fields.get(expected[app]['category_field'])!r} != {expected[app]['category']!r}"
         )
+    if app == "sonarr" and fields.get("username") != os.environ.get("QBITTORRENT_USERNAME", "admin"):
+        raise SystemExit(
+            f"validation failed: sonarr qBittorrent username mismatch: {fields.get('username')!r}"
+        )
 
 for key, url in (
     ("direct", "http://127.0.0.1:5055/api/v1/settings/public"),
@@ -318,14 +324,14 @@ for key, url in (
 ):
     with urllib.request.urlopen(url, timeout=20) as response:
         if response.status != 200:
-            raise SystemExit(f"validation failed: Jellyseerr {key} settings endpoint returned HTTP {response.status}")
+            raise SystemExit(f"validation failed: Seerr {key} settings endpoint returned HTTP {response.status}")
         payload = json.loads(response.read().decode("utf-8"))
     if "applicationTitle" not in payload:
-        raise SystemExit(f"validation failed: Jellyseerr {key} settings payload is missing applicationTitle")
+        raise SystemExit(f"validation failed: Seerr {key} settings payload is missing applicationTitle")
     if not payload.get("initialized"):
-        raise SystemExit(f"validation failed: Jellyseerr {key} settings payload is not initialized")
+        raise SystemExit(f"validation failed: Seerr {key} settings payload is not initialized")
     if not payload.get("mediaServerLogin"):
-        raise SystemExit(f"validation failed: Jellyseerr {key} settings payload has mediaServerLogin disabled")
+        raise SystemExit(f"validation failed: Seerr {key} settings payload has mediaServerLogin disabled")
 
 login_payload = {
     "email": os.environ.get("JELLYFIN_ADMIN_USER", "admin"),
@@ -360,22 +366,146 @@ except urllib.error.HTTPError as err:
 for app in ("sonarr", "radarr"):
     entries = settings.get(app) or []
     if not entries:
-        raise SystemExit(f"validation failed: Jellyseerr settings missing {app} integration")
+        raise SystemExit(f"validation failed: Seerr settings missing {app} integration")
     entry = entries[0]
     if entry.get("hostname") != expected[app]["hostname"]:
         raise SystemExit(
-            f"validation failed: Jellyseerr {app} hostname mismatch: {entry.get('hostname')!r} != {expected[app]['hostname']!r}"
+            f"validation failed: Seerr {app} hostname mismatch: {entry.get('hostname')!r} != {expected[app]['hostname']!r}"
         )
     if int(entry.get("port") or 0) != expected[app]["port"]:
         raise SystemExit(
-            f"validation failed: Jellyseerr {app} port mismatch: {entry.get('port')!r} != {expected[app]['port']!r}"
+            f"validation failed: Seerr {app} port mismatch: {entry.get('port')!r} != {expected[app]['port']!r}"
         )
     if entry.get("activeDirectory") != expected[app]["root"]:
         raise SystemExit(
-            f"validation failed: Jellyseerr {app} root mismatch: {entry.get('activeDirectory')!r} != {expected[app]['root']!r}"
+            f"validation failed: Seerr {app} root mismatch: {entry.get('activeDirectory')!r} != {expected[app]['root']!r}"
+        )
+    if entry.get("activeProfileName") != expected[app]["profile"]:
+        raise SystemExit(
+            f"validation failed: Seerr {app} profile mismatch: {entry.get('activeProfileName')!r} != {expected[app]['profile']!r}"
         )
     if not (entry.get("apiKey") or "").strip():
-        raise SystemExit(f"validation failed: Jellyseerr {app} API key is empty")
+        raise SystemExit(f"validation failed: Seerr {app} API key is empty")
+PY
+fi
+
+if service_enabled "sabnzbd"; then
+  check_container_running "sabnzbd"
+  check_http_ok "http://127.0.0.1:8085/api?mode=version" "sabnzbd version"
+
+python3 <<'PY'
+import configparser
+import json
+import os
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+config_root = Path(os.environ.get("CONFIG_PATH") or "/opt/media/config")
+config_path = config_root / "sabnzbd" / "sabnzbd.ini"
+if not config_path.exists():
+    raise SystemExit(f"validation failed: missing sabnzbd config at {config_path}")
+
+parser = configparser.ConfigParser()
+parser.read_string("[root]\n" + config_path.read_text(encoding="utf-8"))
+api_key = ""
+if parser.has_section("misc"):
+    api_key = (parser.get("misc", "api_key", fallback="") or "").strip()
+if not api_key:
+    raise SystemExit("validation failed: SABnzbd API key is empty")
+host_whitelist = ""
+if parser.has_section("misc"):
+    host_whitelist = (parser.get("misc", "host_whitelist", fallback="") or "").strip()
+host_tokens = {item.strip() for item in host_whitelist.split(",") if item.strip()}
+for required in ("sabnzbd", "media-stack"):
+    if required not in host_tokens:
+        raise SystemExit(
+            f"validation failed: SABnzbd host_whitelist missing {required}: {host_whitelist!r}"
+        )
+local_ranges = ""
+if parser.has_section("misc"):
+    local_ranges = (parser.get("misc", "local_ranges", fallback="") or "").strip()
+local_tokens = {item.strip() for item in local_ranges.split(",") if item.strip()}
+for required in ("100.64.0.0/10", "172.18.0.0/16", "192.168.0.0/16"):
+    if required not in local_tokens:
+        raise SystemExit(
+            f"validation failed: SABnzbd local_ranges missing {required}: {local_ranges!r}"
+        )
+
+req = urllib.request.Request(
+    f"http://127.0.0.1:8085/api?mode=get_cats&apikey={api_key}",
+    method="GET",
+)
+with urllib.request.urlopen(req, timeout=20) as response:
+    cats = json.loads(response.read().decode("utf-8"))
+names = set(cats.get("categories") or [])
+if not {"tv", "movies"}.issubset(names):
+    raise SystemExit(f"validation failed: SABnzbd categories missing tv/movies: {sorted(names)!r}")
+
+expected = {
+    "sonarr": {
+        "host": urllib.parse.urlparse(os.environ.get("SABNZBD_INTERNAL_URL", "http://sabnzbd:8080")).hostname or "sabnzbd",
+        "port": 8080,
+        "category_field": "tvCategory",
+        "category": os.environ.get("QBITTORRENT_CATEGORY_TV", "tv"),
+    },
+    "radarr": {
+        "host": urllib.parse.urlparse(os.environ.get("SABNZBD_INTERNAL_URL", "http://sabnzbd:8080")).hostname or "sabnzbd",
+        "port": 8080,
+        "category_field": "movieCategory",
+        "category": os.environ.get("QBITTORRENT_CATEGORY_MOVIES", "movies"),
+    },
+}
+
+for app, status_url in (
+    ("sonarr", "http://127.0.0.1:8989/api/v3/downloadclient"),
+    ("radarr", "http://127.0.0.1:7878/api/v3/downloadclient"),
+):
+    key = (ET.parse(config_root / app / "config.xml").getroot().findtext("ApiKey") or "").strip()
+    req = urllib.request.Request(status_url, headers={"X-Api-Key": key}, method="GET")
+    with urllib.request.urlopen(req, timeout=20) as response:
+        clients = json.loads(response.read().decode("utf-8"))
+    target = next((item for item in clients if item.get("name") == "SABnzbd"), None)
+    if not target:
+        raise SystemExit(f"validation failed: {app} missing SABnzbd download client")
+    fields = {field.get("name"): field.get("value") for field in target.get("fields") or []}
+    if fields.get("host") != expected[app]["host"]:
+        raise SystemExit(
+            f"validation failed: {app} SABnzbd host mismatch: {fields.get('host')!r} != {expected[app]['host']!r}"
+        )
+    if int(fields.get("port") or 0) != expected[app]["port"]:
+        raise SystemExit(
+            f"validation failed: {app} SABnzbd port mismatch: {fields.get('port')!r} != {expected[app]['port']!r}"
+        )
+    if str(fields.get(expected[app]["category_field"]) or "") != expected[app]["category"]:
+        raise SystemExit(
+            f"validation failed: {app} SABnzbd category mismatch: {fields.get(expected[app]['category_field'])!r} != {expected[app]['category']!r}"
+        )
+PY
+fi
+
+if service_enabled "recyclarr"; then
+  check_container_running "recyclarr"
+  python3 <<'PY'
+import os
+from pathlib import Path
+
+config_root = Path(os.environ.get("CONFIG_PATH") or "/opt/media/config")
+config_path = config_root / "recyclarr" / "recyclarr.yml"
+if not config_path.exists():
+    raise SystemExit(f"validation failed: missing Recyclarr config at {config_path}")
+text = config_path.read_text(encoding="utf-8")
+for token in (
+    "sonarr:",
+    "radarr:",
+    "quality_profiles:",
+    "delete_old_custom_formats: true",
+    "trash_id: 72dae194fc92bf828f32cde7744e51a1",
+    "trash_id: d1d67249d3890e49bc12e275d989a7e9",
+):
+    if token not in text:
+        raise SystemExit(f"validation failed: Recyclarr config missing {token!r}")
 PY
 fi
 

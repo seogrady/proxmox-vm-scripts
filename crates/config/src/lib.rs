@@ -613,7 +613,7 @@ mod tests {
         .unwrap();
         let value = r#"
             name = "${const.service}"
-            mount = "${MEDIA_PATH}:/media"
+            mount = "${STORAGE_PATH}:/media"
             secret = "${RUNTIME_SECRET}"
         "#
         .parse::<Value>()
@@ -623,7 +623,7 @@ mod tests {
             resolve_toml_value_with_context_passthrough(value, &context, &BTreeMap::new()).unwrap();
 
         assert_eq!(resolved["name"].as_str(), Some("demo"));
-        assert_eq!(resolved["mount"].as_str(), Some("${MEDIA_PATH}:/media"));
+        assert_eq!(resolved["mount"].as_str(), Some("${STORAGE_PATH}:/media"));
         assert_eq!(resolved["secret"].as_str(), Some("${RUNTIME_SECRET}"));
     }
 

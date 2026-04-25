@@ -9,7 +9,7 @@ tag = "latest"
 published = ["8989:8989"]
 
 [volumes]
-mounts = ["${MEDIA_PATH}:/media", "${CONFIG_PATH}/sonarr:/config"]
+mounts = ["${STORAGE_PATH}:/data", "${CONFIG_PATH}/sonarr:/config"]
 
 [ui]
 enabled = true

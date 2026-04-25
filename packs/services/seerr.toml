@@ -1,4 +1,4 @@
-name = "jellyseerr"
+name = "seerr"
 container_type = "docker"
 
 [image]
@@ -12,14 +12,14 @@ init = true
 published = ["5055:5055"]
 
 [volumes]
-mounts = ["${CONFIG_PATH}/jellyseerr:/app/config"]
+mounts = ["${CONFIG_PATH}/seerr:/app/config"]
 
 [environment]
-API_KEY = "${JELLYSEERR_API_KEY}"
+API_KEY = "${SEERR_API_KEY}"
 
 [ui]
 enabled = true
 port = 5056
 path = "/"
-name = "Jellyseerr"
+name = "Seerr"
 description = "Request management (no-login LAN/Tailscale endpoint)"

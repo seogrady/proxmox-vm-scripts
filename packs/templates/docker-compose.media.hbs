@@ -10,8 +10,11 @@ services:
 {{#if settings.init}}
     init: true
 {{/if}}
+{{#if settings.entrypoint}}
+    entrypoint: {{{settings.entrypoint}}}
+{{/if}}
 {{#if settings.command}}
-    command: {{settings.command}}
+    command: {{{settings.command}}}
 {{/if}}
     cap_add:
       - NET_ADMIN
@@ -50,6 +53,9 @@ services:
     restart: unless-stopped
 {{#if settings.init}}
     init: true
+{{/if}}
+{{#if settings.entrypoint}}
+    entrypoint: {{{settings.entrypoint}}}
 {{/if}}
 {{#if settings.command}}
     command: {{settings.command}}

@@ -863,7 +863,7 @@ mod tests {
 
             [features.media_services]
             enabled = true
-            services = ["jellyfin", "jellyseerr", "gluetun"]
+            services = ["jellyfin", "seerr", "gluetun"]
 
             [render]
             templates = ["media-index.html.hbs"]
@@ -883,15 +883,15 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
-            root.join("services/jellyseerr.toml"),
+            root.join("services/seerr.toml"),
             r#"
-            name = "jellyseerr"
+            name = "seerr"
             container_type = "docker"
             [ports]
             published = ["5055:5055"]
             [ui]
             enabled = true
-            name = "Jellyseerr"
+            name = "Seerr"
             "#,
         )
         .unwrap();
@@ -930,7 +930,7 @@ mod tests {
         let rendered =
             std::fs::read_to_string(output.join("resources/media-stack/media-index.html")).unwrap();
         assert!(rendered.contains("Jellyfin=8096"));
-        assert!(rendered.contains("Jellyseerr=5055"));
+        assert!(rendered.contains("Seerr=5055"));
         assert!(!rendered.contains("gluetun"));
         std::fs::remove_dir_all(root).unwrap();
     }

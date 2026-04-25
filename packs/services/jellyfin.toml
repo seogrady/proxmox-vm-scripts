@@ -9,7 +9,7 @@ tag = "latest"
 network_mode = "host"
 
 [volumes]
-mounts = ["${MEDIA_PATH}:/media", "${CONFIG_PATH}/jellyfin:/config"]
+mounts = ["${STORAGE_PATH}:/data", "${CONFIG_PATH}/jellyfin:/config"]
 
 [ui]
 enabled = true

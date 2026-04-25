@@ -123,7 +123,46 @@ wait_for(f"{JS_URL}/auth/isConfigured")
 configure_jellystat()
 PY
 
-# Disable web login requirement so UI opens directly without manual credentials.
+JELLYSTAT_JF_TOKEN="$(
+python3 <<'PY'
+import json
+import os
+import urllib.request
+
+JF_INTERNAL_URL = os.environ.get("JELLYFIN_INTERNAL_URL", "http://jellyfin:8096")
+JF_USER = os.environ.get("JELLYFIN_ADMIN_USER", "admin")
+JF_PASSWORD = os.environ.get("JELLYFIN_ADMIN_PASSWORD", "")
+
+req = urllib.request.Request(
+    f"{JF_INTERNAL_URL}/Users/AuthenticateByName",
+    data=json.dumps({"Username": JF_USER, "Pw": JF_PASSWORD}).encode("utf-8"),
+    headers={
+        "Content-Type": "application/json",
+        "Authorization": 'MediaBrowser Client="vmctl", Device="bootstrap", DeviceId="vmctl-jellystat", Version="1.0"',
+    },
+    method="POST",
+)
+with urllib.request.urlopen(req, timeout=20) as response:
+    payload = json.loads(response.read().decode("utf-8"))
+token = payload.get("AccessToken", "").strip()
+if not token:
+    raise RuntimeError("failed to obtain Jellyfin access token for jellystat")
+print(token)
+PY
+)"
+
+# Disable web login requirement and force Jellystat to use the current Jellyfin runtime endpoint/token.
+JELLYSTAT_JF_HOST_SQL="${JELLYFIN_INTERNAL_URL:-http://jellyfin:8096}"
+JELLYSTAT_JF_HOST_SQL="${JELLYSTAT_JF_HOST_SQL//\'/\'\'}"
+JELLYSTAT_JF_TOKEN_SQL="${JELLYSTAT_JF_TOKEN//\'/\'\'}"
+
+docker_compose exec -T jellystat-db \
+  psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-jellystat}" -d "${POSTGRES_DB:-jellystat}" \
+  -c "UPDATE app_config SET \"REQUIRE_LOGIN\" = false, \"JF_HOST\" = '${JELLYSTAT_JF_HOST_SQL}', \"JF_API_KEY\" = '${JELLYSTAT_JF_TOKEN_SQL}' WHERE \"ID\" = 1;"
+
+# Jellystat reads connection settings at startup; restart to pick up updated app_config values.
+docker_compose restart jellystat
+
 docker_compose exec -T jellystat-db \
   psql -U "${POSTGRES_USER:-jellystat}" -d "${POSTGRES_DB:-jellystat}" \
   -c 'UPDATE app_config SET "REQUIRE_LOGIN" = false WHERE "ID" = 1;'
@@ -131,11 +170,26 @@ docker_compose exec -T jellystat-db \
 python3 <<'PY'
 import json
 import os
+import time
 import urllib.request
+import urllib.error
 
 url = os.environ.get("JELLYSTAT_URL", "http://localhost:3000")
-with urllib.request.urlopen(f"{url}/auth/isConfigured", timeout=20) as resp:
-    state = json.loads(resp.read().decode()).get("state", 0)
-if int(state) < 2:
+deadline = time.time() + 180
+state = 0
+last_error = None
+while time.time() < deadline:
+    try:
+        with urllib.request.urlopen(f"{url}/auth/isConfigured", timeout=20) as resp:
+            state = int(json.loads(resp.read().decode()).get("state", 0))
+        if state >= 2:
+            break
+    except (urllib.error.URLError, ConnectionResetError) as exc:
+        last_error = exc
+    time.sleep(2)
+
+if state < 2:
+    if last_error is not None:
+        raise RuntimeError(f"jellystat failed to reach configured state: {last_error}") from last_error
     raise RuntimeError("jellystat failed to reach configured state")
 PY

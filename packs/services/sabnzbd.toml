@@ -1,0 +1,19 @@
+name = "sabnzbd"
+container_type = "docker"
+
+[image]
+name = "lscr.io/linuxserver/sabnzbd"
+tag = "latest"
+
+[ports]
+published = ["8085:8080"]
+
+[volumes]
+mounts = ["${STORAGE_PATH}:/data", "${CONFIG_PATH}/sabnzbd:/config"]
+
+[ui]
+enabled = true
+port = 8085
+path = "/"
+name = "SABnzbd"
+description = "Usenet downloader"

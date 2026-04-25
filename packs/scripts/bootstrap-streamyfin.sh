@@ -38,7 +38,7 @@ PLUGIN_ID = "1e9e5d386e6746158719e98a5c34f004"
 BASE_URL = (os.environ.get("JELLYFIN_INTERNAL_URL") or "http://127.0.0.1:8096").rstrip("/")
 ADMIN_USER = os.environ.get("JELLYFIN_ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.environ.get("JELLYFIN_ADMIN_PASSWORD", "")
-SEERR_URL = (os.environ.get("JELLYSEERR_INTERNAL_URL") or "http://jellyseerr:5055").rstrip("/")
+SEERR_URL = (os.environ.get("SEERR_INTERNAL_URL") or "http://seerr:5055").rstrip("/")
 
 
 def request_json(method: str, path: str, payload=None, token=None, allow=(200, 204)):
@@ -123,8 +123,8 @@ def get_setting(settings_obj: dict, expected_key: str):
 
 changed = False
 
-# Streamyfin v0.66.0.0 schema is Lockable<string> for jellyseerrServerUrl.
-seerr = get_setting(settings, "jellyseerrServerUrl")
+# Streamyfin v0.66.0.0 schema is Lockable<string> for seerrServerUrl.
+seerr = get_setting(settings, "seerrServerUrl")
 if isinstance(seerr, dict):
     if seerr.get("value") != SEERR_URL:
         seerr["value"] = SEERR_URL

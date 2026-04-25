@@ -9,7 +9,7 @@ tag = "latest"
 published = ["6767:6767"]
 
 [volumes]
-mounts = ["${MEDIA_PATH}:/media", "${CONFIG_PATH}/bazarr:/config"]
+mounts = ["${STORAGE_PATH}:/data", "${CONFIG_PATH}/bazarr:/config"]
 
 [ui]
 enabled = true

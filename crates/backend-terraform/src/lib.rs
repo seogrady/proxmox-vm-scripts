@@ -1886,7 +1886,8 @@ mod tests {
         assert!(script.contains("KODI_CHORUS2_REF"));
         assert!(script.contains("name=\"Kodi web interface - Chorus2\""));
         assert!(script.contains("https://github.com/xbmc/chorus2/archive/refs/tags"));
-        assert!(script.contains("media-stack:/media /media nfs4"));
+        assert!(script.contains("KODI_MEDIA_EXPORT_PATH"));
+        assert!(script.contains("umount -fl /media"));
         assert!(script.contains("reverse_proxy 127.0.0.1:${KODI_WEB_PORT}"));
         assert!(script.contains("Chorus 2 - Kodi web interface"));
         assert!(!script.contains("repair_kodi_web_assets"));
@@ -1904,9 +1905,9 @@ mod tests {
     }
 
     #[test]
-    fn media_jellyseerr_bootstrap_initializes_and_wires_integrations() {
+    fn media_seerr_bootstrap_initializes_and_wires_integrations() {
         let script = include_str!(
-            "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-jellyseerr.sh"
+            "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-seerr.sh"
         );
         assert!(script.contains("settings[\"public\"][\"initialized\"] = True"));
         assert!(script.contains("settings[\"public\"][\"mediaServerLogin\"] = True"));
@@ -1919,9 +1920,12 @@ mod tests {
         assert!(script.contains("RADARR_INTERNAL_URL"));
         assert!(script.contains("SONARR_EXTERNAL_URL"));
         assert!(script.contains("RADARR_EXTERNAL_URL"));
+        assert!(script.contains("pick_profile("));
+        assert!(script.contains("SONARR_DEFAULT_QUALITY_PROFILE"));
+        assert!(script.contains("RADARR_DEFAULT_QUALITY_PROFILE"));
         assert!(script.contains("build_external_url("));
         assert!(script.contains("\"externalHostname\""));
-        assert!(script.contains("jellyseerr failed to finish initialization bootstrap"));
+        assert!(script.contains("seerr failed to finish initialization bootstrap"));
     }
 
     #[test]
@@ -1940,12 +1944,18 @@ mod tests {
         assert!(script.contains("request(\"PUT\", f\"{url}/api/v3/downloadclient/{item['id']}\""));
         assert!(script.contains("PROWLARR_INTERNAL_URL"));
         assert!(script.contains("ensure_default_indexers"));
+        assert!(script.contains("ensure_sabnzbd_download_client"));
+        assert!(script.contains("protocol\": \"usenet\""));
         assert!(script.contains(
             "existing_names = {item.get(\"name\") for item in existing if item.get(\"name\")}"
         ));
-        assert!(script.contains("\"Nyaa.si\""));
-        assert!(script.contains("\"The Cowboy TV\""));
-        assert!(script.contains("\"YTS\""));
+        assert!(script.contains("PROWLARR_BOOTSTRAP_INDEXERS"));
+        assert!(script.contains("QBITTORRENT_CATEGORY_TV"));
+        assert!(script.contains("QBITTORRENT_CATEGORY_MOVIES"));
+        assert!(script.contains("SONARR_PROWLARR_CATEGORIES"));
+        assert!(script.contains("RADARR_PROWLARR_CATEGORIES"));
+        assert!(script.contains("SABNZBD_INTERNAL_URL"));
+        assert!(script.contains("SABNZBD_API_KEY"));
     }
 
     #[test]
@@ -1959,7 +1969,8 @@ mod tests {
         assert!(script.contains("\"JELLYFIN_STREMIO_AUTH_TOKEN\""));
         assert!(script.contains("\"JELLIO_STREMIO_MANIFEST_URL_TAILSCALE\""));
         assert!(script.contains("\"CLOUDFLARED_TOKEN\""));
-        assert!(script.contains("ensure_env_value \"$STACK_DIR/.env\" \"JELLYSEERR_API_KEY\""));
+        assert!(script.contains("\"SABNZBD_API_KEY\""));
+        assert!(script.contains("ensure_env_value \"$STACK_DIR/.env\" \"SEERR_API_KEY\""));
         assert!(script.contains("html.unescape(value)"));
         assert!(script.contains("ipv4 = [part for part in parts if \":\" not in part]"));
         assert!(script.contains("MEDIA_SERVICES_CSV="));
@@ -1975,6 +1986,7 @@ mod tests {
         assert!(script.contains("credential drift detected; recreating database volume"));
         assert!(script.contains("refusing to start qBittorrent without VPN"));
         assert!(script.contains("configure_bazarr()"));
+        assert!(script.contains("SABNZBD_API_KEY"));
         assert!(script.contains("\"enabled_integrations\": [\"sonarr\", \"radarr\"]"));
         assert!(script.contains("\"use_sonarr\": True"));
         assert!(script.contains("\"use_radarr\": True"));
@@ -2039,8 +2051,8 @@ mod tests {
         assert!(caddy.contains("handle /Videos/*"));
         assert!(caddy.contains("handle /videos/*"));
         assert!(caddy.contains("header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}"));
-        assert!(caddy.contains("reverse_proxy jellyseerr:5055"));
-        assert!(!caddy.contains("header_up X-API-Key {$JELLYSEERR_API_KEY}"));
+        assert!(caddy.contains("reverse_proxy seerr:5055"));
+        assert!(!caddy.contains("header_up X-API-Key {$SEERR_API_KEY}"));
         assert!(!caddy.contains("handle /sonarr*"));
         assert!(!caddy.contains("handle /radarr*"));
         assert!(!caddy.contains("handle /prowlarr*"));
@@ -2084,8 +2096,8 @@ mod tests {
             "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-validate-streaming-stack.sh"
         );
         assert!(script.contains("TIZEN_STREMIO_USER_AGENT"));
-        assert!(script.contains("settings/public\" \"jellyseerr proxied public settings"));
-        assert!(script.contains("settings_path = config_root / \"jellyseerr\" / \"settings.json\""));
+        assert!(script.contains("settings/public\" \"seerr proxied public settings"));
+        assert!(script.contains("settings_path = config_root / \"seerr\" / \"settings.json\""));
         assert!(script.contains("settings payload is missing applicationTitle"));
         assert!(script.contains("settings payload has mediaServerLogin disabled"));
         assert!(script.contains("configured_jellyfin = bool"));
@@ -2094,6 +2106,16 @@ mod tests {
         assert!(script.contains("validation failed: Jellyfin login returned HTTP"));
         assert!(script.contains("missing qBittorrent download client"));
         assert!(script.contains("qBittorrent category mismatch"));
+        assert!(script.contains("SABnzbd download client"));
+        assert!(script.contains("host_whitelist missing {required}"));
+        assert!(script.contains("local_ranges ="));
+        assert!(script.contains("100.64.0.0/10"));
+        assert!(script.contains("172.18.0.0/16"));
+        assert!(script.contains("192.168.0.0/16"));
+        assert!(script.contains("quality_profiles:"));
+        assert!(script.contains("delete_old_custom_formats: true"));
+        assert!(script.contains("trash_id: 72dae194fc92bf828f32cde7744e51a1"));
+        assert!(script.contains("trash_id: d1d67249d3890e49bc12e275d989a7e9"));
         assert!(script.contains("Accept-Encoding\": \"identity"));
         assert!(script.contains("Tizen-like Jellio catalog requests returned empty metas"));
         assert!(script
@@ -2113,6 +2135,7 @@ mod tests {
         assert!(index.contains("data-service-port=\"7878\""));
         assert!(index.contains("data-service-port=\"9696\""));
         assert!(index.contains("data-service-port=\"8080\""));
+        assert!(index.contains("data-service-port=\"8085\""));
         assert!(index.contains("data-service-path=\"/\""));
         assert!(index.contains("link.href = \"http://\" + host + \":\" + port + path;"));
         assert!(!index.contains("jellio-manifest.lan.url"));
@@ -2124,7 +2147,7 @@ mod tests {
             "wire(\"jellio-manifest-cloudflare-link\", \"/jellio-manifest.cloudflare.url\");"
         ));
         assert!(!index.contains("Jellyfin (Auto Auth)"));
-        assert!(!index.contains("Jellyseerr (Auto Auth)"));
+        assert!(!index.contains("Seerr (Auto Auth)"));
     }
 
     #[test]
@@ -2133,8 +2156,10 @@ mod tests {
             "../tests/fixtures/example-workspace/resources/media-stack/docker-compose.media"
         );
         assert!(compose.contains("image: \"ghcr.io/seerr-team/seerr:v3.2.0\""));
+        assert!(compose.contains("image: \"lscr.io/linuxserver/sabnzbd:latest\""));
+        assert!(compose.contains("image: \"ghcr.io/recyclarr/recyclarr:latest\""));
         assert!(compose.contains("init: true"));
-        assert!(!compose.contains("fallenbagel/jellyseerr:latest"));
+        assert!(!compose.contains("fallenbagel/"));
     }
 
     #[test]
@@ -2279,9 +2304,21 @@ mod tests {
             ),
         );
         assert_file_fixture(
-            &root.join("generated/resources/media-stack/scripts/bootstrap-jellyseerr.sh"),
+            &root.join("generated/resources/media-stack/scripts/bootstrap-seerr.sh"),
             include_str!(
-                "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-jellyseerr.sh"
+                "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-seerr.sh"
+            ),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/media-stack/scripts/bootstrap-sabnzbd.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-sabnzbd.sh"
+            ),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/media-stack/scripts/bootstrap-recyclarr.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-recyclarr.sh"
             ),
         );
         assert_file_fixture(

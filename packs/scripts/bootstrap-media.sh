@@ -28,7 +28,7 @@ RESOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STACK_DIR="/opt/media"
 
 . "$RESOURCE_DIR/media.env"
-MEDIA_PATH="${MEDIA_PATH:-/media}"
+STORAGE_PATH="${STORAGE_PATH:-/data}"
 MEDIA_SERVICES_CSV="${MEDIA_SERVICES:-}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-media}"
 
@@ -45,8 +45,9 @@ docker_compose() {
 }
 
 install -d "$STACK_DIR" "$STACK_DIR/config" \
-  "$MEDIA_PATH/downloads/complete" "$MEDIA_PATH/downloads/incomplete" \
-  "$MEDIA_PATH/movies" "$MEDIA_PATH/tv"
+  "$STORAGE_PATH/torrents/movies" "$STORAGE_PATH/torrents/tv" "$STORAGE_PATH/torrents/.incomplete" \
+  "$STORAGE_PATH/usenet/incomplete" "$STORAGE_PATH/usenet/complete/movies" "$STORAGE_PATH/usenet/complete/tv" \
+  "$STORAGE_PATH/media/movies" "$STORAGE_PATH/media/tv"
 if service_enabled "caddy"; then
   install -d "$STACK_DIR/config/caddy" "$STACK_DIR/config/caddy/ui-index"
 fi
@@ -68,8 +69,16 @@ fi
 if service_enabled "qbittorrent-vpn"; then
   install -d "$STACK_DIR/config/qbittorrent"
 fi
-if service_enabled "jellyseerr"; then
-  install -d "$STACK_DIR/config/jellyseerr"
+if service_enabled "sabnzbd"; then
+  install -d "$STACK_DIR/config/sabnzbd"
+fi
+if service_enabled "recyclarr"; then
+  install -d "$STACK_DIR/config/recyclarr"
+  install -d "$STACK_DIR/config/recyclarr/state"
+  chown -R ubuntu:ubuntu "$STACK_DIR/config/recyclarr"
+fi
+if service_enabled "seerr"; then
+  install -d "$STACK_DIR/config/seerr"
 fi
 if service_enabled "bazarr"; then
   install -d "$STACK_DIR/config/bazarr"
@@ -88,7 +97,7 @@ install -m 0644 "$RESOURCE_DIR/docker-compose.media" "$STACK_DIR/docker-compose.
 
 install -d /etc/exports.d
 cat > /etc/exports.d/vmctl-media.exports <<EOF
-$MEDIA_PATH 192.168.86.0/24(ro,sync,no_subtree_check,insecure)
+$STORAGE_PATH 192.168.86.0/24(ro,sync,no_subtree_check,insecure)
 EOF
 systemctl enable --now nfs-kernel-server
 exportfs -ra
@@ -115,7 +124,8 @@ preserve = {
     "JELLIO_STREMIO_MANIFEST_URL_CLOUDFLARE",
     "CLOUDFLARE_PUBLIC_BASE_URL",
     "CLOUDFLARED_TOKEN",
-    "JELLYSEERR_API_KEY",
+    "SABNZBD_API_KEY",
+    "SEERR_API_KEY",
     "TAILSCALE_FUNNEL_ENABLED",
 }
 
@@ -167,6 +177,8 @@ PY
 }
 
 sync_env_from_template "$RESOURCE_DIR/media.env" "$STACK_DIR/.env"
+# Remove deprecated key after STORAGE_PATH migration.
+sed -i '/^MEDIA_PATH=/d' "$STACK_DIR/.env"
 
 random_hex() {
   local bytes="$1"
@@ -256,7 +268,7 @@ ensure_env_value "$STACK_DIR/.env" "POSTGRES_IP" "jellystat-db"
 ensure_env_value "$STACK_DIR/.env" "POSTGRES_PORT" "5432"
 ensure_env_value "$STACK_DIR/.env" "JWT_SECRET" "$(random_hex 32)"
 ensure_env_value "$STACK_DIR/.env" "MEILI_MASTER_KEY" "$(random_hex 32)"
-ensure_env_value "$STACK_DIR/.env" "JELLYSEERR_API_KEY" "$(random_hex 24)"
+ensure_env_value "$STACK_DIR/.env" "SEERR_API_KEY" "$(random_hex 24)"
 ensure_env_value "$STACK_DIR/.env" "JELLYFIN_STREMIO_PASSWORD" "$(random_hex 20)"
 
 recover_jellystat_db() {
@@ -333,8 +345,8 @@ fi
 if service_enabled "qbittorrent-vpn"; then
   chown -R 1000:1000 "$STACK_DIR/config/qbittorrent"
 fi
-if service_enabled "jellyseerr"; then
-  chown -R 1000:1000 "$STACK_DIR/config/jellyseerr"
+if service_enabled "seerr"; then
+  chown -R 1000:1000 "$STACK_DIR/config/seerr"
 fi
 if service_enabled "bazarr"; then
   chown -R 1000:1000 "$STACK_DIR/config/bazarr"
@@ -345,7 +357,7 @@ fi
 if service_enabled "jellystat-db"; then
   chown -R 70:70 "$STACK_DIR/config/jellystat-db"
 fi
-chown -R 1000:1000 "$MEDIA_PATH"
+chown -R 1000:1000 "$STORAGE_PATH"
 
 docker_compose pull
 docker_compose up -d --remove-orphans

@@ -139,11 +139,13 @@
               "jellyfin",
               "meilisearch",
               "jellysearch",
+              "recyclarr",
+              "sabnzbd",
               "sonarr",
               "radarr",
               "prowlarr",
               "qbittorrent-vpn",
-              "jellyseerr",
+              "seerr",
               "bazarr",
               "jellystat-db",
               "jellystat"
@@ -152,7 +154,7 @@
             "ui_homepage_title": "Media Stack"
           },
           "storage": {
-            "media_path": "/media"
+            "path": "/data"
           },
           "tailscale": {
             "auth_key": "<redacted>",

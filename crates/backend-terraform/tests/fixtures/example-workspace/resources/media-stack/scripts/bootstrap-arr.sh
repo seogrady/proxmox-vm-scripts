@@ -101,6 +101,7 @@ import urllib.parse
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 CONFIG_PATH = os.environ.get("CONFIG_PATH", "/opt/media/config")
 VPN_ENABLED = os.environ.get("MEDIA_VPN_ENABLED", "").lower() == "true"
@@ -108,6 +109,20 @@ QBIT_HOST = "gluetun" if VPN_ENABLED else "qbittorrent-vpn"
 QBIT_PORT = int(os.environ.get("QBITTORRENT_WEBUI_PORT", "8080"))
 QBIT_USERNAME = os.environ.get("QBITTORRENT_USERNAME", "admin")
 QBIT_PASSWORD = os.environ.get("QBITTORRENT_PASSWORD", "adminadmin")
+QBIT_CATEGORY_TV = os.environ.get("QBITTORRENT_CATEGORY_TV", "tv")
+QBIT_CATEGORY_MOVIES = os.environ.get("QBITTORRENT_CATEGORY_MOVIES", "movies")
+SAB_URL = os.environ.get("SABNZBD_INTERNAL_URL", "http://sabnzbd:8080")
+SAB_USERNAME = os.environ.get("SABNZBD_USERNAME", "admin")
+SAB_PASSWORD = os.environ.get("SABNZBD_PASSWORD", "")
+SONARR_ROOT_FOLDER = os.environ.get("SONARR_ROOT_FOLDER", "/data/media/tv")
+RADARR_ROOT_FOLDER = os.environ.get("RADARR_ROOT_FOLDER", "/data/media/movies")
+SONARR_PROWLARR_CATEGORIES = [int(item.strip()) for item in (os.environ.get("SONARR_PROWLARR_CATEGORIES", "5000,5030,5040").split(",")) if item.strip()]
+RADARR_PROWLARR_CATEGORIES = [int(item.strip()) for item in (os.environ.get("RADARR_PROWLARR_CATEGORIES", "2000,2010,2020,2030,2040,2045,2060").split(",")) if item.strip()]
+
+
+def service_enabled(name: str) -> bool:
+    services = {item.strip() for item in (os.environ.get("MEDIA_SERVICES", "") or "").split(",") if item.strip()}
+    return name in services
 
 
 def read_api_key(app):
@@ -120,6 +135,25 @@ def read_api_key(app):
                 return key
         time.sleep(2)
     raise RuntimeError(f"{app} API key was not created at {path}")
+
+
+def read_sabnzbd_api_key():
+    path = os.path.join(CONFIG_PATH, "sabnzbd", "sabnzbd.ini")
+    for _ in range(120):
+        if os.path.exists(path):
+            import configparser
+
+            parser = configparser.ConfigParser()
+            parser.read_string("[root]\n" + Path(path).read_text(encoding="utf-8"))
+            if parser.has_section("misc"):
+                key = (parser.get("misc", "api_key", fallback="") or "").strip()
+                if key:
+                    return key
+        env_key = (os.environ.get("SABNZBD_API_KEY") or "").strip()
+        if env_key:
+            return env_key
+        time.sleep(2)
+    raise RuntimeError(f"SABnzbd API key was not created at {path}")
 
 
 def request(method, url, api_key, payload=None, allow=(400, 409)):
@@ -173,7 +207,7 @@ def app_base(url, discovered_base):
     return f"{root}{discovered_base}"
 
 
-def ensure_prowlarr_app_sync(prowlarr_url, prowlarr_key, arr_name, arr_url, arr_key):
+def ensure_prowlarr_app_sync(prowlarr_url, prowlarr_key, arr_name, arr_url, arr_key, sync_categories):
     apps = request("GET", f"{prowlarr_url}/api/v1/applications", prowlarr_key, allow=()) or []
     for app in apps:
         if app.get("name") != arr_name:
@@ -184,7 +218,7 @@ def ensure_prowlarr_app_sync(prowlarr_url, prowlarr_key, arr_name, arr_url, arr_
             "prowlarrUrl": os.environ.get("PROWLARR_INTERNAL_URL", "http://prowlarr:9696"),
             "baseUrl": arr_url,
             "apiKey": arr_key,
-            "syncCategories": [5000, 5030, 5040],
+            "syncCategories": sync_categories,
         }
         changed = False
         for field in fields:
@@ -205,13 +239,20 @@ def ensure_prowlarr_app_sync(prowlarr_url, prowlarr_key, arr_name, arr_url, arr_
             {"name": "prowlarrUrl", "value": os.environ.get("PROWLARR_INTERNAL_URL", "http://prowlarr:9696")},
             {"name": "baseUrl", "value": arr_url},
             {"name": "apiKey", "value": arr_key},
-            {"name": "syncCategories", "value": [5000, 5030, 5040]},
+            {"name": "syncCategories", "value": sync_categories},
         ],
     }
     request("POST", f"{prowlarr_url}/api/v1/applications", prowlarr_key, payload, allow=(400, 409))
 
 
 def ensure_default_indexers(prowlarr_url, prowlarr_key):
+    configured_names = [
+        name.strip()
+        for name in (os.environ.get("PROWLARR_BOOTSTRAP_INDEXERS") or "").split(",")
+        if name.strip()
+    ]
+    if not configured_names:
+        return
     existing = request("GET", f"{prowlarr_url}/api/v1/indexer", prowlarr_key, allow=()) or []
     existing_names = {item.get("name") for item in existing if item.get("name")}
 
@@ -219,10 +260,9 @@ def ensure_default_indexers(prowlarr_url, prowlarr_key):
     profiles = request("GET", f"{prowlarr_url}/api/v1/appProfile", prowlarr_key, allow=()) or []
     profile_id = profiles[0]["id"] if profiles else 1
 
-    preferred = ["Nyaa.si", "1337x", "EZTV", "The Cowboy TV", "YTS"]
     selected = [
         schema for schema in schemas
-        if schema.get("name") in preferred and schema.get("name") not in existing_names
+        if schema.get("name") in configured_names and schema.get("name") not in existing_names
     ]
     if not selected:
         return
@@ -329,20 +369,103 @@ def ensure_qbittorrent_download_client(app, url, api_key, category):
     raise RuntimeError(f"{app} qBittorrent download client did not converge")
 
 
+def ensure_sabnzbd_download_client(app, url, arr_api_key, sab_api_key, category):
+    if app == "sonarr":
+        category_field = "tvCategory"
+        recent_priority_field = "recentTvPriority"
+        older_priority_field = "olderTvPriority"
+    elif app == "radarr":
+        category_field = "movieCategory"
+        recent_priority_field = "recentMoviePriority"
+        older_priority_field = "olderMoviePriority"
+    else:
+        raise RuntimeError(f"unsupported app for SABnzbd download client: {app}")
+
+    sab_parsed = urllib.parse.urlparse(SAB_URL)
+    desired = {
+        "host": sab_parsed.hostname or "sabnzbd",
+        "port": sab_parsed.port or 8080,
+        "urlBase": sab_parsed.path.rstrip("/"),
+        "apiKey": sab_api_key,
+        category_field: category,
+    }
+    comparable_desired = {key: value for key, value in desired.items() if key != "apiKey"}
+
+    def current_client():
+        existing = request("GET", f"{url}/api/v3/downloadclient", arr_api_key, allow=()) or []
+        return next((item for item in existing if item.get("name") == "SABnzbd"), None)
+
+    for _ in range(60):
+        item = current_client()
+        if item is not None:
+            updated = dict(item)
+            fields = updated.get("fields", [])
+            current = {field.get("name"): field.get("value") for field in fields}
+            if all(current.get(name) == value for name, value in comparable_desired.items()):
+                return
+            for field in fields:
+                name = field.get("name")
+                if name in desired:
+                    field["value"] = desired[name]
+            try:
+                request("PUT", f"{url}/api/v3/downloadclient/{item['id']}", arr_api_key, updated, allow=())
+            except urllib.error.HTTPError:
+                time.sleep(2)
+                continue
+        else:
+            fields = [
+                {"name": "host", "value": desired["host"]},
+                {"name": "port", "value": desired["port"]},
+                {"name": "urlBase", "value": desired["urlBase"]},
+                {"name": "apiKey", "value": sab_api_key},
+                {"name": category_field, "value": category},
+                {"name": recent_priority_field, "value": 0},
+                {"name": older_priority_field, "value": 0},
+                {"name": "initialState", "value": 0},
+            ]
+            payload = {
+                "enable": True,
+                "protocol": "usenet",
+                "priority": 1,
+                "removeCompletedDownloads": True,
+                "removeFailedDownloads": True,
+                "name": "SABnzbd",
+                "implementation": "SABnzbd",
+                "configContract": "SABnzbdSettings",
+                "fields": fields,
+            }
+            try:
+                request("POST", f"{url}/api/v3/downloadclient", arr_api_key, payload, allow=(409,))
+            except urllib.error.HTTPError:
+                time.sleep(2)
+                continue
+
+        refreshed = current_client()
+        if refreshed is not None:
+            refreshed_fields = {field.get("name"): field.get("value") for field in refreshed.get("fields") or []}
+            if all(refreshed_fields.get(name) == value for name, value in comparable_desired.items()):
+                return
+        time.sleep(2)
+
+    raise RuntimeError(f"{app} SABnzbd download client did not converge")
+
+
 apps = {
     "sonarr": {
         "url": os.environ.get("SONARR_URL", "http://sonarr:8989"),
         "internal_url": os.environ.get("SONARR_INTERNAL_URL", "http://sonarr:8989"),
         "base": "",
-        "root": "/media/tv",
-        "category": "tv",
+        "root": SONARR_ROOT_FOLDER,
+        "category": QBIT_CATEGORY_TV,
+        "prowlarr_categories": SONARR_PROWLARR_CATEGORIES,
     },
     "radarr": {
         "url": os.environ.get("RADARR_URL", "http://radarr:7878"),
         "internal_url": os.environ.get("RADARR_INTERNAL_URL", "http://radarr:7878"),
         "base": "",
-        "root": "/media/movies",
-        "category": "movies",
+        "root": RADARR_ROOT_FOLDER,
+        "category": QBIT_CATEGORY_MOVIES,
+        "prowlarr_categories": RADARR_PROWLARR_CATEGORIES,
     },
 }
 
@@ -353,6 +476,9 @@ for app, cfg in apps.items():
     api_url = f"{root}{discovered_base}"
     ensure_root_folder(api_url, key, cfg["root"])
     ensure_qbittorrent_download_client(app, api_url, key, cfg["category"])
+    if service_enabled("sabnzbd"):
+        sab_api_key = read_sabnzbd_api_key()
+        ensure_sabnzbd_download_client(app, api_url, key, sab_api_key, cfg["category"])
     resolved[app] = {"url": app_base(cfg["internal_url"], cfg["base"]), "key": key}
 
 prowlarr_url = os.environ.get("PROWLARR_URL", "http://localhost:9696")
@@ -369,6 +495,7 @@ for app_name, values in resolved.items():
         app_name.capitalize(),
         values["url"],
         values["key"],
+        apps[app_name]["prowlarr_categories"],
     )
 ensure_indexer_sync_clients(prowlarr_api, prowlarr_key)
 PY

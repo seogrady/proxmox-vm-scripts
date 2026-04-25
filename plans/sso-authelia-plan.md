@@ -19,7 +19,7 @@ Protected behind Authelia SSO (mandatory redirect when unauthenticated):
 
 - Proxmox web UI/API (`https://mini:8006`)
 - Jellyfin (plus Streamyfin/Jellysearch/Jellio paths served by Jellyfin or adjacent services)
-- Jellyseerr
+- Seerr
 - Sonarr / Radarr / Prowlarr / Bazarr
 - qBittorrent (VPN stack)
 - Any exposed HTTP services (including “home/index” pages)
@@ -52,7 +52,7 @@ We standardize on **one ingress VM** which already exists and already runs Docke
   - `authelia` (SSO portal + authz endpoint + OIDC provider)
   - `redis` (Authelia session storage)
   - `lldap` (LDAP directory + user/group UI used by Authelia)
-  - existing media services (Jellyfin, Sonarr, Radarr, Prowlarr, Bazarr, Jellyseerr, qBittorrent-vpn, etc)
+  - existing media services (Jellyfin, Sonarr, Radarr, Prowlarr, Bazarr, Seerr, qBittorrent-vpn, etc)
 
 This keeps “all web entrypoints” centralized and avoids cross-VM service discovery complexity.
 
@@ -101,7 +101,7 @@ Optional (LAN convenience, not used for OIDC):
 
 - Proxmox UI: accessed only via `pve.*` hostname through NGINX + Authelia; direct `mini:8006` blocked.
 - Jellyfin (browser): always behind Authelia; inside Jellyfin, login uses `jellyfin-plugin-sso` (OIDC to Authelia) so users do not need local Jellyfin passwords.
-- Jellyseerr/*arr/Bazarr/qBittorrent: the services remain untrusted internally and are protected exclusively by the proxy; their direct ports must not be reachable from clients.
+- Seerr/*arr/Bazarr/qBittorrent: the services remain untrusted internally and are protected exclusively by the proxy; their direct ports must not be reachable from clients.
 - Streamyfin/Jellio/Jellysearch/Jellysearch/Jellio:
   - server-side components are accessed via the Jellyfin hostname and therefore inherit SSO protection
   - any standalone HTTP UIs (e.g. Jellysearch if exposed) must be routed as their own hostnames in `features.sso.routes`
@@ -377,7 +377,7 @@ Authelia access control rules:
 Example group model in LLDAP:
 
 - `homelab-admins`: Proxmox + everything
-- `media-users`: Jellyfin + Jellyseerr
+- `media-users`: Jellyfin + Seerr
 - `arr-admins`: Sonarr/Radarr/Prowlarr/Bazarr
 - `downloads-users`: qBittorrent UI
 
@@ -737,7 +737,7 @@ sso = true
 
 [resources.features.media_services]
 enabled = true
-services = ["jellyfin", "sonarr", "radarr", "prowlarr", "bazarr", "qbittorrent-vpn", "jellyseerr", "jellysearch"]
+services = ["jellyfin", "sonarr", "radarr", "prowlarr", "bazarr", "qbittorrent-vpn", "seerr", "jellysearch"]
 
 [resources.features.sso]
 enabled = true
@@ -796,9 +796,9 @@ policy = "one_factor"
 websockets = true
 
 [[resources.features.sso.routes]]
-name = "jellyseerr"
-host = "jellyseerr.lab.example.com"
-upstream = "http://jellyseerr:5055"
+name = "seerr"
+host = "seerr.lab.example.com"
+upstream = "http://seerr:5055"
 policy = "one_factor"
 
 [[resources.features.sso.routes]]
