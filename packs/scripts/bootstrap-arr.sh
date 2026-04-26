@@ -111,6 +111,8 @@ QBIT_USERNAME = os.environ.get("QBITTORRENT_USERNAME", "admin")
 QBIT_PASSWORD = os.environ.get("QBITTORRENT_PASSWORD", "adminadmin")
 QBIT_CATEGORY_TV = os.environ.get("QBITTORRENT_CATEGORY_TV", "tv")
 QBIT_CATEGORY_MOVIES = os.environ.get("QBITTORRENT_CATEGORY_MOVIES", "movies")
+QBIT_CATEGORY_TV_PATH = os.environ.get("QBITTORRENT_CATEGORY_TV_PATH", "/data/torrents/tv")
+QBIT_CATEGORY_MOVIES_PATH = os.environ.get("QBITTORRENT_CATEGORY_MOVIES_PATH", "/data/torrents/movies")
 SAB_URL = os.environ.get("SABNZBD_INTERNAL_URL", "http://sabnzbd:8080")
 SAB_USERNAME = os.environ.get("SABNZBD_USERNAME", "admin")
 SAB_PASSWORD = os.environ.get("SABNZBD_PASSWORD", "")
@@ -275,6 +277,39 @@ def ensure_default_indexers(prowlarr_url, prowlarr_key):
         request("POST", f"{prowlarr_url}/api/v1/indexer", prowlarr_key, candidate, allow=(400, 409))
 
 
+def ensure_flaresolverr_proxy(prowlarr_url, prowlarr_key):
+    host_url = (os.environ.get("PROWLARR_FLARESOLVERR_URL") or "http://flaresolverr:8191").rstrip("/") + "/"
+    existing = request("GET", f"{prowlarr_url}/api/v1/indexerproxy", prowlarr_key, allow=()) or []
+    for item in existing:
+        if (item.get("name") or "").lower() == "flaresolverr":
+            updated = dict(item)
+            fields = updated.get("fields", [])
+            desired = {
+                "host": host_url,
+                "requestTimeout": 60,
+            }
+            changed = False
+            for field in fields:
+                name = field.get("name")
+                if name in desired and field.get("value") != desired[name]:
+                    field["value"] = desired[name]
+                    changed = True
+            if changed:
+                request("PUT", f"{prowlarr_url}/api/v1/indexerproxy/{item['id']}", prowlarr_key, updated)
+            return
+    payload = {
+        "name": "FlareSolverr",
+        "implementation": "FlareSolverr",
+        "configContract": "FlareSolverrSettings",
+        "enable": True,
+        "fields": [
+            {"name": "host", "value": host_url},
+            {"name": "requestTimeout", "value": 60},
+        ],
+    }
+    request("POST", f"{prowlarr_url}/api/v1/indexerproxy", prowlarr_key, payload, allow=(400, 409))
+
+
 def ensure_indexer_sync_clients(prowlarr_url, prowlarr_key):
     request("POST", f"{prowlarr_url}/api/v1/indexer/sync", prowlarr_key, {}, allow=(400, 404, 405, 409))
 
@@ -317,9 +352,12 @@ def ensure_qbittorrent_download_client(app, url, api_key, category):
         item = current_client()
         if item is not None:
             updated = dict(item)
+            updated["priority"] = 2
             fields = updated.get("fields", [])
             current = {field.get("name"): field.get("value") for field in fields}
-            if all(current.get(name) == value for name, value in comparable_desired.items()):
+            if item.get("priority") == 2 and all(
+                current.get(name) == value for name, value in comparable_desired.items()
+            ):
                 return
             for field in fields:
                 name = field.get("name")
@@ -345,7 +383,7 @@ def ensure_qbittorrent_download_client(app, url, api_key, category):
             payload = {
                 "enable": True,
                 "protocol": "torrent",
-                "priority": 1,
+                "priority": 2,
                 "removeCompletedDownloads": True,
                 "removeFailedDownloads": True,
                 "name": "qBittorrent",
@@ -362,7 +400,9 @@ def ensure_qbittorrent_download_client(app, url, api_key, category):
         refreshed = current_client()
         if refreshed is not None:
             refreshed_fields = {field.get("name"): field.get("value") for field in refreshed.get("fields") or []}
-            if all(refreshed_fields.get(name) == value for name, value in comparable_desired.items()):
+            if refreshed.get("priority") == 2 and all(
+                refreshed_fields.get(name) == value for name, value in comparable_desired.items()
+            ):
                 return
         time.sleep(2)
 
@@ -399,9 +439,12 @@ def ensure_sabnzbd_download_client(app, url, arr_api_key, sab_api_key, category)
         item = current_client()
         if item is not None:
             updated = dict(item)
+            updated["priority"] = 1
             fields = updated.get("fields", [])
             current = {field.get("name"): field.get("value") for field in fields}
-            if all(current.get(name) == value for name, value in comparable_desired.items()):
+            if item.get("priority") == 1 and all(
+                current.get(name) == value for name, value in comparable_desired.items()
+            ):
                 return
             for field in fields:
                 name = field.get("name")
@@ -443,7 +486,9 @@ def ensure_sabnzbd_download_client(app, url, arr_api_key, sab_api_key, category)
         refreshed = current_client()
         if refreshed is not None:
             refreshed_fields = {field.get("name"): field.get("value") for field in refreshed.get("fields") or []}
-            if all(refreshed_fields.get(name) == value for name, value in comparable_desired.items()):
+            if refreshed.get("priority") == 1 and all(
+                refreshed_fields.get(name) == value for name, value in comparable_desired.items()
+            ):
                 return
         time.sleep(2)
 
@@ -487,6 +532,7 @@ prowlarr_key = read_api_key("prowlarr")
 prowlarr_root, prowlarr_discovered_base = detect_api_base("prowlarr", prowlarr_url, prowlarr_key, "/api/v1", prowlarr_base)
 prowlarr_api = f"{prowlarr_root}{prowlarr_discovered_base}"
 ensure_default_indexers(prowlarr_api, prowlarr_key)
+ensure_flaresolverr_proxy(prowlarr_api, prowlarr_key)
 
 for app_name, values in resolved.items():
     ensure_prowlarr_app_sync(

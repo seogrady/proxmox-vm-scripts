@@ -305,6 +305,10 @@ for app, status_url in (
     target = next((item for item in clients if item.get("name") == "qBittorrent"), None)
     if not target:
         raise SystemExit(f"validation failed: {app} missing qBittorrent download client")
+    if int(target.get("priority") or 0) != 2:
+        raise SystemExit(
+            f"validation failed: {app} qBittorrent priority mismatch: {target.get('priority')!r} != 2"
+        )
     fields = {field.get("name"): field.get("value") for field in target.get("fields") or []}
     if fields.get("host") != expected[app]["download_host"]:
         raise SystemExit(
@@ -512,6 +516,10 @@ for app, status_url in (
     target = next((item for item in clients if item.get("name") == "SABnzbd"), None)
     if not target:
         raise SystemExit(f"validation failed: {app} missing SABnzbd download client")
+    if int(target.get("priority") or 0) != 1:
+        raise SystemExit(
+            f"validation failed: {app} SABnzbd priority mismatch: {target.get('priority')!r} != 1"
+        )
     fields = {field.get("name"): field.get("value") for field in target.get("fields") or []}
     if fields.get("host") != expected[app]["host"]:
         raise SystemExit(
@@ -580,6 +588,34 @@ if service_enabled "prowlarr"; then
   check_container_running "prowlarr"
   check_http_ok "http://127.0.0.1:9696/ping" "prowlarr ping"
   check_http_no_auth "http://127.0.0.1:9696/ping" "prowlarr no-login ping"
+  python3 <<'PY'
+import json
+import os
+import urllib.request
+
+api_key = (os.environ.get("PROWLARR_API_KEY") or "").strip()
+if not api_key:
+    config_path = os.path.join(os.environ.get("CONFIG_PATH") or "/opt/media/config", "prowlarr", "config.xml")
+    if os.path.exists(config_path):
+        import xml.etree.ElementTree as ET
+
+        api_key = (ET.parse(config_path).getroot().findtext("ApiKey") or "").strip()
+if not api_key:
+    raise SystemExit("validation failed: Prowlarr API key is missing")
+req = urllib.request.Request(
+    "http://127.0.0.1:9696/api/v1/indexerproxy",
+    headers={"X-Api-Key": api_key},
+    method="GET",
+)
+with urllib.request.urlopen(req, timeout=20) as response:
+    proxies = json.loads(response.read().decode("utf-8"))
+target = next((item for item in proxies if (item.get("name") or "").lower() == "flaresolverr"), None)
+if not target:
+    raise SystemExit("validation failed: Prowlarr missing FlareSolverr proxy")
+fields = {field.get("name"): field.get("value") for field in target.get("fields") or []}
+if not str(fields.get("host") or "").rstrip("/").endswith("flaresolverr:8191"):
+    raise SystemExit(f"validation failed: Prowlarr FlareSolverr host mismatch: {fields.get('host')!r}")
+PY
 fi
 
 if service_enabled "jellysearch"; then
@@ -591,6 +627,67 @@ fi
 if service_enabled "qbittorrent-vpn"; then
   check_container_running "qbittorrent-vpn"
   check_http_no_auth "http://127.0.0.1:${QBITTORRENT_WEBUI_PORT:-8080}/api/v2/app/version" "qbittorrent no-login api"
+  python3 <<'PY'
+import json
+import os
+import urllib.request
+
+base = f"http://127.0.0.1:{os.environ.get('QBITTORRENT_WEBUI_PORT', '8080')}"
+username = os.environ.get("QBITTORRENT_USERNAME", "admin")
+password = os.environ.get("QBITTORRENT_PASSWORD", "adminadmin")
+cookiejar = urllib.request.HTTPCookieProcessor()
+opener = urllib.request.build_opener(cookiejar)
+login = urllib.request.Request(
+    f"{base}/api/v2/auth/login",
+    data=f"username={username}&password={password}".encode(),
+    headers={"Content-Type": "application/x-www-form-urlencoded"},
+    method="POST",
+)
+with opener.open(login, timeout=20) as response:
+    if response.status != 200:
+        raise SystemExit(f"validation failed: qBittorrent login returned HTTP {response.status}")
+cats = urllib.request.Request(f"{base}/api/v2/torrents/categories", method="GET")
+with opener.open(cats, timeout=20) as response:
+    payload = json.loads(response.read().decode("utf-8"))
+expected_tv = os.environ.get("QBITTORRENT_CATEGORY_TV_PATH", "/data/torrents/tv")
+expected_movies = os.environ.get("QBITTORRENT_CATEGORY_MOVIES_PATH", "/data/torrents/movies")
+
+def qbit_effective_path(category: dict) -> str:
+    raw = category.get("savePath") or category.get("save_path") or ""
+    raw = str(raw).strip().rstrip("/")
+    if not raw:
+        return ""
+    if raw.startswith("/"):
+        return raw
+    return f"{os.environ.get('QBITTORRENT_DOWNLOADS', '/data/torrents').rstrip('/')}/{raw}"
+
+if qbit_effective_path(payload.get(os.environ.get("QBITTORRENT_CATEGORY_TV", "tv"), {})) != expected_tv:
+    raise SystemExit("validation failed: qBittorrent TV category save path mismatch")
+if qbit_effective_path(payload.get(os.environ.get("QBITTORRENT_CATEGORY_MOVIES", "movies"), {})) != expected_movies:
+    raise SystemExit("validation failed: qBittorrent movies category save path mismatch")
+PY
+fi
+
+if service_enabled "autobrr"; then
+  check_container_running "autobrr"
+  check_http_ok "http://127.0.0.1:7474/autobrr/" "autobrr ui"
+  python3 <<'PY'
+import os
+from pathlib import Path
+
+config_root = Path(os.environ.get("CONFIG_PATH") or "/opt/media/config")
+config_path = config_root / "autobrr" / "config.toml"
+if not config_path.exists():
+    raise SystemExit(f"validation failed: missing autobrr config at {config_path}")
+text = config_path.read_text(encoding="utf-8")
+for token in ("baseUrl = \"/autobrr/\"", "baseUrlModeLegacy = false", "customDefinitions = \"/config/definitions\""):
+    if token not in text:
+        raise SystemExit(f"validation failed: autobrr config missing {token!r}")
+PY
+fi
+
+if service_enabled "flaresolverr"; then
+  check_container_running "flaresolverr"
 fi
 
 if service_enabled "jellyfin"; then

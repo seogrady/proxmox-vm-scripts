@@ -66,6 +66,9 @@ fi
 if service_enabled "prowlarr"; then
   install -d "$STACK_DIR/config/prowlarr"
 fi
+if service_enabled "autobrr"; then
+  install -d "$STACK_DIR/config/autobrr"
+fi
 if service_enabled "qbittorrent-vpn"; then
   install -d "$STACK_DIR/config/qbittorrent"
 fi
@@ -492,6 +495,9 @@ if service_enabled "radarr"; then
 fi
 if service_enabled "prowlarr"; then
   chown -R 1000:1000 "$STACK_DIR/config/prowlarr"
+fi
+if service_enabled "autobrr"; then
+  chown -R 1000:1000 "$STACK_DIR/config/autobrr"
 fi
 if service_enabled "qbittorrent-vpn"; then
   chown -R 1000:1000 "$STACK_DIR/config/qbittorrent"

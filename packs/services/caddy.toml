@@ -6,7 +6,7 @@ name = "caddy"
 tag = "2"
 
 [ports]
-published = ["80:80", "5056:5056", "8097:8097"]
+published = ["80:80", "5056:5056", "7474:7474", "8097:8097"]
 
 [volumes]
 mounts = [

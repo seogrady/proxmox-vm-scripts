@@ -21,7 +21,9 @@ QBITTORRENT_DOWNLOADS="${QBITTORRENT_DOWNLOADS:-/data/torrents}"
 QBITTORRENT_INCOMPLETE="${QBITTORRENT_INCOMPLETE:-/data/torrents/.incomplete}"
 QBITTORRENT_CATEGORY_TV="${QBITTORRENT_CATEGORY_TV:-tv}"
 QBITTORRENT_CATEGORY_MOVIES="${QBITTORRENT_CATEGORY_MOVIES:-movies}"
-install -d "$config_dir" "$QBITTORRENT_DOWNLOADS/$QBITTORRENT_CATEGORY_TV" "$QBITTORRENT_DOWNLOADS/$QBITTORRENT_CATEGORY_MOVIES" "$QBITTORRENT_INCOMPLETE"
+QBITTORRENT_CATEGORY_TV_PATH="${QBITTORRENT_CATEGORY_TV_PATH:-$QBITTORRENT_DOWNLOADS/$QBITTORRENT_CATEGORY_TV}"
+QBITTORRENT_CATEGORY_MOVIES_PATH="${QBITTORRENT_CATEGORY_MOVIES_PATH:-$QBITTORRENT_DOWNLOADS/$QBITTORRENT_CATEGORY_MOVIES}"
+install -d "$config_dir" "$QBITTORRENT_CATEGORY_TV_PATH" "$QBITTORRENT_CATEGORY_MOVIES_PATH" "$QBITTORRENT_INCOMPLETE"
 QBITTORRENT_USERNAME="${QBITTORRENT_USERNAME:-admin}"
 QBITTORRENT_PASSWORD="${QBITTORRENT_PASSWORD:-adminadmin}"
 
@@ -103,10 +105,18 @@ JSON
 
   curl -fsS -b "$cookie_file" \
     --data-urlencode "category=${QBITTORRENT_CATEGORY_TV}" \
-    --data-urlencode "savePath=${QBITTORRENT_CATEGORY_TV}" \
+    --data-urlencode "savePath=${QBITTORRENT_CATEGORY_TV_PATH}" \
+    "http://localhost:${QBITTORRENT_WEBUI_PORT:-8080}/api/v2/torrents/createCategory" >/dev/null || true
+  curl -fsS -b "$cookie_file" \
+    --data-urlencode "category=${QBITTORRENT_CATEGORY_TV}" \
+    --data-urlencode "savePath=${QBITTORRENT_CATEGORY_TV_PATH}" \
+    "http://localhost:${QBITTORRENT_WEBUI_PORT:-8080}/api/v2/torrents/editCategory" >/dev/null || true
+  curl -fsS -b "$cookie_file" \
+    --data-urlencode "category=${QBITTORRENT_CATEGORY_MOVIES}" \
+    --data-urlencode "savePath=${QBITTORRENT_CATEGORY_MOVIES_PATH}" \
     "http://localhost:${QBITTORRENT_WEBUI_PORT:-8080}/api/v2/torrents/createCategory" >/dev/null || true
   curl -fsS -b "$cookie_file" \
     --data-urlencode "category=${QBITTORRENT_CATEGORY_MOVIES}" \
-    --data-urlencode "savePath=${QBITTORRENT_CATEGORY_MOVIES}" \
-    "http://localhost:${QBITTORRENT_WEBUI_PORT:-8080}/api/v2/torrents/createCategory" >/dev/null || true
+    --data-urlencode "savePath=${QBITTORRENT_CATEGORY_MOVIES_PATH}" \
+    "http://localhost:${QBITTORRENT_WEBUI_PORT:-8080}/api/v2/torrents/editCategory" >/dev/null || true
 fi

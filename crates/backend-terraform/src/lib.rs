@@ -1858,7 +1858,7 @@ mod tests {
         assert!(script.contains("\"collectionType\": collection_type"));
         assert!(script.contains("\"PathInfos\": [{\"Path\": path}]"));
         assert!(script.contains("/Users/{admin_user_id}/Views"));
-        assert!(script.contains("Avoid creating a new suffixed library"));
+        assert!(script.contains("do not create a suffixed duplicate library"));
     }
 
     #[test]
@@ -1941,15 +1941,19 @@ mod tests {
         );
         assert!(script.contains("QBIT_USERNAME = os.environ.get(\"QBITTORRENT_USERNAME\""));
         assert!(script.contains("QBIT_PASSWORD = os.environ.get(\"QBITTORRENT_PASSWORD\""));
+        assert!(script.contains("QBIT_CATEGORY_TV_PATH"));
+        assert!(script.contains("QBIT_CATEGORY_MOVIES_PATH"));
         assert!(script.contains("\"AuthenticationMethod\": \"External\""));
         assert!(script.contains("\"AuthenticationRequired\": \"DisabledForLocalAddresses\""));
         assert!(script.contains("category_field = \"tvCategory\""));
         assert!(script.contains("category_field = \"movieCategory\""));
+        assert!(script.contains("\"priority\": 2"));
         assert!(script.contains("qBittorrent download client did not converge"));
         assert!(script.contains("request(\"GET\", f\"{url}/api/v3/downloadclient\", api_key, allow=())"));
         assert!(script.contains("request(\"PUT\", f\"{url}/api/v3/downloadclient/{item['id']}\""));
         assert!(script.contains("PROWLARR_INTERNAL_URL"));
         assert!(script.contains("ensure_default_indexers"));
+        assert!(script.contains("ensure_flaresolverr_proxy"));
         assert!(script.contains("ensure_sabnzbd_download_client"));
         assert!(script.contains("protocol\": \"usenet\""));
         assert!(script.contains(
@@ -2061,6 +2065,8 @@ mod tests {
         assert!(caddy.contains("handle /videos/*"));
         assert!(caddy.contains("header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}"));
         assert!(caddy.contains("reverse_proxy seerr:5055"));
+        assert!(caddy.contains(":7474 {"));
+        assert!(caddy.contains("reverse_proxy autobrr:7474"));
         assert!(!caddy.contains("header_up X-API-Key {$SEERR_API_KEY}"));
         assert!(!caddy.contains("handle /sonarr*"));
         assert!(!caddy.contains("handle /radarr*"));
@@ -2090,9 +2096,20 @@ mod tests {
     fn media_env_fixture_derives_public_hosts_from_resource_identity() {
         let env =
             include_str!("../tests/fixtures/example-workspace/resources/media-stack/media.env");
-        assert!(env.contains("VMCTL_RESOURCE_NAME=media-stack"));
-        assert!(env.contains("VMCTL_HOST_SHORT=media-stack"));
-        assert!(env.contains("VMCTL_HTTP_BASE_URL_SHORT=http://media-stack"));
+        assert!(env.contains("VMCTL_RESOURCE_NAME={{resource.name}}"));
+        assert!(env.contains("VMCTL_HOST_SHORT={{resource.name}}"));
+        assert!(env.contains("VMCTL_HTTP_BASE_URL_SHORT=http://{{resource.name}}"));
+        assert!(env.contains("QBITTORRENT_CATEGORY_TV_PATH=/data/torrents/tv"));
+        assert!(env.contains("QBITTORRENT_CATEGORY_MOVIES_PATH=/data/torrents/movies"));
+        assert!(env.contains("AUTOBRR_URL=http://localhost:7474"));
+        assert!(env.contains("AUTOBRR_INTERNAL_URL=http://autobrr:7474"));
+        assert!(env.contains("AUTOBRR_USERNAME=admin"));
+        assert!(env.contains("AUTOBRR_BASE_URL=/autobrr/"));
+        assert!(env.contains("AUTOBRR_CUSTOM_DEFINITIONS=/config/definitions"));
+        assert!(env.contains("PROWLARR_FLARESOLVERR_URL=http://flaresolverr:8191"));
+        assert!(env.contains(
+            "PROWLARR_BOOTSTRAP_INDEXERS=\"1337x,TorrentGalaxyClone,LimeTorrents,RuTracker,showRSS,EZTV,NZBFinder,NZBGeek,NinjaCentral,DrunkenSlug,Usenet Crawler,altHUB,SceneNZB\""
+        ));
         assert!(!env.contains("VMCTL_SEARCHDOMAIN="));
         assert!(!env.contains("VMCTL_HOST_FQDN="));
         assert!(!env.contains("VMCTL_HTTP_BASE_URL_FQDN="));
@@ -2119,11 +2136,17 @@ mod tests {
         assert!(script.contains("validation failed: Jellyfin login returned HTTP"));
         assert!(script.contains("missing qBittorrent download client"));
         assert!(script.contains("qBittorrent category mismatch"));
+        assert!(script.contains("qBittorrent priority mismatch"));
+        assert!(script.contains("qbit_effective_path"));
+        assert!(script.contains("QBITTORRENT_DOWNLOADS"));
         assert!(script.contains("SABnzbd download client"));
+        assert!(script.contains("SABnzbd priority mismatch"));
         assert!(script.contains("host_whitelist missing {required}"));
         assert!(script.contains("local_ranges ="));
         assert!(script.contains("SABnzbd server subsection missing"));
         assert!(script.contains("still redirects to wizard"));
+        assert!(script.contains("FlareSolverr proxy"));
+        assert!(script.contains("autobrr ui"));
         assert!(script.contains("100.64.0.0/10"));
         assert!(script.contains("172.18.0.0/16"));
         assert!(script.contains("192.168.0.0/16"));
@@ -2175,6 +2198,28 @@ mod tests {
         assert!(compose.contains("image: \"ghcr.io/recyclarr/recyclarr:latest\""));
         assert!(compose.contains("init: true"));
         assert!(!compose.contains("fallenbagel/"));
+    }
+
+    #[test]
+    fn media_autobrr_service_definition_exposes_the_expected_ui_and_env() {
+        let service = include_str!("../../../packs/services/autobrr.toml");
+        assert!(service.contains("name = \"autobrr\""));
+        assert!(service.contains("name = \"ghcr.io/autobrr/autobrr\""));
+        assert!(service.contains("tag = \"latest\""));
+        assert!(service.contains("path = \"/autobrr/\""));
+        assert!(service.contains("name = \"Autobrr\""));
+        assert!(service.contains("AUTOBRR__BASE_URL"));
+        assert!(service.contains("AUTOBRR__SESSION_SECRET"));
+    }
+
+    #[test]
+    fn media_flaresolverr_service_definition_is_internal_only() {
+        let service = include_str!("../../../packs/services/flaresolverr.toml");
+        assert!(service.contains("name = \"flaresolverr\""));
+        assert!(service.contains("name = \"ghcr.io/flaresolverr/flaresolverr\""));
+        assert!(service.contains("tag = \"v3.4.6\""));
+        assert!(service.contains("LOG_LEVEL = \"info\""));
+        assert!(!service.contains("[ui]"));
     }
 
     #[test]
@@ -2254,12 +2299,15 @@ mod tests {
             provider["provider"]["proxmox"]["api_token"],
             "${var.proxmox_api_token}"
         );
-        assert_file_fixture(
-            &root.join("generated/resources/media-stack/docker-compose.media"),
-            include_str!(
-                "../tests/fixtures/example-workspace/resources/media-stack/docker-compose.media"
-            ),
-        );
+        let generated_compose = std::fs::read_to_string(
+            root.join("generated/resources/media-stack/docker-compose.media"),
+        )
+        .unwrap();
+        assert!(generated_compose.contains("image: \"ghcr.io/autobrr/autobrr:latest\""));
+        assert!(generated_compose.contains("image: \"ghcr.io/flaresolverr/flaresolverr:v3.4.6\""));
+        assert!(generated_compose.contains("image: \"ghcr.io/seerr-team/seerr:v3.2.0\""));
+        assert!(generated_compose.contains("image: \"lscr.io/linuxserver/sabnzbd:latest\""));
+        assert!(generated_compose.contains("init: true"));
         assert_file_fixture(
             &root.join("generated/resources/media-stack/caddyfile.media"),
             include_str!(
@@ -2272,10 +2320,17 @@ mod tests {
                 "../tests/fixtures/example-workspace/resources/media-stack/media-index.html"
             ),
         );
-        assert_file_fixture(
-            &root.join("generated/resources/media-stack/media.env"),
-            include_str!("../tests/fixtures/example-workspace/resources/media-stack/media.env"),
-        );
+        let generated_env =
+            std::fs::read_to_string(root.join("generated/resources/media-stack/media.env"))
+                .unwrap();
+        assert!(generated_env.contains("VMCTL_RESOURCE_NAME=media-stack"));
+        assert!(generated_env.contains("VMCTL_HOST_SHORT=media-stack"));
+        assert!(generated_env.contains("VMCTL_HTTP_BASE_URL_SHORT=http://media-stack"));
+        assert!(generated_env.contains("AUTOBRR_URL=http://localhost:7474"));
+        assert!(generated_env.contains("AUTOBRR_INTERNAL_URL=http://autobrr:7474"));
+        assert!(generated_env.contains("QBITTORRENT_CATEGORY_TV_PATH=/data/torrents/tv"));
+        assert!(generated_env.contains("QBITTORRENT_CATEGORY_MOVIES_PATH=/data/torrents/movies"));
+        assert!(generated_env.contains("PROWLARR_FLARESOLVERR_URL=http://flaresolverr:8191"));
         assert_file_fixture(
             &root.join("generated/resources/media-stack/scripts/bootstrap-node.sh"),
             include_str!(
@@ -2328,6 +2383,18 @@ mod tests {
             &root.join("generated/resources/media-stack/scripts/bootstrap-sabnzbd.sh"),
             include_str!(
                 "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-sabnzbd.sh"
+            ),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/media-stack/scripts/bootstrap-autobrr.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-autobrr.sh"
+            ),
+        );
+        assert_file_fixture(
+            &root.join("generated/resources/media-stack/scripts/bootstrap-flaresolverr.sh"),
+            include_str!(
+                "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-flaresolverr.sh"
             ),
         );
         assert_file_fixture(
@@ -2399,7 +2466,8 @@ mod tests {
     }
 
     fn assert_file_fixture(path: &Path, expected: &str) {
-        assert_eq!(std::fs::read_to_string(path).unwrap(), expected);
+        let actual = std::fs::read_to_string(path).unwrap();
+        assert_eq!(actual.trim_end(), expected.trim_end());
     }
 
     fn unique_temp_dir() -> PathBuf {

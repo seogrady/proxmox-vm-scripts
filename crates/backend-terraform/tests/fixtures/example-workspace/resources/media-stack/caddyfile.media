@@ -151,6 +151,11 @@
   reverse_proxy seerr:5055
 }
 
+:7474 {
+  encode gzip
+  reverse_proxy autobrr:7474
+}
+
 :8097 {
   encode gzip
   reverse_proxy {$JELLYFIN_INTERNAL_URL} {

@@ -80,6 +80,23 @@ services:
     volumes:
       - "${STORAGE_PATH}:/data"
       - "${CONFIG_PATH}/sabnzbd:/config"
+  autobrr:
+    image: "ghcr.io/autobrr/autobrr:latest"
+    env_file:
+      - .env
+    restart: unless-stopped
+    ports:
+      - "7474:7474"
+    volumes:
+      - "${CONFIG_PATH}/autobrr:/config"
+    environment:
+      - "AUTOBRR__BASE_URL=/autobrr/"
+      - "AUTOBRR__BASE_URL_MODE_LEGACY=false"
+      - "AUTOBRR__CUSTOM_DEFINITIONS=${AUTOBRR_CUSTOM_DEFINITIONS}"
+      - "AUTOBRR__HOST=0.0.0.0"
+      - "AUTOBRR__LOG_LEVEL=info"
+      - "AUTOBRR__PORT=7474"
+      - "AUTOBRR__SESSION_SECRET=${AUTOBRR_SESSION_SECRET}"
   sonarr:
     image: "lscr.io/linuxserver/sonarr:latest"
     env_file:
@@ -109,6 +126,14 @@ services:
       - "9696:9696"
     volumes:
       - "${CONFIG_PATH}/prowlarr:/config"
+  flaresolverr:
+    image: "ghcr.io/flaresolverr/flaresolverr:v3.4.6"
+    env_file:
+      - .env
+    restart: unless-stopped
+    environment:
+      - "LOG_LEVEL=info"
+      - "TZ=${TZ}"
   qbittorrent-vpn:
     image: "lscr.io/linuxserver/qbittorrent:latest"
     env_file:

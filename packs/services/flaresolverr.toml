@@ -1,0 +1,10 @@
+name = "flaresolverr"
+container_type = "docker"
+
+[image]
+name = "ghcr.io/flaresolverr/flaresolverr"
+tag = "v3.4.6"
+
+[environment]
+LOG_LEVEL = "info"
+TZ = "${TZ}"

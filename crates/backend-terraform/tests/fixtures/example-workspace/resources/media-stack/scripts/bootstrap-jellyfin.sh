@@ -159,6 +159,12 @@ def ensure_library(name, path, collection_type, token, admin_user_id):
         )
 
     if canonical is None:
+        # If a stale non-canonical view already points at the desired path,
+        # do not create a suffixed duplicate library. Refresh and let Jellyfin
+        # converge the existing metadata in place.
+        if any(desired_path in _item_locations(item) for item in view_items):
+            call("POST", "/Library/Refresh", token=token, allow=(200, 204, 400))
+            return
         query = urllib.parse.urlencode(
             {
                 "name": name,
@@ -178,15 +184,6 @@ def ensure_library(name, path, collection_type, token, admin_user_id):
         if duplicates:
             call("POST", "/Library/Refresh", token=token, allow=(200, 204, 400))
         return
-
-    if canonical is None:
-        # Avoid creating a new suffixed library if Jellyfin still has a stale
-        # view item for the desired path. Treat that existing view as canonical
-        # and let the refresh converge the underlying metadata instead of
-        # generating Movies2/TV2-style duplicates.
-        if any(desired_path in _item_locations(item) for item in view_items):
-            call("POST", "/Library/Refresh", token=token, allow=(200, 204, 400))
-            return
 
     locations = canonical_locations
     if locations == [desired_path]:
