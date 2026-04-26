@@ -53,6 +53,7 @@ RECOVERY_STATE_FILE = Path("/var/lib/vmctl/download-unpack/recovery.json")
 COMPATIBILITY_FILE = Path("/var/lib/vmctl/download-unpack/compatibility.json")
 COMPATIBILITY_SUMMARY_JSON = Path("/var/lib/vmctl/download-unpack/compatibility-summary.json")
 COMPATIBILITY_SUMMARY_TXT = Path("/var/lib/vmctl/download-unpack/compatibility-summary.txt")
+STALE_STATE_FILE = Path("/var/lib/vmctl/download-unpack/stale-state.json")
 STORAGE_HEALTH_FILE = Path("/opt/media/config/caddy/ui-index/storage-health.json")
 VIDEO_SUFFIXES = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".ts", ".webm", ".iso"}
 ARCHIVE_SUFFIXES = {".rar", ".r00", ".r01", ".r02", ".zip", ".7z"}
@@ -61,6 +62,7 @@ SONARR_CATEGORIES = {"sonarr", "tv", "tv-sonarr"}
 STREMIO_VIDEO_CODECS = {"h264", "hevc", "av1", "vp9"}
 STREMIO_AUDIO_CODECS = {"aac", "ac3", "eac3", "mp3", "opus", "vorbis", "flac"}
 STREMIO_SUBTITLE_CODECS = {"subrip", "srt", "ass", "ssa", "webvtt"}
+ENGLISH_LANGUAGE_TOKENS = {"en", "eng", "english"}
 
 
 def read_env() -> dict[str, str]:
@@ -241,6 +243,29 @@ def ffprobe(path: Path):
         return None
 
 
+def normalize_language_token(value) -> str:
+    return "".join(ch for ch in str(value).lower() if ch.isalpha())
+
+
+def stream_language_tokens(stream):
+    tags = stream.get("tags") or {}
+    values = [
+        tags.get("language"),
+        tags.get("LANGUAGE"),
+        tags.get("title"),
+        tags.get("TITLE"),
+    ]
+    return {
+        token
+        for token in (normalize_language_token(value) for value in values if value)
+        if token
+    }
+
+
+def stream_is_english(stream) -> bool:
+    return any(token in ENGLISH_LANGUAGE_TOKENS for token in stream_language_tokens(stream))
+
+
 def compatibility_report(path: Path):
     report = {
         "path": str(path),
@@ -251,10 +276,15 @@ def compatibility_report(path: Path):
         "audioCodecs": [],
         "subtitleCodecs": [],
     }
-    media_files = sorted(
-        [child for child in path.rglob("*") if child.is_file() and child.suffix.lower() in VIDEO_SUFFIXES],
-        key=lambda item: item.name.lower(),
-    )
+    if path.is_file():
+        media_files = [path] if path.suffix.lower() in VIDEO_SUFFIXES else []
+    elif path.is_dir():
+        media_files = sorted(
+            [child for child in path.rglob("*") if child.is_file() and child.suffix.lower() in VIDEO_SUFFIXES],
+            key=lambda item: item.name.lower(),
+        )
+    else:
+        media_files = []
     if not media_files:
         return report
 
@@ -271,9 +301,19 @@ def compatibility_report(path: Path):
     video_codecs = [str(stream.get("codec_name") or "").lower() for stream in streams if stream.get("codec_type") == "video"]
     audio_codecs = [str(stream.get("codec_name") or "").lower() for stream in streams if stream.get("codec_type") == "audio"]
     subtitle_codecs = [str(stream.get("codec_name") or "").lower() for stream in streams if stream.get("codec_type") == "subtitle"]
+    audio_languages = sorted(
+        {
+            token
+            for stream in streams
+            if stream.get("codec_type") == "audio"
+            for token in stream_language_tokens(stream)
+            if token
+        }
+    )
     report["videoCodecs"] = sorted({codec for codec in video_codecs if codec})
     report["audioCodecs"] = sorted({codec for codec in audio_codecs if codec})
     report["subtitleCodecs"] = sorted({codec for codec in subtitle_codecs if codec})
+    report["audioLanguages"] = audio_languages
 
     if not video_codecs:
         report["reason"] = "no video stream found"
@@ -283,6 +323,11 @@ def compatibility_report(path: Path):
         return report
     if any(codec and codec not in STREMIO_AUDIO_CODECS for codec in audio_codecs):
         report["reason"] = "unsupported audio codec"
+        return report
+    if audio_codecs and audio_languages and not any(
+        stream_is_english(stream) for stream in streams if stream.get("codec_type") == "audio"
+    ):
+        report["reason"] = "missing english audio track"
         return report
     if any(codec and codec not in STREMIO_SUBTITLE_CODECS for codec in subtitle_codecs):
         report["reason"] = "unsupported subtitle codec"
@@ -356,6 +401,7 @@ def rebuild_compatibility_summary() -> None:
                 "container": report.get("container") or "",
                 "videoCodecs": report.get("videoCodecs") or [],
                 "audioCodecs": report.get("audioCodecs") or [],
+                "audioLanguages": report.get("audioLanguages") or [],
                 "subtitleCodecs": report.get("subtitleCodecs") or [],
                 "reason": report.get("reason") or "unknown",
             }
@@ -419,7 +465,11 @@ def write_storage_health() -> None:
     STORAGE_HEALTH_FILE.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def has_media_file(path: Path) -> bool:
+def path_has_media(path: Path) -> bool:
+    if path.is_file():
+        return path.suffix.lower() in VIDEO_SUFFIXES
+    if not path.is_dir():
+        return False
     for child in path.rglob("*"):
         if child.is_file() and child.suffix.lower() in VIDEO_SUFFIXES:
             return True
@@ -438,7 +488,7 @@ def extract_archive(path: Path) -> bool:
     archives = archive_candidates(path)
     if not archives:
         return False
-    if has_media_file(path):
+    if path_has_media(path):
         return False
     archive = next((candidate for candidate in archives if candidate.suffix.lower() in {".rar", ".zip", ".7z"}), archives[0])
     subprocess.run(["7z", "x", "-y", f"-o{path}", str(archive)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -483,7 +533,7 @@ def process_torrent_downloads(state):
         reports = load_json_file(COMPATIBILITY_FILE)
         reports[torrent_id] = report
         save_json_file(COMPATIBILITY_FILE, reports)
-        if not has_media_file(content_path):
+        if not path_has_media(content_path):
             continue
 
         arr_scan(app, str(content_path), torrent_id)
@@ -526,7 +576,7 @@ def process_usenet_downloads(state):
             reports = load_json_file(COMPATIBILITY_FILE)
             reports[item_key] = report
             save_json_file(COMPATIBILITY_FILE, reports)
-            if not has_media_file(content_path):
+            if not path_has_media(content_path):
                 continue
 
             arr_scan(app, str(content_path), item_key)
@@ -601,9 +651,65 @@ def trigger_recovery():
     save_json_file(RECOVERY_STATE_FILE, recovery_state)
 
 
+def cleanup_stale_state(state):
+    cleanup = {
+        "updatedAt": int(time.time()),
+        "removed": [],
+        "refreshedJellyfin": False,
+    }
+    compatibility = load_json_file(COMPATIBILITY_FILE)
+    changed = False
+
+    for item_id, entry in list(state.items()):
+        entry_path_text = str((entry or {}).get("path") or "").strip()
+        entry_path = Path(entry_path_text) if entry_path_text else None
+        if entry_path is None or not path_has_media(entry_path):
+            cleanup["removed"].append(
+                {
+                    "id": item_id,
+                    "app": entry.get("app") or "",
+                    "path": entry_path_text,
+                    "reason": "imported path missing or no longer contains media",
+                }
+            )
+            state.pop(item_id, None)
+            changed = True
+
+    for item_id, report in list(compatibility.items()):
+        if not isinstance(report, dict):
+            continue
+        report_path_text = str(report.get("path") or "").strip()
+        report_path = Path(report_path_text) if report_path_text else None
+        if report_path is None or not path_has_media(report_path):
+            cleanup["removed"].append(
+                {
+                    "id": item_id,
+                    "app": "compatibility",
+                    "path": report_path_text,
+                    "reason": "compatibility report path missing or no longer contains media",
+                }
+            )
+            compatibility.pop(item_id, None)
+            changed = True
+
+    if changed:
+        save_state(state)
+        save_json_file(COMPATIBILITY_FILE, compatibility)
+        rebuild_compatibility_summary()
+        try:
+            jellyfin_refresh()
+            cleanup["refreshedJellyfin"] = True
+        except Exception as exc:
+            print(f"warning: Jellyfin refresh skipped: {exc}")
+    save_json_file(STALE_STATE_FILE, cleanup)
+
+    return changed
+
+
 def process():
     state = load_state()
     changed = False
+    cleanup_stale_state(state)
     if service_enabled("qbittorrent-vpn"):
         changed = process_torrent_downloads(state) or changed
     if service_enabled("sabnzbd"):

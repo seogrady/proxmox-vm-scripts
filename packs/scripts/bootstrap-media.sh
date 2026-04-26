@@ -2,7 +2,7 @@
 set -euo pipefail
 
 missing=()
-for package in ca-certificates curl python3 unzip nfs-kernel-server p7zip-full; do
+for package in ca-certificates curl python3 unzip nfs-kernel-server p7zip-full ffmpeg; do
   dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'install ok installed' || missing+=("$package")
 done
 if ((${#missing[@]} > 0)); then

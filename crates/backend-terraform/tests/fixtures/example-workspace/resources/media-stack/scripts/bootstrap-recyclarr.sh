@@ -57,6 +57,12 @@ sonarr:
       - trash_id: 72dae194fc92bf828f32cde7744e51a1
         reset_unmatched_scores:
           enabled: true
+    custom_formats:
+      - trash_ids:
+          - 69aa1e159f97d860440b04cd6d590c4f # Language: Not English
+        assign_scores_to:
+          - trash_id: 72dae194fc92bf828f32cde7744e51a1
+            score: -10000
 radarr:
   movies:
     base_url: {radarr_url}
@@ -68,6 +74,12 @@ radarr:
       - trash_id: d1d67249d3890e49bc12e275d989a7e9
         reset_unmatched_scores:
           enabled: true
+    custom_formats:
+      - trash_ids:
+          - 0dc8aec3bd1c47cd6c40c46ecd27e846 # Language: Not English
+        assign_scores_to:
+          - trash_id: d1d67249d3890e49bc12e275d989a7e9
+            score: -10000
 """,
     encoding="utf-8",
 )

@@ -2036,6 +2036,7 @@ mod tests {
         assert!(script.contains("\"use_sonarr\": True"));
         assert!(script.contains("\"use_radarr\": True"));
         assert!(script.contains("p7zip-full"));
+        assert!(script.contains("ffmpeg"));
     }
 
     #[test]
@@ -2055,12 +2056,15 @@ mod tests {
         assert!(script.contains("content_path = raw_path if raw_path.is_dir() else raw_path.parent"));
         assert!(script.contains("existing = state.get(torrent_id, {})"));
         assert!(script.contains("existing.get(\"imported\") and existing.get(\"path\") == str(content_path)"));
+        assert!(script.contains("missing english audio track"));
         assert!(script.contains("MoviesSearch"));
         assert!(script.contains("SeriesSearch"));
         assert!(script.contains("recovery.json"));
         assert!(script.contains("compatibility-summary.json"));
         assert!(script.contains("compatibility-summary.txt"));
         assert!(script.contains("rebuild_compatibility_summary"));
+        assert!(script.contains("cleanup_stale_state"));
+        assert!(script.contains("stale-state.json"));
         assert!(script.contains("storage-health.json"));
         assert!(script.contains("write_storage_health()"));
         assert!(script.contains("UI_INDEX_ROOT"));
@@ -2068,6 +2072,20 @@ mod tests {
         assert!(script.contains("def service_enabled(name: str) -> bool:"));
         assert!(script.contains("\"7z\", \"x\", \"-y\""));
         assert!(script.contains("jellyfin_refresh"));
+    }
+
+    #[test]
+    fn media_cleanup_script_prunes_stale_state_and_refreshes_jellyfin() {
+        let script = include_str!("../../../scripts/media-stack-cleanup.sh");
+        assert!(script.contains("Prune stale media-stack state and refresh Jellyfin"));
+        assert!(script.contains("cleanup_stale_state"));
+        assert!(script.contains("stale-state.json"));
+        assert!(script.contains("--dry-run"));
+        assert!(script.contains("resolve_env_file"));
+        assert!(script.contains("backend/generated/workspace/resources/media-stack/media.env"));
+        assert!(script.contains("VMCTL_MEDIA_ENV_FILE"));
+        assert!(script.contains("jellyfin_refresh"));
+        assert!(script.contains("compatibility-summary.json"));
     }
 
     #[test]
@@ -2311,6 +2329,18 @@ mod tests {
         let service = include_str!("../../../packs/services/prowlarr.toml");
         assert!(service.contains("seed_indexers_torrent = [\"LimeTorrents\", \"Nyaa.si\", \"showRSS\", \"The Pirate Bay\", \"YTS\"]"));
         assert!(service.contains("seed_indexers_usenet = [\"NZBFinder\", \"NZBGeek\", \"NinjaCentral\", \"DrunkenSlug\", \"Usenet Crawler\", \"altHUB\", \"SceneNZB\"]"));
+    }
+
+    #[test]
+    fn media_recyclarr_bootstrap_enforces_english_language_custom_formats() {
+        let script = include_str!(
+            "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-recyclarr.sh"
+        );
+        assert!(script.contains("69aa1e159f97d860440b04cd6d590c4f"));
+        assert!(script.contains("0dc8aec3bd1c47cd6c40c46ecd27e846"));
+        assert!(script.contains("Language: Not English"));
+        assert!(script.contains("score: -10000"));
+        assert!(script.contains("custom_formats:"));
     }
 
     #[test]
