@@ -2138,12 +2138,15 @@ mod tests {
         assert!(caddy.contains("@tizen_stream"));
         assert!(caddy.contains("@tizen_jf_stream"));
         assert!(caddy.contains("@jf_stream"));
+        assert!(caddy.contains("@jellyfin_stream"));
         assert!(caddy.contains("path_regexp tizen_stream ^/[Vv]ideos/([^/]+)/stream$"));
         assert!(caddy.contains("path_regexp tizen_jf_stream ^/jf/[Vv]ideos/([^/]+)/stream$"));
         assert!(caddy.contains("path_regexp jf_stream ^/jf/[Vv]ideos/([^/]+)/stream$"));
+        assert!(caddy.contains("path_regexp jellyfin_stream ^/[Vv]ideos/([^/]+)/stream$"));
         assert!(caddy.contains("rewrite * /Videos/{re.tizen_stream.1}/master.m3u8"));
         assert!(caddy.contains("rewrite * /Videos/{re.tizen_jf_stream.1}/master.m3u8"));
         assert!(caddy.contains("rewrite * /Videos/{re.jf_stream.1}/master.m3u8"));
+        assert!(caddy.contains("rewrite * /Videos/{re.jellyfin_stream.1}/master.m3u8"));
         assert!(caddy.contains("header_up Accept-Encoding identity"));
         assert!(caddy.contains("handle /Videos/*"));
         assert!(caddy.contains("handle /videos/*"));

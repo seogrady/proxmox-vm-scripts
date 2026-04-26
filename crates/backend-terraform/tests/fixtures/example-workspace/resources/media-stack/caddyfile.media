@@ -74,6 +74,10 @@
     path_regexp jf_stream ^/jf/[Vv]ideos/([^/]+)/stream$
   }
 
+  @jellyfin_stream {
+    path_regexp jellyfin_stream ^/[Vv]ideos/([^/]+)/stream$
+  }
+
   handle @tizen_stream {
     rewrite * /Videos/{re.tizen_stream.1}/master.m3u8?{query}
     reverse_proxy {$JELLYFIN_INTERNAL_URL} {
@@ -92,6 +96,14 @@
 
   handle @jf_stream {
     rewrite * /Videos/{re.jf_stream.1}/master.m3u8?{query}
+    reverse_proxy {$JELLYFIN_INTERNAL_URL} {
+      header_up Accept-Encoding identity
+      header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}
+    }
+  }
+
+  handle @jellyfin_stream {
+    rewrite * /Videos/{re.jellyfin_stream.1}/master.m3u8?{query}
     reverse_proxy {$JELLYFIN_INTERNAL_URL} {
       header_up Accept-Encoding identity
       header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}
