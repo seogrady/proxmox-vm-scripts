@@ -61,6 +61,11 @@
             "ui_homepage_enabled": true,
             "ui_homepage_title": "Media Stack"
           },
+          "intel_igpu": {
+            "enabled": true,
+            "mapping": "intel-igpu",
+            "pci_device": "00:02.0"
+          },
           "storage": {
             "path": "/data"
           },

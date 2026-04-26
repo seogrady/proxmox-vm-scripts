@@ -32,6 +32,10 @@ services:
       - .env
     restart: unless-stopped
     network_mode: "host"
+    group_add:
+      - "render"
+    devices:
+      - "/dev/dri:/dev/dri"
     volumes:
       - "${STORAGE_PATH}:/data"
       - "${CONFIG_PATH}/jellyfin:/config"

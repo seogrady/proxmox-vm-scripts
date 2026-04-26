@@ -53,6 +53,7 @@ if service_enabled "caddy"; then
 fi
 if service_enabled "jellyfin"; then
   install -d "$STACK_DIR/config/jellyfin"
+  install -d "$STACK_DIR/config/jellyfin/transcodes"
 fi
 if service_enabled "meilisearch"; then
   install -d "$STACK_DIR/config/meilisearch"

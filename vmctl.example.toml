@@ -147,6 +147,11 @@ jellyfin_admin_password = "${JELLYFIN_ADMIN_PASSWORD}"
 ui_homepage_enabled = true
 ui_homepage_title = "Media Stack"
 
+[resources.features.intel_igpu]
+enabled = true
+mapping = "intel-igpu"
+pci_device = "00:02.0"
+
 [resources.features.media_services.download_routing]
 prefer = "usenet"
 fallback = "torrent"
@@ -200,12 +205,6 @@ enabled = true
 mode = "client"
 auth_key = "${TAILSCALE_AUTH_KEY}"
 tags = ["${default_tailnet_tag}"]
-
-[resources.features.intel_igpu]
-enabled = true
-# The HTPC owns the HDMI-capable GPU for real living room output.
-mapping = "intel-igpu"
-pci_device = "00:02.0"
 
 [resources.features.htpc]
 enabled = true

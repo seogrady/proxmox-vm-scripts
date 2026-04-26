@@ -19,9 +19,11 @@ docker_compose() {
 CONFIG_ROOT="${CONFIG_PATH:-/opt/media/config}"
 BASE_URL_VALUE=""
 JELLYFIN_NETWORK_XML="$CONFIG_ROOT/jellyfin/network.xml"
+JELLYFIN_ENCODING_XML="$CONFIG_ROOT/jellyfin/encoding.xml"
 mkdir -p "$(dirname "$JELLYFIN_NETWORK_XML")"
 export BASE_URL_VALUE
 export JELLYFIN_NETWORK_XML
+export JELLYFIN_ENCODING_XML
 export JELLYFIN_ENV_FILE="$ENV_FILE"
 
 jellyfin_base_updated="$(
@@ -56,7 +58,79 @@ else:
 PY
 )"
 
-if [[ "$jellyfin_base_updated" == "1" ]]; then
+jellyfin_encoding_updated="$(
+python3 <<'PY'
+import os
+import xml.etree.ElementTree as ET
+
+xml_path = os.environ["JELLYFIN_ENCODING_XML"]
+transcoding_temp_path = (os.environ.get("JELLYFIN_TRANSCODING_TEMP_PATH") or "/config/transcodes").strip()
+hwaccel_type = (os.environ.get("JELLYFIN_HWACCEL_TYPE") or "qsv").strip()
+vaapi_device = (os.environ.get("JELLYFIN_HWACCEL_DEVICE") or "/dev/dri/renderD128").strip()
+enable_hardware_encoding = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_ENCODING") or "true").strip().lower() in {"1", "true", "yes", "on"}
+enable_tonemapping = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_TONEMAPPING") or "true").strip().lower() in {"1", "true", "yes", "on"}
+enable_vpp_tonemapping = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_VPP_TONEMAPPING") or "true").strip().lower() in {"1", "true", "yes", "on"}
+enable_10bit_hevc = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_10BIT_HEVC_DECODING") or "true").strip().lower() in {"1", "true", "yes", "on"}
+enable_10bit_vp9 = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_10BIT_VP9_DECODING") or "true").strip().lower() in {"1", "true", "yes", "on"}
+enable_low_power_h264 = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_INTEL_LOW_POWER_H264") or "true").strip().lower() in {"1", "true", "yes", "on"}
+enable_low_power_hevc = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_INTEL_LOW_POWER_HEVC") or "true").strip().lower() in {"1", "true", "yes", "on"}
+
+root = None
+if os.path.exists(xml_path):
+    root = ET.parse(xml_path).getroot()
+else:
+    root = ET.Element("EncodingOptions")
+
+values = {
+    "EncodingThreadCount": "-1",
+    "TranscodingTempPath": transcoding_temp_path,
+    "FallbackFontPath": "",
+    "EnableFallbackFont": "false",
+    "DownMixAudioBoost": "2",
+    "DownMixStereoAlgorithm": "None",
+    "MaxMuxingQueueSize": "2048",
+    "EnableThrottling": "false",
+    "ThrottleDelaySeconds": "180",
+    "EnableSegmentDeletion": "false",
+    "SegmentKeepSeconds": "720",
+    "HardwareAccelerationType": hwaccel_type,
+    "EncoderAppPathDisplay": "/usr/lib/jellyfin-ffmpeg/ffmpeg",
+    "VaapiDevice": vaapi_device,
+    "EnableTonemapping": str(enable_tonemapping).lower(),
+    "EnableVppTonemapping": str(enable_vpp_tonemapping).lower(),
+    "TonemappingAlgorithm": "bt2390",
+    "TonemappingMode": "auto",
+    "TonemappingRange": "auto",
+    "TonemappingDesat": "0",
+    "TonemappingPeak": "100",
+    "TonemappingParam": "0",
+    "VppTonemappingBrightness": "16",
+    "VppTonemappingContrast": "1",
+    "EnableHardwareEncoding": str(enable_hardware_encoding).lower(),
+    "EnableDecodingColorDepth10Hevc": str(enable_10bit_hevc).lower(),
+    "EnableDecodingColorDepth10Vp9": str(enable_10bit_vp9).lower(),
+    "PreferSystemNativeHwDecoder": "true",
+    "EnableIntelLowPowerH264HwEncoder": str(enable_low_power_h264).lower(),
+    "EnableIntelLowPowerHevcHwEncoder": str(enable_low_power_hevc).lower(),
+    "AllowHevcEncoding": "true",
+}
+
+current = {child.tag: (child.text or "") for child in list(root)}
+changed = current != values
+if changed:
+    for tag, value in values.items():
+        node = root.find(tag)
+        if node is None:
+            node = ET.SubElement(root, tag)
+        node.text = value
+    ET.ElementTree(root).write(xml_path, encoding="utf-8", xml_declaration=True)
+    print("1")
+else:
+    print("0")
+PY
+)"
+
+if [[ "$jellyfin_base_updated" == "1" || "$jellyfin_encoding_updated" == "1" ]]; then
   docker_compose up -d jellyfin
   docker_compose restart jellyfin
 fi

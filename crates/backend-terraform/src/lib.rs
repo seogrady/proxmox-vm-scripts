@@ -1868,6 +1868,10 @@ mod tests {
         assert!(script.contains("\"PathInfos\": [{\"Path\": path}]"));
         assert!(script.contains("/Users/{admin_user_id}/Views"));
         assert!(script.contains("do not create a suffixed duplicate library"));
+        assert!(script.contains("JELLYFIN_ENCODING_XML"));
+        assert!(script.contains("HardwareAccelerationType"));
+        assert!(script.contains("EnableHardwareEncoding"));
+        assert!(script.contains("EnableVppTonemapping"));
     }
 
     #[test]
@@ -2133,10 +2137,13 @@ mod tests {
         assert!(caddy.contains("handle /items/*"));
         assert!(caddy.contains("@tizen_stream"));
         assert!(caddy.contains("@tizen_jf_stream"));
+        assert!(caddy.contains("@jf_stream"));
         assert!(caddy.contains("path_regexp tizen_stream ^/[Vv]ideos/([^/]+)/stream$"));
         assert!(caddy.contains("path_regexp tizen_jf_stream ^/jf/[Vv]ideos/([^/]+)/stream$"));
+        assert!(caddy.contains("path_regexp jf_stream ^/jf/[Vv]ideos/([^/]+)/stream$"));
         assert!(caddy.contains("rewrite * /Videos/{re.tizen_stream.1}/master.m3u8"));
         assert!(caddy.contains("rewrite * /Videos/{re.tizen_jf_stream.1}/master.m3u8"));
+        assert!(caddy.contains("rewrite * /Videos/{re.jf_stream.1}/master.m3u8"));
         assert!(caddy.contains("header_up Accept-Encoding identity"));
         assert!(caddy.contains("handle /Videos/*"));
         assert!(caddy.contains("handle /videos/*"));
@@ -2178,6 +2185,14 @@ mod tests {
         assert!(env.contains("VMCTL_HTTP_BASE_URL_SHORT=http://{{resource.name}}"));
         assert!(env.contains("QBITTORRENT_CATEGORY_TV_PATH=/data/torrents/tv"));
         assert!(env.contains("QBITTORRENT_CATEGORY_MOVIES_PATH=/data/torrents/movies"));
+        assert!(env.contains("JELLYFIN_TRANSCODING_TEMP_PATH=/config/transcodes"));
+        assert!(env.contains("JELLYFIN_HWACCEL_TYPE=qsv"));
+        assert!(env.contains("JELLYFIN_HWACCEL_DEVICE=/dev/dri/renderD128"));
+        assert!(env.contains("JELLYFIN_HWACCEL_ENABLE_ENCODING=true"));
+        assert!(env.contains("JELLYFIN_HWACCEL_ENABLE_TONEMAPPING=true"));
+        assert!(env.contains("JELLYFIN_HWACCEL_ENABLE_VPP_TONEMAPPING=true"));
+        assert!(env.contains("JELLYFIN_HWACCEL_ENABLE_10BIT_HEVC_DECODING=true"));
+        assert!(env.contains("JELLYFIN_HWACCEL_ENABLE_INTEL_LOW_POWER_H264=true"));
         assert!(env.contains("AUTOBRR_URL=http://localhost:7474"));
         assert!(env.contains("AUTOBRR_INTERNAL_URL=http://autobrr:7474"));
         assert!(env.contains("AUTOBRR_USERNAME=admin"));
@@ -2432,6 +2447,10 @@ mod tests {
         assert!(generated_compose.contains("image: \"ghcr.io/seerr-team/seerr:v3.2.0\""));
         assert!(generated_compose.contains("image: \"lscr.io/linuxserver/sabnzbd:latest\""));
         assert!(generated_compose.contains("init: true"));
+        assert!(generated_compose.contains("group_add:"));
+        assert!(generated_compose.contains("- \"render\""));
+        assert!(generated_compose.contains("devices:"));
+        assert!(generated_compose.contains("- \"/dev/dri:/dev/dri\""));
         assert_file_fixture(
             &root.join("generated/resources/media-stack/caddyfile.media"),
             include_str!(

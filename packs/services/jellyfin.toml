@@ -1,5 +1,7 @@
 name = "jellyfin"
 container_type = "docker"
+group_add = ["render"]
+devices = ["/dev/dri:/dev/dri"]
 
 [image]
 name = "lscr.io/linuxserver/jellyfin"

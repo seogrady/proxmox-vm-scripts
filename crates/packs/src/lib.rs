@@ -48,6 +48,10 @@ pub struct ServicePack {
     #[serde(default)]
     pub image: BTreeMap<String, Value>,
     #[serde(default)]
+    pub devices: Vec<String>,
+    #[serde(default)]
+    pub group_add: Vec<String>,
+    #[serde(default)]
     pub environment: BTreeMap<String, Value>,
     #[serde(default)]
     pub ports: BTreeMap<String, Value>,
@@ -330,7 +334,21 @@ fn render_template(source: &Path, context: &serde_json::Value) -> Result<String>
         .with_context(|| format!("failed to read template {}", source.display()))?;
     let mut handlebars = Handlebars::new();
     handlebars_helper!(eq: |a: Json, b: Json| a == b);
+    handlebars_helper!(has_items: |value: Json| {
+        if let Some(items) = value.as_array() {
+            !items.is_empty()
+        } else if let Some(items) = value.as_object() {
+            !items.is_empty()
+        } else if let Some(text) = value.as_str() {
+            !text.is_empty()
+        } else if let Some(flag) = value.as_bool() {
+            flag
+        } else {
+            !value.is_null()
+        }
+    });
     handlebars.register_helper("eq", Box::new(eq));
+    handlebars.register_helper("has_items", Box::new(has_items));
     handlebars
         .render_template(&template, context)
         .with_context(|| format!("failed to render template {}", source.display()))

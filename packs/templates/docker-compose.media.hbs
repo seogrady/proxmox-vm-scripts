@@ -69,6 +69,18 @@ services:
       - "{{this}}"
 {{/each}}
 {{/if}}
+{{#if (has_items group_add)}}
+    group_add:
+{{#each group_add}}
+      - "{{this}}"
+{{/each}}
+{{/if}}
+{{#if (has_items devices)}}
+    devices:
+{{#each devices}}
+      - "{{this}}"
+{{/each}}
+{{/if}}
 {{#if vpn_route_through_gluetun}}
 {{#if @root.vpn.enabled}}
     network_mode: "service:gluetun"
