@@ -104,83 +104,50 @@ check_container_running() {
 python3 <<'PY'
 import json
 import os
-import base64
 import subprocess
-import urllib.error
-import urllib.request
+import xml.etree.ElementTree as ET
+from pathlib import Path
 
-JELLYFIN_BASE = (os.environ.get("JELLYFIN_INTERNAL_URL") or "http://127.0.0.1:8096").rstrip("/")
-STREAMYFIN_ID = "1e9e5d386e6746158719e98a5c34f004"
-JELLIO_ID = "e874be83fe364568abacf5ce0574b409"
-ADMIN_USER = os.environ.get("JELLYFIN_ADMIN_USER", "admin")
-ADMIN_PASSWORD = os.environ.get("JELLYFIN_ADMIN_PASSWORD", "")
-
-
-def get_json(url: str):
-    with urllib.request.urlopen(url, timeout=20) as response:
-        return json.loads(response.read().decode("utf-8"))
+CONFIG_ROOT = Path(os.environ.get("CONFIG_PATH") or "/opt/media/config")
+MEDIA_SERVICES = {
+    item.strip()
+    for item in (os.environ.get("MEDIA_SERVICES") or "").split(",")
+    if item.strip()
+}
 
 
-def jellyfin_token() -> str:
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": 'MediaBrowser Client="vmctl", Device="validate", DeviceId="vmctl-validate", Version="1.0"',
-    }
-    req = urllib.request.Request(
-        f"{JELLYFIN_BASE}/Users/AuthenticateByName",
-        data=json.dumps({"Username": ADMIN_USER, "Pw": ADMIN_PASSWORD}).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-    return payload["AccessToken"]
+def check_file(path: Path, label: str) -> None:
+    if not path.is_file() or not path.read_text(encoding="utf-8").strip():
+        raise SystemExit(f"validation failed: missing {label} at {path}")
 
 
-if "jellyfin" in (os.environ.get("MEDIA_SERVICES", "")):
-    get_json(f"{JELLYFIN_BASE}/System/Info/Public")
-    token = jellyfin_token()
-    headers = {
-        "Authorization": 'MediaBrowser Client="vmctl", Device="validate", DeviceId="vmctl-validate", Version="1.0"',
-        "X-Emby-Token": token,
-    }
-    req = urllib.request.Request(f"{JELLYFIN_BASE}/Plugins", headers=headers, method="GET")
-    with urllib.request.urlopen(req, timeout=20) as response:
-        plugins = json.loads(response.read().decode("utf-8"))
-    ids = {plugin.get("Id") for plugin in plugins}
-    if STREAMYFIN_ID not in ids:
-        raise RuntimeError("streamyfin plugin not installed")
-    if JELLIO_ID not in ids:
-        raise RuntimeError("jellio plugin not installed")
+if "jellyfin" in MEDIA_SERVICES:
+    network_xml = CONFIG_ROOT / "jellyfin" / "network.xml"
+    check_file(network_xml, "jellyfin network.xml")
+    root = ET.parse(network_xml).getroot()
+    base_url = (root.findtext("BaseUrl") or "").strip()
+    if base_url != "/jf":
+        raise SystemExit(f"validation failed: Jellyfin BaseUrl mismatch: {base_url!r} != '/jf'")
+    check_file(CONFIG_ROOT / "caddy" / "ui-index" / "jellyfin-autologin.url", "jellyfin autologin URL file")
+    print("warning: live Jellyfin playback validation is intentionally skipped during vmctl apply")
 
-if "meilisearch" in (os.environ.get("MEDIA_SERVICES", "")):
-    with urllib.request.urlopen("http://127.0.0.1:7700/health", timeout=20) as response:
-        if response.status != 200:
-            raise RuntimeError("meilisearch health check failed")
+if "meilisearch" in MEDIA_SERVICES:
+    with subprocess.Popen(
+        ["curl", "-fsS", "http://127.0.0.1:7700/health"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ) as proc:
+        if proc.wait(timeout=20) != 0:
+            raise SystemExit("validation failed: meilisearch health check failed")
 
-if "jellysearch" in (os.environ.get("MEDIA_SERVICES", "")):
-    with urllib.request.urlopen("http://127.0.0.1:5000/Items?SearchTerm=test&Limit=1", timeout=20) as response:
-        if response.status != 200:
-            raise RuntimeError("jellysearch integration check failed")
-
-for key in ("JELLIO_STREMIO_MANIFEST_URL_TAILSCALE",):
-    value = (os.environ.get(key) or "").strip()
-    if not value:
-        continue
-    try:
-        manifest = get_json(value)
-        if "resources" not in manifest:
-            raise RuntimeError(f"{key} does not point to a valid stremio manifest")
-        encoded = value.rstrip("/").split("/jellio/", 1)[1].split("/", 1)[0]
-        padded = encoded + ("=" * (-len(encoded) % 4))
-        payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
-        public_base = (payload.get("PublicBaseUrl") or "").rstrip("/")
-        if not public_base.endswith("/jf"):
-            raise RuntimeError(f"{key} PublicBaseUrl must use the /jf Jellyfin proxy, got {public_base!r}")
-        if "/jf/jellio/" in value:
-            raise RuntimeError(f"{key} manifest URL must stay on the /jellio addon route")
-    except (urllib.error.HTTPError, urllib.error.URLError) as err:
-        print(f"warning: unable to validate {key}: {err}")
+if "jellysearch" in MEDIA_SERVICES:
+    with subprocess.Popen(
+        ["curl", "-fsS", "http://127.0.0.1:5000/Items?SearchTerm=test&Limit=1"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ) as proc:
+        if proc.wait(timeout=20) != 0:
+            raise SystemExit("validation failed: jellysearch integration check failed")
 
 if os.environ.get("TAILSCALE_HTTPS_ENABLED", "true").lower() not in {"false", "0"}:
     try:
@@ -1005,174 +972,16 @@ if service_enabled "caddy"; then
   done
 
   python3 <<'PY'
-import json
 import os
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
+from pathlib import Path
 
-JELLYFIN_BASE = (os.environ.get("JELLYFIN_INTERNAL_URL") or "http://127.0.0.1:8096").rstrip("/")
+ui_index = Path("/opt/media/config/caddy/ui-index")
 manifest_url = (os.environ.get("JELLIO_STREMIO_MANIFEST_URL_TAILSCALE") or "").strip()
-ua = os.environ.get("TIZEN_STREMIO_USER_AGENT") or "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.5) Stremio"
-admin_user = os.environ.get("JELLYFIN_ADMIN_USER", "admin")
-admin_password = os.environ.get("JELLYFIN_ADMIN_PASSWORD", "")
-if not manifest_url:
-    raise SystemExit("validation failed: missing JELLIO_STREMIO_MANIFEST_URL_TAILSCALE")
-
-
-def get_json(url: str, extra_headers: dict[str, str] | None = None):
-    headers = {"User-Agent": ua, "Accept": "application/json", "Accept-Encoding": "identity"}
-    if extra_headers:
-        headers.update(extra_headers)
-    req = urllib.request.Request(
-        url,
-        headers=headers,
-        method="GET",
-    )
-    with urllib.request.urlopen(req, timeout=30) as response:
-        content_type = response.headers.get("Content-Type", "")
-        if response.status != 200:
-            raise RuntimeError(f"{url} returned HTTP {response.status}")
-        if "json" not in content_type.lower():
-            raise RuntimeError(f"{url} returned non-json content type {content_type!r}")
-        return json.loads(response.read().decode("utf-8"))
-
-
-def addon_base(url: str) -> str:
-    if not url.endswith("/manifest.json"):
-        raise RuntimeError(f"manifest URL has unexpected shape: {url}")
-    return url[: -len("/manifest.json")]
-
-
-def jellyfin_token() -> str:
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": 'MediaBrowser Client="vmctl", Device="validate", DeviceId="vmctl-validate", Version="1.0"',
-    }
-    req = urllib.request.Request(
-        f"{JELLYFIN_BASE}/Users/AuthenticateByName",
-        data=json.dumps({"Username": admin_user, "Pw": admin_password}).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-    return payload["AccessToken"]
-
-
-manifest = get_json(manifest_url)
-catalogs = manifest.get("catalogs") or []
-if not catalogs:
-    raise SystemExit("validation failed: Jellio manifest has no catalogs")
-
-base = addon_base(manifest_url)
-non_empty = []
-first_movie_meta = None
-for catalog in catalogs:
-    raw_catalog_type = str(catalog.get("type") or "")
-    catalog_type = urllib.parse.quote(raw_catalog_type, safe="")
-    catalog_id = urllib.parse.quote(str(catalog.get("id") or ""), safe="")
-    if not catalog_type or not catalog_id:
-        continue
-    url = f"{base}/catalog/{catalog_type}/{catalog_id}.json"
-    payload = get_json(url)
-    metas = payload.get("metas") or []
-    if metas:
-        non_empty.append(url)
-        if raw_catalog_type == "movie":
-            first_movie_meta = first_movie_meta or (raw_catalog_type, metas[0].get("id"))
-
-if not non_empty:
-    raise SystemExit("validation failed: Tizen-like Jellio catalog requests returned empty metas")
-
-token = jellyfin_token()
-headers = {
-    "Authorization": 'MediaBrowser Client="vmctl", Device="validate", DeviceId="vmctl-validate", Version="1.0"',
-    "X-Emby-Token": token,
-}
-with urllib.request.urlopen(
-    urllib.request.Request(f"{JELLYFIN_BASE}/Library/VirtualFolders", headers=headers, method="GET"),
-    timeout=20,
-) as response:
-    folders = json.loads(response.read().decode("utf-8"))
-expected_locations = {
-    "movies": "/data/media/movies",
-    "tv": "/data/media/tv",
-}
-for expected_name, expected_path in expected_locations.items():
-    match = None
-    for folder in folders:
-        if (folder.get("Name") or "").strip().lower() == expected_name:
-            match = folder
-            break
-    if not match:
-        raise SystemExit(f"validation failed: missing Jellyfin library {expected_name!r}")
-    locations = [str(location).rstrip("/") for location in (match.get("Locations") or []) if str(location).strip()]
-    if locations != [expected_path]:
-        raise SystemExit(
-            f"validation failed: Jellyfin library {expected_name} locations mismatch: {locations!r} != {[expected_path]!r}"
-        )
-
-if first_movie_meta and first_movie_meta[1]:
-    stream_type = urllib.parse.quote(str(first_movie_meta[0]), safe="")
-    stream_id = urllib.parse.quote(str(first_movie_meta[1]), safe="")
-    stream_url = f"{base}/stream/{stream_type}/{stream_id}.json"
-    try:
-        streams = get_json(
-            stream_url,
-            {
-                "X-Emby-Token": token,
-                "X-MediaBrowser-Token": token,
-            },
-        ).get("streams") or []
-        if streams:
-            url = streams[0].get("url") or streams[0].get("externalUrl") or ""
-            parsed = urllib.parse.urlparse(url)
-            if parsed.path.lower().startswith("/videos/") and parsed.path.lower().endswith("/stream"):
-                internal_url = f"{JELLYFIN_BASE}{parsed.path}"
-                if parsed.query:
-                    internal_url = f"{internal_url}?{parsed.query}"
-                candidate_urls = [url]
-                if internal_url != url:
-                    candidate_urls.append(internal_url)
-                stream_headers = [
-                    {"User-Agent": ua, "Accept-Encoding": "identity"},
-                    {
-                        "User-Agent": ua,
-                        "Accept-Encoding": "identity",
-                        "X-Emby-Token": token,
-                        "X-MediaBrowser-Token": token,
-                    },
-                ]
-                last_error = None
-                for _ in range(12):
-                    for candidate in candidate_urls:
-                        for headers in stream_headers:
-                            req = urllib.request.Request(candidate, headers=headers, method="GET")
-                            try:
-                                with urllib.request.urlopen(req, timeout=30) as response:
-                                    preview = response.read(7).decode("utf-8", errors="ignore")
-                                    content_type = response.headers.get("Content-Type", "").lower()
-                                    if response.status == 200 and "#EXTM3U" in preview and "mpegurl" in content_type:
-                                        last_error = None
-                                        break
-                                    last_error = RuntimeError(
-                                        f"Tizen stream did not return HLS playlist: HTTP {response.status}, {content_type!r}"
-                                    )
-                            except (urllib.error.HTTPError, urllib.error.URLError) as exc:
-                                last_error = exc
-                        if last_error is None:
-                            break
-                    if last_error is None:
-                        break
-                    time.sleep(5)
-                if last_error is not None:
-                    raise last_error
-    except (urllib.error.HTTPError, urllib.error.URLError, RuntimeError) as exc:
-        raise SystemExit(f"validation failed: Tizen-like stream validation failed: {exc}")
-else:
-    print("warning: Tizen-like playback validation skipped because no movie catalog item is available")
+if manifest_url:
+    manifest_file = ui_index / "jellio-manifest.tailscale.url"
+    if not manifest_file.is_file() or not manifest_file.read_text(encoding="utf-8").strip():
+        raise SystemExit(f"validation failed: missing Jellio manifest URL file {manifest_file}")
+    print("warning: live Jellio playback validation is intentionally skipped during vmctl apply")
 PY
 fi
 

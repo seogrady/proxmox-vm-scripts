@@ -18,6 +18,7 @@ pub fn build_desired_state(
         .resources
         .into_iter()
         .map(|resource| apply_defaults(resource, &config.defaults))
+        .filter(|resource| resource.enabled)
         .collect::<Vec<_>>();
     let resources = select_resources(resources, target)?;
 
@@ -860,6 +861,7 @@ mod tests {
         Resource {
             name: name.to_string(),
             kind: kind.to_string(),
+            enabled: true,
             image: None,
             role: None,
             vmid: None,
@@ -867,6 +869,25 @@ mod tests {
             features: BTreeMap::new(),
             settings: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn disabled_resources_are_pruned_before_planning() {
+        let mut disabled = resource("disabled", "vm", vec![]);
+        disabled.enabled = false;
+        let registry = PackRegistry::default();
+        let config = Config {
+            backend: Default::default(),
+            defaults: BTreeMap::new(),
+            consts: BTreeMap::new(),
+            env: BTreeMap::new(),
+            images: BTreeMap::new(),
+            resources: vec![resource("enabled", "vm", vec![]), disabled],
+        };
+
+        let state = build_desired_state(config, &registry, None).unwrap();
+        assert_eq!(state.resources.len(), 1);
+        assert_eq!(state.resources[0].name, "enabled");
     }
 
     fn unique_temp_dir() -> std::path::PathBuf {

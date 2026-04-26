@@ -132,8 +132,8 @@ kind = "vm"
 image = "ubuntu_24_cloud_image"
 role = "media_stack"
 vmid = 210
-cores = 6
-memory = 8192
+cores = 8
+memory = 12288
 disk_gb = 200
 disk_interface = "scsi0"
 scsi_hardware = "virtio-scsi-single"
@@ -206,6 +206,7 @@ scsi_hardware = "virtio-scsi-single"
 iothread = false
 description = "Kodi living room HTPC VM managed by vmctl"
 depends_on = []
+enabled = false
 
 [resources.network]
 mode = "dhcp"

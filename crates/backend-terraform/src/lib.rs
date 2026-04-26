@@ -1338,6 +1338,7 @@ mod tests {
                 Resource {
                     name: "gateway".to_string(),
                     kind: "lxc".to_string(),
+                    enabled: true,
                     image: None,
                     role: None,
                     vmid: Some(101),
@@ -1348,6 +1349,7 @@ mod tests {
                 Resource {
                     name: "media-stack".to_string(),
                     kind: "vm".to_string(),
+                    enabled: true,
                     image: None,
                     role: None,
                     vmid: Some(210),
@@ -1397,6 +1399,7 @@ mod tests {
             resources: vec![Resource {
                 name: "media-stack".to_string(),
                 kind: "vm".to_string(),
+                enabled: true,
                 image: None,
                 role: None,
                 vmid: Some(210),
@@ -1475,6 +1478,7 @@ mod tests {
             resources: vec![Resource {
                 name: "gateway".to_string(),
                 kind: "lxc".to_string(),
+                enabled: true,
                 image: Some("debian_12_lxc_url".to_string()),
                 role: None,
                 vmid: Some(101),
@@ -1541,6 +1545,7 @@ mod tests {
             resources: vec![Resource {
                 name: "media-stack".to_string(),
                 kind: "vm".to_string(),
+                enabled: true,
                 image: Some("ubuntu_24_cloud_image".to_string()),
                 role: None,
                 vmid: Some(210),
@@ -1594,7 +1599,7 @@ mod tests {
     fn parses_scsi_hardware_from_qm_config() {
         assert_eq!(
             scsi_hardware_from_qm_config(
-                "memory: 8192\nscsi0: local-lvm:vm-210-disk-0,iothread=1,size=64G\nscsihw: virtio-scsi-single\n"
+                "memory: 16384\nscsi0: local-lvm:vm-210-disk-0,iothread=1,size=64G\nscsihw: virtio-scsi-single\n"
             ),
             Some("virtio-scsi-single")
         );
@@ -1659,6 +1664,7 @@ mod tests {
             resources: vec![Resource {
                 name: "media-stack".to_string(),
                 kind: "vm".to_string(),
+                enabled: true,
                 image: None,
                 role: None,
                 vmid: Some(210),
@@ -1725,6 +1731,7 @@ mod tests {
             resources: vec![Resource {
                 name: "media-stack".to_string(),
                 kind: "vm".to_string(),
+                enabled: true,
                 image: None,
                 role: None,
                 vmid: Some(210),
@@ -1772,6 +1779,7 @@ mod tests {
             resources: vec![Resource {
                 name: "media-stack".to_string(),
                 kind: "vm".to_string(),
+                enabled: true,
                 image: None,
                 role: None,
                 vmid: Some(210),
@@ -2210,22 +2218,21 @@ mod tests {
             "../tests/fixtures/example-workspace/resources/media-stack/scripts/bootstrap-validate-streaming-stack.sh"
         );
         assert!(script.contains("TIZEN_STREMIO_USER_AGENT"));
-        assert!(script.contains("JELLYFIN_BASE = (os.environ.get(\"JELLYFIN_INTERNAL_URL\")"));
-        assert!(script.contains("expected_locations = {"));
-        assert!(script.contains("locations mismatch"));
-        assert!(script.contains("parsed.path.lower().startswith(\"/videos/\")"));
-        assert!(script.contains("media_roots = {"));
-        assert!(script.contains("RADARR_ROOT_FOLDER"));
-        assert!(script.contains("SONARR_ROOT_FOLDER"));
-        assert!(script.contains("startswith(str(root))"));
+        assert!(script.contains("warning: live Jellyfin playback validation is intentionally skipped during vmctl apply"));
+        assert!(script.contains("jellyfin network.xml"));
+        assert!(script.contains("jellyfin autologin URL file"));
+        assert!(script.contains("missing Jellio manifest URL file"));
+        assert!(!script.contains("wait_for_jellyfin"));
+        assert!(!script.contains("wait_for_jellyfin_token"));
+        assert!(!script.contains("JELLYFIN_BASE = (os.environ.get(\"JELLYFIN_INTERNAL_URL\")"));
+        assert!(!script.contains("/Library/VirtualFolders"));
+        assert!(!script.contains("parsed.path.lower().startswith(\"/videos/\")"));
+        assert!(!script.contains("stream_url ="));
         assert!(script.contains("settings/public\" \"seerr proxied public settings"));
         assert!(script.contains("settings_path = config_root / \"seerr\" / \"settings.json\""));
         assert!(script.contains("settings payload is missing applicationTitle"));
         assert!(script.contains("settings payload has mediaServerLogin disabled"));
         assert!(script.contains("configured_jellyfin = bool"));
-        assert!(script.contains("if not configured_jellyfin:"));
-        assert!(script.contains("\"http://127.0.0.1:5055/api/v1/auth/jellyfin\""));
-        assert!(script.contains("validation failed: Jellyfin login returned HTTP"));
         assert!(script.contains("missing qBittorrent download client"));
         assert!(script.contains("qBittorrent category mismatch"));
         assert!(script.contains("qBittorrent priority mismatch"));
@@ -2250,11 +2257,7 @@ mod tests {
         assert!(script.contains("delete_old_custom_formats: true"));
         assert!(script.contains("trash_id: 72dae194fc92bf828f32cde7744e51a1"));
         assert!(script.contains("trash_id: d1d67249d3890e49bc12e275d989a7e9"));
-        assert!(script.contains("Accept-Encoding\": \"identity"));
-        assert!(script.contains("Tizen-like Jellio catalog requests returned empty metas"));
-        assert!(script
-            .contains("playback validation skipped because no movie catalog item is available"));
-        assert!(script.contains("#EXTM3U"));
+        assert!(script.contains("missing Jellio manifest URL file"));
     }
 
     #[test]

@@ -22,6 +22,8 @@ pub struct BackendConfig {
 pub struct Resource {
     pub name: String,
     pub kind: String,
+    #[serde(default = "default_resource_enabled")]
+    pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
     #[serde(default)]
@@ -34,6 +36,10 @@ pub struct Resource {
     pub features: BTreeMap<String, Value>,
     #[serde(flatten)]
     pub settings: BTreeMap<String, Value>,
+}
+
+fn default_resource_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -4,102 +4,6 @@
     "vmctl_resource_names": "${[for resource in var.resources : resource.name]}"
   },
   "module": {
-    "kodi_htpc": {
-      "bridge": "vmbr0",
-      "depends_on": [
-        "proxmox_virtual_environment_download_file.image_ubuntu_24_cloud_image"
-      ],
-      "node_name": "mini",
-      "resource": {
-        "agent": true,
-        "bridge": "vmbr0",
-        "clone_vmid": null,
-        "cloud_init": {
-          "ssh_key_file": "/home/me/.ssh/id_ed25519.pub",
-          "user": "ubuntu"
-        },
-        "cores": 4,
-        "depends_on": [],
-        "description": "Kodi living room HTPC VM managed by vmctl",
-        "disk_gb": 32,
-        "disk_interface": "scsi0",
-        "features": {
-          "htpc": {
-            "autostart": true,
-            "cec": true,
-            "enabled": true
-          },
-          "intel_igpu": {
-            "enabled": true,
-            "mapping": "intel-igpu",
-            "pci_device": "00:02.0"
-          },
-          "jellyfin": {
-            "enabled": true,
-            "password": "dummy-jellyfin-password",
-            "server_url": "http://media-stack/jf",
-            "username": "admin"
-          },
-          "remote": {
-            "enabled": true,
-            "event_server_port": 9777,
-            "tailscale_https_enabled": true,
-            "tailscale_https_target": "http://127.0.0.1:8080",
-            "web_port": 8080
-          },
-          "tailscale": {
-            "auth_key": "<redacted>",
-            "enabled": true,
-            "mode": "client",
-            "tags": [
-              "tag:homelab"
-            ]
-          }
-        },
-        "hostname": null,
-        "image": "ubuntu_24_cloud_image",
-        "iothread": false,
-        "kind": "vm",
-        "machine": "q35",
-        "memory": 4096,
-        "name": "kodi-htpc",
-        "nameserver": "1.1.1.1",
-        "network": {
-          "address": null,
-          "firewall": null,
-          "gateway": null,
-          "mac": null,
-          "mode": "dhcp",
-          "mtu": null,
-          "vlan_id": null
-        },
-        "node": null,
-        "os_type": null,
-        "provision": {
-          "host": "kodi-htpc",
-          "private_key_file": "<redacted>",
-          "retries": 20,
-          "retry_delay_seconds": 15,
-          "user": "ubuntu"
-        },
-        "role": "kodi_htpc",
-        "rootfs_gb": null,
-        "scsi_hardware": "virtio-scsi-single",
-        "searchdomain": null,
-        "start_on_boot": true,
-        "storage": "local-lvm",
-        "tags": [
-          "vmctl",
-          "homelab"
-        ],
-        "template": "local:import/noble-server-cloudimg-amd64.qcow2",
-        "template_storage": null,
-        "vmid": 211
-      },
-      "source": "./modules/vm",
-      "storage": "local-lvm",
-      "template": "${proxmox_virtual_environment_download_file.image_ubuntu_24_cloud_image.id}"
-    },
     "media_stack": {
       "bridge": "vmbr0",
       "depends_on": [
@@ -115,7 +19,7 @@
           "ssh_key_file": "/home/me/.ssh/id_ed25519.pub",
           "user": "ubuntu"
         },
-        "cores": 6,
+        "cores": 8,
         "depends_on": [
           "tailscale-gateway"
         ],
@@ -182,7 +86,7 @@
         "iothread": false,
         "kind": "vm",
         "machine": null,
-        "memory": 8192,
+        "memory": 16384,
         "name": "media-stack",
         "nameserver": "1.1.1.1",
         "network": {
