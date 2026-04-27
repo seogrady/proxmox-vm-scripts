@@ -24,6 +24,8 @@ pub struct Config {
     #[serde(default)]
     pub env: BTreeMap<String, Value>,
     #[serde(default)]
+    pub groups: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
     pub images: BTreeMap<String, ImageConfig>,
     #[serde(default)]
     pub resources: Vec<Resource>,
@@ -103,7 +105,7 @@ impl Config {
             if resource.name.trim().is_empty() {
                 bail!("resource name cannot be empty");
             }
-            if !matches!(resource.kind.as_str(), "vm" | "lxc") {
+            if !matches!(resource.kind.as_str(), "vm" | "lxc" | "host") {
                 bail!(
                     "resource `{}` has unsupported kind `{}`",
                     resource.name,
@@ -112,6 +114,14 @@ impl Config {
             }
             if !names.insert(resource.name.clone()) {
                 bail!("duplicate resource name `{}`", resource.name);
+            }
+        }
+        for (group, members) in &self.groups {
+            if group.trim().is_empty() {
+                bail!("group name cannot be empty");
+            }
+            if members.iter().any(|member| member.trim().is_empty()) {
+                bail!("group `{group}` contains an empty member");
             }
         }
         self.validate_images()?;

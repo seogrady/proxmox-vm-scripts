@@ -160,7 +160,7 @@ pub fn build_provision_plan(
     desired: &DesiredState,
 ) -> Result<ProvisionPlan> {
     let mut steps = Vec::new();
-    for resource in &desired.resources {
+    for resource in desired.resources.iter().filter(|resource| resource.applies()) {
         let normalized = desired
             .normalized_resources
             .get(&resource.name)

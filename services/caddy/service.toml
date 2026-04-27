@@ -14,8 +14,8 @@ templates = [
   { src = "templates/caddyfile.media.hbs", dst = "caddyfile.media" },
 ]
 
-[scripts]
-provision = "scripts/bootstrap-ui-routing.sh"
+[hooks]
+bootstrap = "scripts/bootstrap-ui-routing.sh"
 
 [container]
 container_type = "docker"

@@ -73,11 +73,12 @@ requires = ["docker"]
 [render]
 templates = ["docker-compose.media.hbs", "media.env.hbs", "media-index.html.hbs", "tailscale-setup.sh.hbs"]
 
-[scripts]
-provision = [
+[hooks]
+bootstrap = [
   "bootstrap-node.sh",
   "bootstrap-tailscale.sh",
   "bootstrap-media.sh",
   "bootstrap-arr.sh",
   "bootstrap-download-unpack.sh",
 ]
+cleanup = "hooks/cleanup.sh"

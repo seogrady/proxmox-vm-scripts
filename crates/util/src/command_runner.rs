@@ -5,6 +5,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VmctlError {
@@ -96,6 +97,7 @@ pub struct CommandOptions {
     pub command: String,
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
+    pub envs: BTreeMap<String, String>,
     pub timeout: Duration,
     pub prefix: LogPrefix,
     pub stream: bool,
@@ -111,6 +113,7 @@ impl CommandOptions {
             command: command.into(),
             args: args.into_iter().map(Into::into).collect(),
             cwd: None,
+            envs: BTreeMap::new(),
             timeout: Duration::from_secs(600),
             prefix: LogPrefix::Vmctl,
             stream: true,
@@ -120,6 +123,19 @@ impl CommandOptions {
 
     pub fn cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
         self.cwd = Some(cwd.into());
+        self
+    }
+
+    pub fn envs<K, V, I>(mut self, envs: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.envs = envs
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.into()))
+            .collect();
         self
     }
 
@@ -168,6 +184,7 @@ pub fn run(options: CommandOptions) -> Result<CommandOutput, VmctlError> {
     if let Some(cwd) = &options.cwd {
         command.current_dir(cwd);
     }
+    command.envs(&options.envs);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = command.spawn().map_err(|error| VmctlError::SpawnFailed {

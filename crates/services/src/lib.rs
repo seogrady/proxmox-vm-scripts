@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
-use glob::glob;
 use serde::{Deserialize, Serialize};
 use toml::Value;
+use vmctl_hook_schema::HookSection;
 use vmctl_domain::{
     Resource, RuntimeConfig, ServiceExecutionPlan, ServiceInstancePlan, ServiceSelection,
     ServiceTemplatePlan,
@@ -25,7 +25,7 @@ pub struct ServiceManifest {
     #[serde(default)]
     pub runtime: RuntimeSection,
     #[serde(default)]
-    pub scripts: ScriptSection,
+    pub hooks: HookSection,
     #[serde(default)]
     pub outputs: OutputSection,
 }
@@ -83,57 +83,6 @@ pub struct RuntimeSection {
 pub struct TemplateSpec {
     pub src: String,
     pub dst: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ScriptSection {
-    #[serde(default)]
-    pub provision: ScriptRefs,
-    #[serde(default)]
-    pub validate: ScriptRefs,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ScriptRefs {
-    One(String),
-    Many(Vec<String>),
-    #[default]
-    None,
-}
-
-impl ScriptRefs {
-    fn resolve(&self, root: &Path) -> Result<Vec<String>> {
-        let patterns = match self {
-            ScriptRefs::One(pattern) => vec![pattern.as_str()],
-            ScriptRefs::Many(patterns) => patterns.iter().map(String::as_str).collect(),
-            ScriptRefs::None => Vec::new(),
-        };
-        let mut resolved = Vec::new();
-        for pattern in patterns {
-            let full_pattern = root.join(pattern);
-            let pattern_text = full_pattern.to_string_lossy().to_string();
-            let mut matches = glob(&pattern_text)
-                .with_context(|| format!("invalid script glob `{pattern}`"))?
-                .collect::<Result<Vec<_>, _>>()
-                .with_context(|| format!("failed to resolve script glob `{pattern}`"))?;
-            matches.sort();
-            if matches.is_empty() && !has_glob_meta(pattern) {
-                matches.push(root.join(pattern));
-            }
-            if matches.is_empty() {
-                bail!("script glob `{pattern}` matched no files");
-            }
-            for path in matches {
-                let relative = path.strip_prefix(root).with_context(|| {
-                    format!("script {} is outside {}", path.display(), root.display())
-                })?;
-                resolved.push(relative.to_string_lossy().to_string());
-            }
-        }
-        resolved.dedup();
-        Ok(resolved)
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -284,8 +233,16 @@ impl ServiceRegistry {
         self.manifests.is_empty()
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn manifests(&self) -> &BTreeMap<String, ServiceManifest> {
         &self.manifests
+    }
+
+    pub fn manifest(&self, name: &str) -> Option<&ServiceManifest> {
+        self.manifests.get(name)
     }
 
     pub fn build_plan(
@@ -373,11 +330,11 @@ impl ServiceRegistry {
                     })
                     .collect(),
                 provision_scripts: manifest
-                    .scripts
-                    .provision
+                    .hooks
+                    .bootstrap
                     .resolve(&self.root.join(&manifest.name))?,
                 validation_scripts: manifest
-                    .scripts
+                    .hooks
                     .validate
                     .resolve(&self.root.join(&manifest.name))?,
                 runtime_requirements: manifest.runtime.requirements.clone(),
@@ -467,11 +424,11 @@ impl ServiceRegistry {
                     written.push(dst);
                 }
             }
-            let mut scripts = instance.provision_scripts.clone();
-            scripts.extend(instance.validation_scripts.clone());
-            for script in scripts {
-                let src = module_dir.join(&script);
-                let dst = output_dir.join(&script);
+            let mut hooks = instance.provision_scripts.clone();
+            hooks.extend(instance.validation_scripts.clone());
+            for hook in hooks {
+                let src = module_dir.join(&hook);
+                let dst = output_dir.join(&hook);
                 if let Some(parent) = dst.parent() {
                     std::fs::create_dir_all(parent)
                         .with_context(|| format!("failed to create {}", parent.display()))?;
@@ -518,14 +475,14 @@ impl ServiceRegistry {
                 }
             }
 
-            let mut scripts = instance.provision_scripts.clone();
-            scripts.extend(instance.validation_scripts.clone());
-            for script in scripts {
-                let src = service_dir.join(&script);
+            let mut hooks = instance.provision_scripts.clone();
+            hooks.extend(instance.validation_scripts.clone());
+            for hook in hooks {
+                let src = service_dir.join(&hook);
                 let dst = resource_dir
-                    .join("scripts")
+                    .join("hooks")
                     .join(&instance.service)
-                    .join(&script);
+                    .join(&hook);
                 if let Some(parent) = dst.parent() {
                     std::fs::create_dir_all(parent)
                         .with_context(|| format!("failed to create {}", parent.display()))?;
@@ -671,10 +628,6 @@ fn resource_services(resource: &Resource) -> Vec<String> {
         .filter_map(Value::as_array)
         .flat_map(|items| items.iter().filter_map(Value::as_str).map(str::to_string))
         .collect()
-}
-
-fn has_glob_meta(pattern: &str) -> bool {
-    pattern.contains('*') || pattern.contains('?') || pattern.contains('[')
 }
 
 fn compose_command<'a>(
@@ -874,10 +827,10 @@ mod tests {
     }
 
     #[test]
-    fn service_scripts_accept_single_paths_arrays_and_globs() {
+    fn service_hooks_accept_single_paths_arrays_and_globs() {
         let root = unique_temp_dir();
         let app = root.join("app");
-        std::fs::create_dir_all(app.join("scripts")).unwrap();
+        std::fs::create_dir_all(app.join("hooks")).unwrap();
         std::fs::write(
             app.join("service.toml"),
             r#"
@@ -885,15 +838,15 @@ mod tests {
             version = "1.0.0"
             scope = "resource"
 
-            [scripts]
-            provision = ["scripts/01.sh", "scripts/provision-*.sh"]
-            validate = "scripts/validate.sh"
+            [hooks]
+            bootstrap = ["hooks/01.sh", "hooks/bootstrap-*.sh"]
+            validate = "hooks/validate.sh"
         "#,
         )
         .unwrap();
-        std::fs::write(app.join("scripts/01.sh"), "").unwrap();
-        std::fs::write(app.join("scripts/provision-02.sh"), "").unwrap();
-        std::fs::write(app.join("scripts/validate.sh"), "").unwrap();
+        std::fs::write(app.join("hooks/01.sh"), "").unwrap();
+        std::fs::write(app.join("hooks/bootstrap-02.sh"), "").unwrap();
+        std::fs::write(app.join("hooks/validate.sh"), "").unwrap();
 
         let registry = ServiceRegistry::load(&root).unwrap();
         let plan = registry
@@ -907,13 +860,13 @@ mod tests {
         assert_eq!(
             plan.instances[0].provision_scripts,
             vec![
-                "scripts/01.sh".to_string(),
-                "scripts/provision-02.sh".to_string()
+                "hooks/01.sh".to_string(),
+                "hooks/bootstrap-02.sh".to_string()
             ]
         );
         assert_eq!(
             plan.instances[0].validation_scripts,
-            vec!["scripts/validate.sh".to_string()]
+            vec!["hooks/validate.sh".to_string()]
         );
 
         std::fs::remove_dir_all(root).unwrap();
@@ -931,7 +884,7 @@ mod tests {
                 optional: optional.iter().map(|value| (*value).to_string()).collect(),
             },
             runtime: RuntimeSection::default(),
-            scripts: ScriptSection::default(),
+            hooks: HookSection::default(),
             outputs: OutputSection::default(),
         }
     }

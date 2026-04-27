@@ -20,8 +20,8 @@ optional = ["jellysearch", "jellystat"]
 requirements = ["dev-dri", "vaapi", "compose-service"]
 services = ["jellyfin"]
 
-[scripts]
-provision = [
+[hooks]
+bootstrap = [
   "scripts/bootstrap-jellyfin.sh",
   "scripts/bootstrap-jellyfin-plugins.sh",
   "scripts/bootstrap-streamyfin.sh",

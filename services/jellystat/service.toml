@@ -11,8 +11,8 @@ optional = []
 requirements = ["compose-service"]
 services = ["jellystat"]
 
-[scripts]
-provision = "scripts/bootstrap-jellystat.sh"
+[hooks]
+bootstrap = "scripts/bootstrap-jellystat.sh"
 
 [container]
 container_type = "docker"

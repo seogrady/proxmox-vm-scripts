@@ -11,8 +11,8 @@ optional = []
 requirements = ["compose-service"]
 services = ["recyclarr"]
 
-[scripts]
-provision = "scripts/bootstrap-recyclarr.sh"
+[hooks]
+bootstrap = "scripts/bootstrap-recyclarr.sh"
 
 [container]
 container_type = "docker"

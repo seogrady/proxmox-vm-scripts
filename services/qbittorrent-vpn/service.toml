@@ -11,8 +11,8 @@ optional = []
 requirements = ["compose-service", "vpn-network", "media-storage"]
 services = ["qbittorrent-vpn"]
 
-[scripts]
-provision = "scripts/bootstrap-qbittorrent.sh"
+[hooks]
+bootstrap = "scripts/bootstrap-qbittorrent.sh"
 
 [container]
 container_type = "docker"

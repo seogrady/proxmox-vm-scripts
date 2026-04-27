@@ -22,6 +22,8 @@ vmctl-backend-native = { path = "crates/backend-native" }
 vmctl-backend-terraform = { path = "crates/backend-terraform" }
 vmctl-config = { path = "crates/config" }
 vmctl-dependencies = { path = "crates/dependencies" }
+vmctl-hook-schema = { path = "crates/hook-schema" }
+vmctl-hooks = { path = "crates/hooks" }
 vmctl-domain = { path = "crates/domain" }
 vmctl-import = { path = "crates/import" }
 vmctl-lockfile = { path = "crates/lockfile" }

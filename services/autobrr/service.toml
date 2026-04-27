@@ -11,8 +11,8 @@ optional = ["qbittorrent-vpn"]
 requirements = ["compose-service"]
 services = ["autobrr"]
 
-[scripts]
-provision = "scripts/bootstrap-autobrr.sh"
+[hooks]
+bootstrap = "scripts/bootstrap-autobrr.sh"
 
 [container]
 container_type = "docker"

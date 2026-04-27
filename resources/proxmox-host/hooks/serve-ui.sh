@@ -10,7 +10,7 @@ proxies it to the local Proxmox UI at https://localhost:8006. It does not use
 Tailscale Funnel and does not expose the UI to the public internet.
 
 Usage:
-  scripts/proxmox-host-serve-ui.sh [options]
+  resources/proxmox-host/hooks/serve-ui.sh [options]
 
 Options:
   --backend URL       Local Proxmox UI URL. Default: https+insecure://localhost:8006
@@ -21,9 +21,9 @@ Options:
   -h, --help         Show this help.
 
 Examples:
-  sudo scripts/proxmox-host-serve-ui.sh
-  sudo scripts/proxmox-host-serve-ui.sh --status
-  sudo scripts/proxmox-host-serve-ui.sh --disable
+  sudo resources/proxmox-host/hooks/serve-ui.sh
+  sudo resources/proxmox-host/hooks/serve-ui.sh --status
+  sudo resources/proxmox-host/hooks/serve-ui.sh --disable
 EOF
 }
 
@@ -72,7 +72,7 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 if ! command -v tailscale >/dev/null 2>&1; then
-  echo "tailscale is not installed; run scripts/proxmox-host-tailscale.sh first" >&2
+  echo "tailscale is not installed; run resources/proxmox-host/hooks/setup-tailscale.sh first" >&2
   exit 1
 fi
 

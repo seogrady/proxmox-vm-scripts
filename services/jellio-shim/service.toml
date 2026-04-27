@@ -14,8 +14,8 @@ templates = [
   { src = "templates/jellio-shim.py.hbs", dst = "jellio-shim.py" },
 ]
 
-[scripts]
-provision = "scripts/bootstrap-jellio.sh"
+[hooks]
+bootstrap = "scripts/bootstrap-jellio.sh"
 
 [container]
 container_type = "docker"

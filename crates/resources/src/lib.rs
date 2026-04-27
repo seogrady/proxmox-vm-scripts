@@ -2,11 +2,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use glob::glob;
 use handlebars::handlebars_helper;
 use handlebars::Handlebars;
 use serde::{Deserialize, Serialize};
 use toml::Value;
+use vmctl_hook_schema::HookSection;
 use vmctl_domain::{Expansion, Resource};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,7 +20,7 @@ pub struct ResourceManifest {
     #[serde(default)]
     pub render: RenderConfig,
     #[serde(default)]
-    pub scripts: ScriptConfig,
+    pub hooks: HookSection,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -33,57 +33,6 @@ pub struct RoleDefaults {
 pub struct RenderConfig {
     #[serde(default)]
     pub templates: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ScriptConfig {
-    #[serde(default)]
-    pub provision: ScriptRefs,
-    #[serde(default)]
-    pub validate: ScriptRefs,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ScriptRefs {
-    One(String),
-    Many(Vec<String>),
-    #[default]
-    None,
-}
-
-impl ScriptRefs {
-    fn resolve(&self, root: &Path) -> Result<Vec<String>> {
-        let patterns = match self {
-            ScriptRefs::One(pattern) => vec![pattern.as_str()],
-            ScriptRefs::Many(patterns) => patterns.iter().map(String::as_str).collect(),
-            ScriptRefs::None => Vec::new(),
-        };
-        let mut resolved = Vec::new();
-        for pattern in patterns {
-            let full_pattern = root.join(pattern);
-            let pattern_text = full_pattern.to_string_lossy().to_string();
-            let mut matches = glob(&pattern_text)
-                .with_context(|| format!("invalid script glob `{pattern}`"))?
-                .collect::<Result<Vec<_>, _>>()
-                .with_context(|| format!("failed to resolve script glob `{pattern}`"))?;
-            matches.sort();
-            if matches.is_empty() && !has_glob_meta(pattern) {
-                matches.push(root.join(pattern));
-            }
-            if matches.is_empty() {
-                bail!("script glob `{pattern}` matched no files");
-            }
-            for path in matches {
-                let relative = path.strip_prefix(root).with_context(|| {
-                    format!("script {} is outside {}", path.display(), root.display())
-                })?;
-                resolved.push(relative.to_string_lossy().to_string());
-            }
-        }
-        resolved.dedup();
-        Ok(resolved)
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,6 +120,14 @@ impl ResourceRegistry {
         &self.resources
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn manifest_for_role(&self, role: &str) -> Option<&ResourceManifest> {
+        self.roles.get(role)
+    }
+
     fn resource_owned_path(&self, resource: &Resource, kind: &str, file: &str) -> PathBuf {
         self.root.join(&resource.name).join(kind).join(file)
     }
@@ -198,9 +155,9 @@ impl ResourceRegistry {
         }
 
         let resource_scripts_root = self.root.join(&resource.name).join("scripts");
-        let mut bootstrap_steps = role.scripts.provision.resolve(&resource_scripts_root)?;
+        let mut bootstrap_steps = role.hooks.bootstrap.resolve(&resource_scripts_root)?;
         bootstrap_steps.dedup();
-        let validation_steps = role.scripts.validate.resolve(&resource_scripts_root)?;
+        let validation_steps = role.hooks.validate.resolve(&resource_scripts_root)?;
 
         let mut expansion = Expansion {
             files: role.render.templates.clone(),
@@ -336,7 +293,7 @@ fn load_resource_manifests(
         let mut resource: Resource = value
             .try_into()
             .with_context(|| format!("failed to deserialize {}", path.display()))?;
-        for owned_key in ["defaults", "render", "scripts"] {
+        for owned_key in ["defaults", "render", "hooks"] {
             resource.settings.remove(owned_key);
         }
         let expected = entry.file_name().to_string_lossy().to_string();
@@ -445,7 +402,7 @@ fn service_definition_value(mut value: Value) -> Value {
         "inputs",
         "dependencies",
         "runtime",
-        "scripts",
+        "hooks",
         "outputs",
     ] {
         table.remove(manifest_key);
@@ -479,10 +436,6 @@ fn load_toml_value(
         }
         _ => Ok(value),
     }
-}
-
-fn has_glob_meta(pattern: &str) -> bool {
-    pattern.contains('*') || pattern.contains('?') || pattern.contains('[')
 }
 
 fn render_template(source: &Path, context: &serde_json::Value) -> Result<String> {
@@ -846,8 +799,8 @@ mod tests {
             [render]
             templates = ["example.txt.hbs"]
 
-            [scripts]
-            provision = ["bootstrap.sh"]
+            [hooks]
+            bootstrap = ["bootstrap.sh"]
             "#,
         )
         .unwrap();

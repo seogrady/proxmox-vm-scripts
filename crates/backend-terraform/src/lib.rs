@@ -299,7 +299,7 @@ fn validate_live_inputs(desired: &DesiredState) -> Result<()> {
         bail!("live Terraform backend requires backend.proxmox.node or per-resource node");
     }
 
-    for resource in &desired.resources {
+    for resource in desired.resources.iter().filter(|resource| resource.applies()) {
         let normalized = desired
             .normalized_resources
             .get(&resource.name)
@@ -517,7 +517,7 @@ fn provider_json(desired: &DesiredState) -> serde_json::Value {
 
 fn main_json(desired: &DesiredState, include_proxmox_resources: bool) -> serde_json::Value {
     let mut services = Map::new();
-    for resource in &desired.resources {
+    for resource in desired.resources.iter().filter(|resource| resource.applies()) {
         services.insert(module_name(resource), module_json(resource, desired));
     }
 
@@ -741,6 +741,7 @@ fn image_needed_for_new_resource(
     desired
         .resources
         .iter()
+        .filter(|resource| resource.applies())
         .filter(|resource| resource.image.as_deref() == Some(image.name.as_str()))
         .any(|resource| !resource_exists_locally(resource, desired))
 }
@@ -2132,7 +2133,7 @@ mod tests {
 
     #[test]
     fn media_cleanup_script_prunes_stale_state_and_refreshes_jellyfin() {
-        let script = include_str!("../../../scripts/media-stack-cleanup.sh");
+        let script = include_str!("../../../resources/media-stack/hooks/cleanup.sh");
         assert!(script.contains("Prune stale media-stack state and refresh Jellyfin"));
         assert!(script.contains("cleanup_stale_state"));
         assert!(script.contains("stale-state.json"));

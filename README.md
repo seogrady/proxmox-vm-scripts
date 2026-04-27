@@ -359,16 +359,27 @@ Proxmox host shell access is separate from vmctl-managed resources. Do not put
 host SSH access into the `tailscale-gateway` container: the gateway is for
 resource networking, while the Proxmox node is the management plane.
 
-Use the standalone host script from a Proxmox node shell:
+Use the host hook from a Proxmox node shell:
 
 ```bash
 sudo TAILSCALE_AUTH_KEY=tskey-auth-... \
-  scripts/proxmox-host-tailscale.sh \
+  resources/proxmox-host/hooks/setup-tailscale.sh \
   --hostname proxmox-mini \
   --tag tag:homelab
 ```
 
-The script installs Tailscale on the host, starts `tailscaled`, and runs
+The `proxmox-host` resource is defined with `apply = false`, so `vmctl apply`
+does not try to provision it. It is only there so
+`vmctl run <hook> --target proxmox-host` can execute host-only lifecycle hooks.
+
+For example:
+
+```bash
+vmctl run bootstrap --target proxmox-host
+vmctl run serve-ui --target proxmox-host
+```
+
+The hook installs Tailscale on the host, starts `tailscaled`, and runs
 `tailscale up` for host access only. It does not advertise subnet routes, does
 not enable exit-node mode, and does not modify `vmctl.toml`. By default it uses
 normal OpenSSH over the tailnet:
@@ -388,7 +399,7 @@ To expose the Proxmox Web UI privately inside the tailnet, enable Tailscale
 Serve on the host:
 
 ```bash
-sudo scripts/proxmox-host-serve-ui.sh
+sudo resources/proxmox-host/hooks/serve-ui.sh
 ```
 
 That proxies the local Proxmox UI at `https://localhost:8006` to the host's
@@ -405,8 +416,8 @@ lets Tailscale terminate HTTPS with its tailnet certificate.
 Check or disable the Serve mapping with:
 
 ```bash
-sudo scripts/proxmox-host-serve-ui.sh --status
-sudo scripts/proxmox-host-serve-ui.sh --disable
+sudo resources/proxmox-host/hooks/serve-ui.sh --status
+sudo resources/proxmox-host/hooks/serve-ui.sh --disable
 ```
 
 Tailscale SSH is optional and separate from normal OpenSSH. Enable it only when
@@ -414,7 +425,7 @@ you want Tailscale to handle SSH authorization:
 
 ```bash
 sudo TAILSCALE_AUTH_KEY=tskey-auth-... \
-  scripts/proxmox-host-tailscale.sh \
+  resources/proxmox-host/hooks/setup-tailscale.sh \
   --hostname proxmox-mini \
   --tag tag:homelab \
   --tailscale-ssh
@@ -652,5 +663,6 @@ The implementation follows the crate layout in `plans/modular-vmctl-architecture
 ## Resource And Service Layout
 
 - `resources/<name>/resource.toml` contains resource defaults and composition.
-- `resources/<name>/templates/` and `resources/<name>/scripts/` contain resource-owned render and bootstrap assets.
+- `resources/<name>/templates/` and `resources/<name>/hooks/` contain resource-owned render and lifecycle assets.
 - `services/<name>/service.toml` contains service orchestration metadata and the container definition.
+- `services/<name>/hooks/` contains service-owned lifecycle assets.

@@ -5,12 +5,12 @@ usage() {
   cat <<'EOF'
 Install and configure Tailscale on the Proxmox host for host SSH access.
 
-This script is intentionally separate from vmctl resources and from the
+This hook is intentionally separate from vmctl-managed resources and from the
 tailscale-gateway container. It does not advertise LAN routes, does not enable
 exit-node mode, and does not modify vmctl.toml.
 
 Usage:
-  scripts/proxmox-host-tailscale.sh [options]
+  resources/proxmox-host/hooks/setup-tailscale.sh [options]
 
 Options:
   --auth-key KEY          Tailscale auth key. Defaults to TAILSCALE_AUTH_KEY.
@@ -22,7 +22,7 @@ Options:
   -h, --help             Show this help.
 
 Examples:
-  sudo TAILSCALE_AUTH_KEY=tskey-auth-... scripts/proxmox-host-tailscale.sh \
+  sudo TAILSCALE_AUTH_KEY=tskey-auth-... resources/proxmox-host/hooks/setup-tailscale.sh \
     --hostname proxmox-mini --tag tag:homelab
 
   ssh root@proxmox-mini.tailnet-name.ts.net

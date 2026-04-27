@@ -55,6 +55,10 @@ WIREGUARD_PRIVATE_KEY = ""
 WIREGUARD_ADDRESSES = ""
 VPN_SERVER_CITIES = ""
 
+[groups]
+infra = ["tailscale-gateway", "proxmox-host"]
+media = ["media-stack"]
+
 [images.debian_12_lxc]
 kind = "lxc"
 source = "pveam"

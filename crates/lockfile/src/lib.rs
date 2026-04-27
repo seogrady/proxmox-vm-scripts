@@ -45,6 +45,7 @@ impl Lockfile {
         let resources = desired
             .resources
             .iter()
+            .filter(|resource| resource.applies())
             .map(locked_resource)
             .collect::<Result<Vec<_>>>()?;
         let artifacts = artifact_paths

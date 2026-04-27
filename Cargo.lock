@@ -487,6 +487,7 @@ dependencies = [
  "vmctl-config",
  "vmctl-dependencies",
  "vmctl-domain",
+ "vmctl-hooks",
  "vmctl-import",
  "vmctl-lockfile",
  "vmctl-planner",
@@ -560,6 +561,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "vmctl-hook-schema"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glob",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "vmctl-hooks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glob",
+ "serde",
+ "serde_json",
+ "toml",
+ "vmctl-config",
+ "vmctl-domain",
+ "vmctl-hook-schema",
+ "vmctl-resources",
+ "vmctl-services",
+ "vmctl-util",
+]
+
+[[package]]
 name = "vmctl-import"
 version = "0.1.0"
 dependencies = [
@@ -623,6 +651,7 @@ dependencies = [
  "toml",
  "vmctl-config",
  "vmctl-domain",
+ "vmctl-hook-schema",
 ]
 
 [[package]]
@@ -634,6 +663,7 @@ dependencies = [
  "serde",
  "toml",
  "vmctl-domain",
+ "vmctl-hook-schema",
 ]
 
 [[package]]

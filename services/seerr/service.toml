@@ -11,8 +11,8 @@ optional = []
 requirements = ["compose-service"]
 services = ["seerr"]
 
-[scripts]
-provision = "scripts/bootstrap-seerr.sh"
+[hooks]
+bootstrap = "scripts/bootstrap-seerr.sh"
 
 [container]
 container_type = "docker"

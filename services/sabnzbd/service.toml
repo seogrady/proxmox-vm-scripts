@@ -11,8 +11,8 @@ optional = []
 requirements = ["compose-service", "media-storage"]
 services = ["sabnzbd"]
 
-[scripts]
-provision = "scripts/bootstrap-sabnzbd.sh"
+[hooks]
+bootstrap = "scripts/bootstrap-sabnzbd.sh"
 
 [container]
 container_type = "docker"

@@ -294,6 +294,15 @@ impl ServiceSelection {
     }
 }
 
+impl Resource {
+    pub fn applies(&self) -> bool {
+        self.settings
+            .get("apply")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -11,8 +11,8 @@ optional = []
 requirements = ["compose-service"]
 services = ["flaresolverr"]
 
-[scripts]
-provision = "scripts/bootstrap-flaresolverr.sh"
+[hooks]
+bootstrap = "scripts/bootstrap-flaresolverr.sh"
 
 [container]
 container_type = "docker"

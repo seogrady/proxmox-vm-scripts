@@ -18,6 +18,7 @@ vmctl-backend.workspace = true
 vmctl-backend-terraform.workspace = true
 vmctl-config.workspace = true
 vmctl-dependencies.workspace = true
+vmctl-hooks.workspace = true
 vmctl-domain.workspace = true
 vmctl-import.workspace = true
 vmctl-lockfile.workspace = true

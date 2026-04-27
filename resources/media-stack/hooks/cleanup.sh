@@ -3,7 +3,7 @@ set -euo pipefail
 
 STACK_DIR="${STACK_DIR:-/opt/media}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 resolve_env_file() {
   local candidate
@@ -51,6 +51,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -61,6 +62,7 @@ ENV_FILE = Path(os.environ["VMCTL_MEDIA_ENV_FILE"])
 STACK_DIR = Path(os.environ.get("STACK_DIR") or os.environ.get("VMCTL_MEDIA_STACK_DIR") or "/opt/media")
 COMPOSE_FILE = STACK_DIR / "docker-compose.yml"
 COMPOSE_PROJECT_NAME = os.environ.get("COMPOSE_PROJECT_NAME", "media")
+HOOK_COMMAND = (os.environ.get("VMCTL_COMMAND") or "").strip()
 CONFIG_ROOT = Path(os.environ.get("CONFIG_PATH") or str(STACK_DIR / "config"))
 VMCTL_HOST_SHORT = (os.environ.get("VMCTL_HOST_SHORT") or "").strip()
 VMCTL_RESOURCE_NAME = (os.environ.get("VMCTL_RESOURCE_NAME") or "").strip()
@@ -263,6 +265,11 @@ def load_json_file(path: Path):
 def save_json_file(path: Path, payload) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def env_flag(name: str) -> bool:
+    value = (os.environ.get(name) or "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def path_has_media(path: Path) -> bool:
@@ -839,6 +846,22 @@ def cleanup_stale_state(dry_run: bool = False) -> dict:
 
 def main() -> int:
     import argparse
+
+    if not sys.argv[1:] and HOOK_COMMAND:
+        dry_run = env_flag("VMCTL_MEDIA_DRY_RUN")
+        if HOOK_COMMAND == "cleanup":
+            cleanup = cleanup_stale_state(dry_run=dry_run)
+        elif HOOK_COMMAND == "prune-orphans":
+            cleanup = prune_arr_orphans(
+                dry_run=dry_run,
+                include_seeding=env_flag("VMCTL_MEDIA_INCLUDE_SEEDING"),
+            )
+        elif HOOK_COMMAND == "restore-torrents":
+            cleanup = restore_torrents(dry_run=dry_run)
+        else:
+            raise SystemExit(f"unsupported hook command: {HOOK_COMMAND}")
+        print(json.dumps(cleanup, indent=2, sort_keys=True))
+        return 0
 
     parser = argparse.ArgumentParser(description="Prune stale media-stack state and refresh Jellyfin")
     parser.add_argument("--dry-run", action="store_true", help="Report stale entries without modifying state")

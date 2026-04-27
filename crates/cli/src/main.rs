@@ -18,8 +18,10 @@ use vmctl_backend_terraform::TerraformBackend;
 use vmctl_config::{resolve_config_path, Config};
 use vmctl_dependencies::{backend_kind, CommandScope, DependencyPlan};
 use vmctl_domain::{DesiredState, ImageKind, ImageSource, ResolvedImage, Workspace};
+use vmctl_hooks::{run_hooks, HookRunRequest};
 use vmctl_lockfile::Lockfile;
 use vmctl_resources::ResourceRegistry;
+use vmctl_services::ServiceRegistry;
 use vmctl_util::command_runner::{self, CommandOptions, LogPrefix};
 
 const GLOBAL_APPLY_TIMEOUT: Duration = Duration::from_secs(3600);
@@ -93,6 +95,19 @@ enum Command {
     Sync,
     Provision {
         target: Option<String>,
+    },
+    Run {
+        command: String,
+        #[arg(long, value_delimiter = ',')]
+        target: Vec<String>,
+        #[arg(long, value_delimiter = ',')]
+        group: Vec<String>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        parallel: bool,
+        #[arg(long)]
+        continue_on_error: bool,
     },
     Backend {
         #[command(subcommand)]
@@ -300,6 +315,45 @@ fn main() -> Result<()> {
                 &progress,
             )?;
             println!("{}", result.summary);
+            Ok(())
+        }
+        Command::Run {
+            command,
+            target,
+            group,
+            dry_run,
+            parallel,
+            continue_on_error,
+        } => {
+            let (config, desired, resource_registry, service_registry) =
+                load_hook_workspace(cli.config.as_deref(), &cli.resources, &cli.services)?;
+            let report = run_hooks(
+                HookRunRequest {
+                    command,
+                    targets: target,
+                    groups: group,
+                    dry_run,
+                    parallel,
+                    continue_on_error,
+                },
+                &config,
+                &desired,
+                &resource_registry,
+                &service_registry,
+            )?;
+            if dry_run {
+                println!(
+                    "planned {} hook nodes for `{}`",
+                    report.order.len(),
+                    report.command
+                );
+            } else {
+                println!(
+                    "ran {} hook nodes for `{}`",
+                    report.executed.len(),
+                    report.command
+                );
+            }
             Ok(())
         }
         Command::Backend { command } => match command {
@@ -980,7 +1034,16 @@ fn validate_apply_preflight_with_host_memory(
     host_memory_mib: Option<u64>,
 ) -> Result<()> {
     let mut failures = Vec::new();
-    for resource in desired.normalized_resources.values() {
+    for (name, resource) in &desired.normalized_resources {
+        let applies = desired
+            .resources
+            .iter()
+            .find(|candidate| candidate.name == *name)
+            .map(|resource| resource.applies())
+            .unwrap_or(true);
+        if !applies {
+            continue;
+        }
         if resource.kind == "vm" {
             if resource.machine.as_deref() == Some("q35")
                 && vmctl_util::command_exists("qm")
@@ -2346,6 +2409,36 @@ fn load_workspace(
     Ok((workspace, desired, registry))
 }
 
+fn load_hook_workspace(
+    config_path: Option<&Path>,
+    resources_path: &Path,
+    services_path: &Path,
+) -> Result<(Config, DesiredState, ResourceRegistry, ServiceRegistry)> {
+    let config_path = resolve_config_path(config_path)?.path;
+    let raw = std::fs::read_to_string(&config_path)
+        .with_context(|| format!("failed to read {}", config_path.display()))?;
+    let process_env = vmctl_config::process_env_with_shell_fallback(&std::env::vars().collect())?;
+    let config_value = vmctl_config::resolve_toml_value(
+        raw.parse().context("failed to parse vmctl TOML")?,
+        &process_env,
+    )?;
+    let config = Config::from_value(config_value.clone())?;
+    let registry = ResourceRegistry::load_with_config(
+        resources_path,
+        services_path,
+        &config_value,
+        &process_env,
+    )?;
+    let service_registry = ServiceRegistry::load(services_path)?;
+    let desired = vmctl_planner::build_desired_state_with_services(
+        config.clone(),
+        &registry,
+        &service_registry,
+        None,
+    )?;
+    Ok((config, desired, registry, service_registry))
+}
+
 fn load_workspace_with_fingerprint(
     config_path: Option<&Path>,
     resources_path: &Path,
@@ -3510,7 +3603,7 @@ Interface: vmbr0
     fn proxmox_host_tailscale_script_is_host_only() {
         let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
-            .join("scripts/proxmox-host-tailscale.sh");
+            .join("resources/proxmox-host/hooks/setup-tailscale.sh");
         let content = std::fs::read_to_string(&script).unwrap();
 
         assert!(content.contains("tailscale up"));
@@ -3531,7 +3624,7 @@ Interface: vmbr0
     fn proxmox_host_ui_serve_script_is_tailnet_only() {
         let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
-            .join("scripts/proxmox-host-serve-ui.sh");
+            .join("resources/proxmox-host/hooks/serve-ui.sh");
         let content = std::fs::read_to_string(&script).unwrap();
 
         assert!(content.contains("tailscale serve"));

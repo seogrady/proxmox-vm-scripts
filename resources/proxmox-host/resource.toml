@@ -1,0 +1,7 @@
+name = "proxmox-host"
+kind = "host"
+apply = false
+
+[hooks]
+bootstrap = "hooks/setup-tailscale.sh"
+serve-ui = "hooks/serve-ui.sh"
