@@ -68,6 +68,7 @@ xml_path = os.environ["JELLYFIN_ENCODING_XML"]
 transcoding_temp_path = (os.environ.get("JELLYFIN_TRANSCODING_TEMP_PATH") or "/config/transcodes").strip()
 hwaccel_type = (os.environ.get("JELLYFIN_HWACCEL_TYPE") or "qsv").strip()
 vaapi_device = (os.environ.get("JELLYFIN_HWACCEL_DEVICE") or "/dev/dri/renderD128").strip()
+ffmpeg_path = (os.environ.get("JELLYFIN_FFMPEG_PATH") or "/usr/lib/jellyfin-ffmpeg/ffmpeg").strip()
 enable_hardware_encoding = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_ENCODING") or "true").strip().lower() in {"1", "true", "yes", "on"}
 enable_tonemapping_raw = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_TONEMAPPING") or "auto").strip().lower()
 enable_vpp_tonemapping = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_VPP_TONEMAPPING") or "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -87,7 +88,7 @@ def probe_opencl_support() -> bool:
     try:
         subprocess.run(
             [
-                "/usr/lib/jellyfin-ffmpeg/ffmpeg",
+                ffmpeg_path or "/usr/lib/jellyfin-ffmpeg/ffmpeg",
                 "-v",
                 "error",
                 "-init_hw_device",
@@ -134,7 +135,7 @@ values = {
     "EnableSegmentDeletion": "false",
     "SegmentKeepSeconds": "720",
     "HardwareAccelerationType": hwaccel_type,
-    "EncoderAppPathDisplay": "/usr/lib/jellyfin-ffmpeg/ffmpeg",
+    "EncoderAppPathDisplay": ffmpeg_path or "/usr/lib/jellyfin-ffmpeg/ffmpeg",
     "VaapiDevice": vaapi_device,
     "EnableTonemapping": str(enable_tonemapping).lower(),
     "EnableVppTonemapping": str(enable_vpp_tonemapping).lower(),

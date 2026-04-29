@@ -81,6 +81,13 @@ def read_env() -> dict[str, str]:
 ENV = read_env()
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    value = (ENV.get(name) or "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "on"}
+
+
 def service_enabled(name: str) -> bool:
     services = {
         item.strip()
@@ -96,6 +103,10 @@ QBIT_PASSWORD = ENV.get("QBITTORRENT_PASSWORD", "adminadmin")
 JELLYFIN_URL = (ENV.get("JELLYFIN_INTERNAL_URL") or "http://127.0.0.1:8096").rstrip("/")
 JELLYFIN_ADMIN_USER = ENV.get("JELLYFIN_ADMIN_USER", "admin")
 JELLYFIN_ADMIN_PASSWORD = ENV.get("JELLYFIN_ADMIN_PASSWORD", "")
+PLAYBACK_PRENORMALIZE_ENABLED = env_bool("VMCTL_PLAYBACK_PRENORMALIZE_ENABLED", False)
+PLAYBACK_REMOVE_ORIGINAL_AFTER_NORMALIZATION = env_bool(
+    "VMCTL_PLAYBACK_REMOVE_ORIGINAL_AFTER_NORMALIZATION", False
+)
 
 
 def request_json(method: str, url: str, payload=None, headers=None, allow=(200, 204)):
@@ -339,18 +350,129 @@ def compatibility_report(path: Path):
     report["compatible"] = True
     report["reason"] = ""
     return report
-    token = auth.get("AccessToken")
-    if not token:
-        return
-    request_json(
-        "POST",
-        f"{JELLYFIN_URL}/Library/Refresh",
-        headers={
-            "X-Emby-Token": token,
-            "Authorization": 'MediaBrowser Client="vmctl", Device="unpack", DeviceId="vmctl-unpack", Version="1.0"',
-        },
-        allow=(200, 204, 400),
+
+
+def first_media_file(path: Path) -> Path | None:
+    if path.is_file():
+        return path if path.suffix.lower() in VIDEO_SUFFIXES else None
+    if not path.is_dir():
+        return None
+    files = sorted(
+        [child for child in path.rglob("*") if child.is_file() and child.suffix.lower() in VIDEO_SUFFIXES],
+        key=lambda item: item.name.lower(),
     )
+    if not files:
+        return None
+    return files[0]
+
+
+def is_high_risk_playback(probe: dict) -> bool:
+    streams = probe.get("streams") or []
+    for stream in streams:
+        if stream.get("codec_type") != "video":
+            continue
+        codec = str(stream.get("codec_name") or "").strip().lower()
+        if codec != "hevc":
+            continue
+        width = int(stream.get("width") or 0)
+        tokens = " ".join(
+            [
+                str(stream.get("profile") or ""),
+                str(stream.get("codec_tag_string") or ""),
+                str(stream.get("color_primaries") or ""),
+                str(stream.get("color_transfer") or ""),
+                str(stream.get("color_space") or ""),
+                str(stream.get("side_data_list") or ""),
+            ]
+        ).lower()
+        has_hdr_or_dv = any(
+            marker in tokens
+            for marker in (
+                "dovi",
+                "dolby",
+                "vision",
+                "hdr",
+                "hdr10",
+                "hlg",
+                "bt2020",
+                "smpte2084",
+                "dv_profile",
+            )
+        )
+        if width >= 3840 or has_hdr_or_dv:
+            return True
+    return False
+
+
+def normalize_output_path(media_file: Path) -> Path:
+    parent = media_file.parent
+    base_name = parent.name if parent.name else media_file.stem
+    return parent / f"{base_name} - vmctl-1080p-sdr.mkv"
+
+
+def pre_normalize_media(path: Path) -> bool:
+    if not PLAYBACK_PRENORMALIZE_ENABLED:
+        return False
+
+    media_file = first_media_file(path)
+    if media_file is None:
+        return False
+
+    probe = ffprobe(media_file)
+    if not probe:
+        return False
+    report = compatibility_report(path)
+    if report.get("compatible") and not is_high_risk_playback(probe):
+        return False
+
+    normalized_file = normalize_output_path(media_file)
+    if normalized_file.exists():
+        return False
+
+    normalized_file.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(media_file),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0?",
+        "-map",
+        "-0:s",
+        "-vf",
+        "scale='min(1920,iw)':-2:flags=lanczos,format=yuv420p",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "20",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-ac",
+        "2",
+        str(normalized_file),
+    ]
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as exc:
+        print(f"warning: failed pre-normalization for {media_file}: {exc}")
+        return False
+
+    if PLAYBACK_REMOVE_ORIGINAL_AFTER_NORMALIZATION:
+        try:
+            media_file.unlink()
+        except Exception as exc:
+            print(f"warning: failed to remove original media file {media_file}: {exc}")
+
+    return True
 
 
 def load_state():
@@ -529,6 +651,7 @@ def process_torrent_downloads(state):
             continue
 
         extract_archive(content_path)
+        pre_normalize_media(content_path)
         report = compatibility_report(content_path)
         reports = load_json_file(COMPATIBILITY_FILE)
         reports[torrent_id] = report
@@ -572,6 +695,7 @@ def process_usenet_downloads(state):
                 continue
 
             extract_archive(content_path)
+            pre_normalize_media(content_path)
             report = compatibility_report(content_path)
             reports = load_json_file(COMPATIBILITY_FILE)
             reports[item_key] = report

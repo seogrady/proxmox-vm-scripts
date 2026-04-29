@@ -52,6 +52,15 @@ prefer = "usenet"
 fallback = "torrent"
 require_client = true
 
+[features.media_services.playback]
+enable_pre_normalization = false
+enable_remote_transcoder = false
+remove_original_after_normalization = false
+remote_transcoder_host = ""
+remote_transcoder_user = "ubuntu"
+remote_transcoder_ssh_key = "/root/.ssh/id_ed25519"
+remote_transcoder_ffmpeg = "/usr/lib/jellyfin-ffmpeg/ffmpeg"
+
 [features.media_services.exposure]
 tailscale_https_enabled = true
 tailscale_https_target = "http://127.0.0.1:80"

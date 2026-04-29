@@ -219,6 +219,47 @@ set_env_value() {
   fi
 }
 
+is_true() {
+  local value="${1:-}"
+  case "${value,,}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+configure_remote_transcoder() {
+  local enabled host user ssh_key remote_ffmpeg wrapper_path
+  enabled="$(grep -E '^VMCTL_PLAYBACK_REMOTE_TRANSCODER_ENABLED=' "$STACK_DIR/.env" | tail -n1 | cut -d= -f2- || true)"
+  if ! is_true "$enabled"; then
+    set_env_value "$STACK_DIR/.env" "JELLYFIN_FFMPEG_PATH" "/usr/lib/jellyfin-ffmpeg/ffmpeg"
+    return 0
+  fi
+
+  host="$(grep -E '^VMCTL_PLAYBACK_REMOTE_TRANSCODER_HOST=' "$STACK_DIR/.env" | tail -n1 | cut -d= -f2- || true)"
+  user="$(grep -E '^VMCTL_PLAYBACK_REMOTE_TRANSCODER_USER=' "$STACK_DIR/.env" | tail -n1 | cut -d= -f2- || true)"
+  ssh_key="$(grep -E '^VMCTL_PLAYBACK_REMOTE_TRANSCODER_SSH_KEY=' "$STACK_DIR/.env" | tail -n1 | cut -d= -f2- || true)"
+  remote_ffmpeg="$(grep -E '^VMCTL_PLAYBACK_REMOTE_TRANSCODER_FFMPEG=' "$STACK_DIR/.env" | tail -n1 | cut -d= -f2- || true)"
+  wrapper_path="/usr/local/bin/vmctl-remote-ffmpeg"
+
+  if [[ -z "$host" ]]; then
+    echo "warning: remote transcoder is enabled but VMCTL_PLAYBACK_REMOTE_TRANSCODER_HOST is empty; using local jellyfin-ffmpeg"
+    set_env_value "$STACK_DIR/.env" "JELLYFIN_FFMPEG_PATH" "/usr/lib/jellyfin-ffmpeg/ffmpeg"
+    return 0
+  fi
+
+  [[ -z "$user" ]] && user="ubuntu"
+  [[ -z "$ssh_key" ]] && ssh_key="/root/.ssh/id_ed25519"
+  [[ -z "$remote_ffmpeg" ]] && remote_ffmpeg="/usr/lib/jellyfin-ffmpeg/ffmpeg"
+
+  cat >"$wrapper_path" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec ssh -o BatchMode=yes -o ConnectTimeout=15 -i "$ssh_key" "${user}@${host}" "$remote_ffmpeg" "\$@"
+EOF
+  chmod 0755 "$wrapper_path"
+  set_env_value "$STACK_DIR/.env" "JELLYFIN_FFMPEG_PATH" "$wrapper_path"
+}
+
 detect_primary_ipv4() {
   ip -4 route get 1.1.1.1 2>/dev/null | awk '{
     for (i = 1; i <= NF; i++) {
@@ -274,6 +315,7 @@ ensure_env_value "$STACK_DIR/.env" "JWT_SECRET" "$(random_hex 32)"
 ensure_env_value "$STACK_DIR/.env" "MEILI_MASTER_KEY" "$(random_hex 32)"
 ensure_env_value "$STACK_DIR/.env" "SEERR_API_KEY" "$(random_hex 24)"
 ensure_env_value "$STACK_DIR/.env" "JELLYFIN_STREMIO_PASSWORD" "$(random_hex 20)"
+configure_remote_transcoder
 
 recover_jellystat_db() {
   if ! service_enabled "jellystat-db"; then

@@ -1908,6 +1908,7 @@ mod tests {
         assert!(script.contains("/Users/{admin_user_id}/Views"));
         assert!(script.contains("do not create a suffixed duplicate library"));
         assert!(script.contains("JELLYFIN_ENCODING_XML"));
+        assert!(script.contains("ffmpeg_path = (os.environ.get(\"JELLYFIN_FFMPEG_PATH\")"));
         assert!(script.contains("HardwareAccelerationType"));
         assert!(script.contains("EnableHardwareEncoding"));
         assert!(script.contains("EnableVppTonemapping"));
@@ -2105,6 +2106,10 @@ mod tests {
         assert!(script.contains("service_enabled()"));
         assert!(script.contains("sync_template_env_defaults()"));
         assert!(script.contains("sync_template_env_defaults \"$RESOURCE_DIR/media.env\""));
+        assert!(script.contains("configure_remote_transcoder()"));
+        assert!(script.contains("VMCTL_PLAYBACK_REMOTE_TRANSCODER_ENABLED"));
+        assert!(script.contains("JELLYFIN_FFMPEG_PATH"));
+        assert!(script.contains("vmctl-remote-ffmpeg"));
         assert!(script.contains("write_storage_health_snapshot()"));
         assert!(script.contains("storage-health.json"));
         assert!(!script.contains("MEDIA_PUBLIC_BASE_URL_LAN"));
@@ -2146,6 +2151,10 @@ mod tests {
             "existing.get(\"imported\") and existing.get(\"path\") == str(content_path)"
         ));
         assert!(script.contains("missing english audio track"));
+        assert!(script.contains("PLAYBACK_PRENORMALIZE_ENABLED"));
+        assert!(script.contains("PLAYBACK_REMOVE_ORIGINAL_AFTER_NORMALIZATION"));
+        assert!(script.contains("def pre_normalize_media(path: Path) -> bool:"));
+        assert!(script.contains("vmctl-1080p-sdr.mkv"));
         assert!(script.contains("MoviesSearch"));
         assert!(script.contains("SeriesSearch"));
         assert!(script.contains("recovery.json"));
@@ -2291,7 +2300,9 @@ mod tests {
         assert!(env.contains("AUTOBRR_BASE_URL=/autobrr/"));
         assert!(env.contains("AUTOBRR_CUSTOM_DEFINITIONS=/config/definitions"));
         assert!(env.contains("PROWLARR_FLARESOLVERR_URL=http://flaresolverr:8191"));
-        assert!(env.contains("RADARR_DEFAULT_QUALITY_PROFILE=\"HD - 720p/1080p\""));
+        assert!(env.contains(
+            "RADARR_DEFAULT_QUALITY_PROFILE=\"{{service_settings.seerr.settings.default_movie_quality_profile}}\""
+        ));
         assert!(env.contains(
             "DOWNLOAD_ROUTING_PREFER={{features.media_services.download_routing.prefer}}"
         ));
@@ -2299,8 +2310,26 @@ mod tests {
             "DOWNLOAD_ROUTING_FALLBACK={{features.media_services.download_routing.fallback}}"
         ));
         assert!(env.contains("DOWNLOAD_ROUTING_REQUIRE_CLIENT={{features.media_services.download_routing.require_client}}"));
-        assert!(env.contains("PROWLARR_BOOTSTRAP_INDEXERS_TORRENT=\"LimeTorrents,Nyaa.si,showRSS,The Pirate Bay,YTS\""));
-        assert!(env.contains("PROWLARR_BOOTSTRAP_INDEXERS_USENET=\"NZBFinder,NZBGeek,NinjaCentral,DrunkenSlug,Usenet Crawler,altHUB,SceneNZB\""));
+        assert!(env.contains(
+            "VMCTL_PLAYBACK_PRENORMALIZE_ENABLED={{features.media_services.playback.enable_pre_normalization}}"
+        ));
+        assert!(env.contains(
+            "VMCTL_PLAYBACK_REMOTE_TRANSCODER_ENABLED={{features.media_services.playback.enable_remote_transcoder}}"
+        ));
+        assert!(env.contains(
+            "VMCTL_PLAYBACK_REMOVE_ORIGINAL_AFTER_NORMALIZATION={{features.media_services.playback.remove_original_after_normalization}}"
+        ));
+        assert!(env.contains("VMCTL_PLAYBACK_REMOTE_TRANSCODER_HOST={{features.media_services.playback.remote_transcoder_host}}"));
+        assert!(env.contains("VMCTL_PLAYBACK_REMOTE_TRANSCODER_USER={{features.media_services.playback.remote_transcoder_user}}"));
+        assert!(env.contains("VMCTL_PLAYBACK_REMOTE_TRANSCODER_SSH_KEY={{features.media_services.playback.remote_transcoder_ssh_key}}"));
+        assert!(env.contains("VMCTL_PLAYBACK_REMOTE_TRANSCODER_FFMPEG={{features.media_services.playback.remote_transcoder_ffmpeg}}"));
+        assert!(env.contains("JELLYFIN_FFMPEG_PATH=/usr/lib/jellyfin-ffmpeg/ffmpeg"));
+        assert!(env.contains(
+            "PROWLARR_BOOTSTRAP_INDEXERS_TORRENT=\"{{#each seed_indexers_torrent}}"
+        ));
+        assert!(env.contains(
+            "PROWLARR_BOOTSTRAP_INDEXERS_USENET=\"{{#each seed_indexers_usenet}}"
+        ));
         assert!(env.contains("SABNZBD_SERVER_ENABLE=false"));
         assert!(env.contains("VMCTL_QBITTORRENT_CONFIGURED="));
         assert!(env.contains("VMCTL_QBITTORRENT_HEALTHY="));

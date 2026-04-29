@@ -68,6 +68,7 @@ xml_path = os.environ["JELLYFIN_ENCODING_XML"]
 transcoding_temp_path = (os.environ.get("JELLYFIN_TRANSCODING_TEMP_PATH") or "/config/transcodes").strip()
 hwaccel_type = (os.environ.get("JELLYFIN_HWACCEL_TYPE") or "qsv").strip()
 vaapi_device = (os.environ.get("JELLYFIN_HWACCEL_DEVICE") or "/dev/dri/renderD128").strip()
+ffmpeg_path = (os.environ.get("JELLYFIN_FFMPEG_PATH") or "/usr/lib/jellyfin-ffmpeg/ffmpeg").strip()
 enable_hardware_encoding = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_ENCODING") or "true").strip().lower() in {"1", "true", "yes", "on"}
 enable_tonemapping_raw = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_TONEMAPPING") or "auto").strip().lower()
 enable_vpp_tonemapping = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_VPP_TONEMAPPING") or "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -87,7 +88,7 @@ def probe_opencl_support() -> bool:
     try:
         subprocess.run(
             [
-                "/usr/lib/jellyfin-ffmpeg/ffmpeg",
+                ffmpeg_path or "/usr/lib/jellyfin-ffmpeg/ffmpeg",
                 "-v",
                 "error",
                 "-init_hw_device",
@@ -134,7 +135,7 @@ values = {
     "EnableSegmentDeletion": "false",
     "SegmentKeepSeconds": "720",
     "HardwareAccelerationType": hwaccel_type,
-    "EncoderAppPathDisplay": "/usr/lib/jellyfin-ffmpeg/ffmpeg",
+    "EncoderAppPathDisplay": ffmpeg_path or "/usr/lib/jellyfin-ffmpeg/ffmpeg",
     "VaapiDevice": vaapi_device,
     "EnableTonemapping": str(enable_tonemapping).lower(),
     "EnableVppTonemapping": str(enable_vpp_tonemapping).lower(),
@@ -205,12 +206,16 @@ import uuid
 from pathlib import Path
 
 base_candidates = []
+api_base_path = (os.environ.get("BASE_URL_VALUE") or os.environ.get("JELLYFIN_BASE_URL") or "").strip().rstrip("/")
+if api_base_path == "/":
+    api_base_path = ""
 for candidate in [
     "http://127.0.0.1:8096",
     (os.environ.get("JELLYFIN_INTERNAL_URL") or "http://127.0.0.1:8096").rstrip("/"),
 ]:
-    if candidate not in base_candidates:
-        base_candidates.append(candidate)
+    for base_candidate in [f"{candidate}{api_base_path}", candidate]:
+        if base_candidate not in base_candidates:
+            base_candidates.append(base_candidate)
 user = os.environ.get("JELLYFIN_ADMIN_USER") or "admin"
 password = os.environ.get("JELLYFIN_ADMIN_PASSWORD") or ""
 base_url = ""
@@ -218,6 +223,14 @@ auto_login_user = (os.environ.get("JELLYFIN_AUTOLOGIN_USER") or "media").strip()
 stremio_user = (os.environ.get("JELLYFIN_STREMIO_USER") or "stremio").strip() or "stremio"
 env_file = Path(os.environ.get("JELLYFIN_ENV_FILE") or "/opt/media/.env")
 max_streaming_bitrate_raw = (os.environ.get("JELLYFIN_MAX_STREAMING_BITRATE") or "12000000").strip()
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+opener = urllib.request.build_opener(NoRedirect)
 
 
 def call(method, path, payload=None, token=None, allow=(200, 204)):
@@ -232,7 +245,7 @@ def call(method, path, payload=None, token=None, allow=(200, 204)):
         data = json.dumps(payload).encode()
     req = urllib.request.Request(base + path, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=20) as response:
+        with opener.open(req, timeout=20) as response:
             body = response.read().decode()
             if body:
                 return json.loads(body)
@@ -841,7 +854,8 @@ if token:
     )
     default_public_base = f"http://{os.environ.get('VMCTL_RESOURCE_NAME', 'media-stack')}"
     autologin_base = (os.environ.get("VMCTL_HTTP_BASE_URL_SHORT") or default_public_base).rstrip("/")
-    autologin_url = f"{autologin_base}:8097/web/#/home.html?{autologin_params}"
+    autologin_path = base_url.rstrip("/")
+    autologin_url = f"{autologin_base}:8097{autologin_path}/web/#/home.html?{autologin_params}"
     set_env_value(env_file, "JELLYFIN_AUTOLOGIN_URL", autologin_url)
     ui_index = Path("/opt/media/config/caddy/ui-index")
     ui_index.mkdir(parents=True, exist_ok=True)
