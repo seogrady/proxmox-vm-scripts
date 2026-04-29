@@ -25,6 +25,7 @@ export BASE_URL_VALUE
 export JELLYFIN_NETWORK_XML
 export JELLYFIN_ENCODING_XML
 export JELLYFIN_ENV_FILE="$ENV_FILE"
+export JELLYFIN_SOFTWARE_TRANSCODE_MARKER="$STACK_DIR/config/jellyfin/.vmctl-force-software-transcode"
 
 jellyfin_base_updated="$(
 python3 <<'PY'
@@ -74,6 +75,8 @@ enable_10bit_hevc = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_10BIT_HEVC_DECODING
 enable_10bit_vp9 = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_10BIT_VP9_DECODING") or "true").strip().lower() in {"1", "true", "yes", "on"}
 enable_low_power_h264 = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_INTEL_LOW_POWER_H264") or "true").strip().lower() in {"1", "true", "yes", "on"}
 enable_low_power_hevc = (os.environ.get("JELLYFIN_HWACCEL_ENABLE_INTEL_LOW_POWER_HEVC") or "true").strip().lower() in {"1", "true", "yes", "on"}
+prefer_native_decoder = (os.environ.get("JELLYFIN_HWACCEL_PREFER_NATIVE_DECODER") or "true").strip().lower() in {"1", "true", "yes", "on"}
+decoding_codecs_raw = (os.environ.get("JELLYFIN_HWACCEL_DECODING_CODECS") or "h264,hevc,mpeg2video,vc1,vp8,vp9,av1").strip()
 
 def probe_opencl_support() -> bool:
     # Jellyfin's Dolby Vision path needs OpenCL on this Intel stack. If the
@@ -146,20 +149,16 @@ values = {
     "EnableHardwareEncoding": str(enable_hardware_encoding).lower(),
     "EnableDecodingColorDepth10Hevc": str(enable_10bit_hevc).lower(),
     "EnableDecodingColorDepth10Vp9": str(enable_10bit_vp9).lower(),
-    "PreferSystemNativeHwDecoder": "true",
+    "PreferSystemNativeHwDecoder": str(prefer_native_decoder).lower(),
     "EnableIntelLowPowerH264HwEncoder": str(enable_low_power_h264).lower(),
     "EnableIntelLowPowerHevcHwEncoder": str(enable_low_power_hevc).lower(),
     "AllowHevcEncoding": "true",
 }
-hardware_decoding_codecs = [
-    "h264",
-    "hevc",
-    "mpeg2video",
-    "vc1",
-    "vp8",
-    "vp9",
-    "av1",
-]
+hardware_decoding_codecs = []
+for codec in decoding_codecs_raw.split(","):
+    codec = codec.strip().lower()
+    if codec and codec not in hardware_decoding_codecs:
+        hardware_decoding_codecs.append(codec)
 
 current = {child.tag: (child.text or "") for child in list(root)}
 codecs_node = root.find("HardwareDecodingCodecs")
@@ -202,6 +201,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 
 base_candidates = []
@@ -219,7 +219,9 @@ user = os.environ.get("JELLYFIN_ADMIN_USER") or "admin"
 password = os.environ.get("JELLYFIN_ADMIN_PASSWORD") or ""
 base_url = ""
 auto_login_user = (os.environ.get("JELLYFIN_AUTOLOGIN_USER") or "media").strip() or "media"
+stremio_user = (os.environ.get("JELLYFIN_STREMIO_USER") or "stremio").strip() or "stremio"
 env_file = Path(os.environ.get("JELLYFIN_ENV_FILE") or "/opt/media/.env")
+max_streaming_bitrate_raw = (os.environ.get("JELLYFIN_MAX_STREAMING_BITRATE") or "12000000").strip()
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -251,6 +253,34 @@ def call(method, path, payload=None, token=None, allow=(200, 204)):
         if err.code in allow:
             return None
         raise
+
+
+def call_text(method, path, payload=None, token=None, allow=(200, 204, 206)):
+    data = None
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": 'MediaBrowser Client="vmctl", Device="bootstrap", DeviceId="vmctl", Version="1.0"',
+    }
+    if token:
+        headers["X-Emby-Token"] = token
+    if payload is not None:
+        data = json.dumps(payload).encode()
+    req = urllib.request.Request(base + path, data=data, headers=headers, method=method)
+    try:
+        with opener.open(req, timeout=30) as response:
+            return response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as err:
+        if err.code in allow:
+            return err.read().decode("utf-8", errors="replace")
+        raise
+
+
+def parse_positive_int(raw: str, default: int) -> int:
+    try:
+        value = int(str(raw or "").strip())
+    except Exception:
+        return default
+    return value if value > 0 else default
 
 
 def _item_locations(item):
@@ -407,11 +437,256 @@ def ensure_blank_password(user_id: str, token: str) -> None:
     )
 
 
+def ensure_user_policy(user_id: str, token: str, max_streaming_bitrate: int) -> None:
+    user = call("GET", f"/Users/{user_id}", token=token, allow=(200, 204)) or {}
+    policy = user.get("Policy") or {}
+    desired = dict(policy)
+    desired["EnablePlaybackRemuxing"] = True
+    desired["EnableVideoPlaybackTranscoding"] = True
+    desired["EnableAudioPlaybackTranscoding"] = True
+    desired["RemoteClientBitrateLimit"] = max_streaming_bitrate
+    if desired != policy:
+        call("POST", f"/Users/{user_id}/Policy", desired, token=token, allow=(200, 204, 400))
+
+
 def try_call(method, path, payload=None, token=None):
     try:
         return call(method, path, payload, token, allow=(200, 204))
     except urllib.error.HTTPError:
         return None
+
+
+def _first_playlist_line(payload: str) -> str:
+    for line in (payload or "").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            return line
+    return ""
+
+
+def probe_transcode_candidate(token: str, item_id: str, media_source_id: str) -> bool:
+    probe_session_id = str(uuid.uuid4())
+    probe_params = urllib.parse.urlencode(
+        {
+            "DeviceId": probe_session_id,
+            "MediaSourceId": media_source_id,
+            "VideoCodec": "av1,h264,vp9",
+            "AudioCodec": "aac",
+            "VideoBitrate": "2147099647",
+            "AudioBitrate": "384000",
+            "SegmentContainer": "mp4",
+            "PlaySessionId": probe_session_id,
+            "ApiKey": token,
+            "TranscodingMaxAudioChannels": "2",
+            "EnableAudioVbrEncoding": "true",
+            "TranscodeReasons": "VideoCodecNotSupported,AudioCodecNotSupported",
+            "allowVideoStreamCopy": "false",
+            "allowAudioStreamCopy": "false",
+        }
+    )
+    master = call_text("GET", f"/Videos/{item_id}/master.m3u8?{probe_params}", allow=(200,))
+    if "#EXTM3U" not in (master or ""):
+        return False
+    media_playlist = _first_playlist_line(master)
+    if not media_playlist:
+        return False
+    nested = call_text("GET", f"/Videos/{item_id}/{media_playlist}", allow=(200,))
+    segment = _first_playlist_line(nested)
+    if not segment:
+        return False
+
+    for _ in range(20):
+        try:
+            call_text("GET", f"/Videos/{item_id}/{segment}", allow=(200, 206))
+            # The browser path that currently fails in production is the
+            # dynamic HLS fMP4 segment endpoint, not playlist generation.
+            call_text(
+                "GET",
+                f"/Videos/{item_id}/hls1/main/-1.mp4?{probe_params}&runtimeTicks=0&actualSegmentLengthTicks=0",
+                allow=(200, 206),
+            )
+            return True
+        except urllib.error.HTTPError:
+            time.sleep(1)
+    return False
+
+
+def set_encoding_mode(
+    token: str,
+    hwaccel_type: str,
+    enable_hardware_encoding: bool,
+    prefer_native_decoder: bool,
+    enable_tonemapping: bool,
+    enable_vpp_tonemapping: bool,
+    decoding_codecs,
+) -> None:
+    encoding = try_call("GET", "/System/Configuration/encoding", token=token) or {}
+    if not encoding:
+        return
+    encoding["HardwareAccelerationType"] = hwaccel_type
+    encoding["EnableHardwareEncoding"] = bool(enable_hardware_encoding)
+    encoding["EnableTonemapping"] = bool(enable_tonemapping)
+    encoding["EnableVppTonemapping"] = bool(enable_vpp_tonemapping)
+    encoding["PreferSystemNativeHwDecoder"] = bool(prefer_native_decoder)
+    encoding["HardwareDecodingCodecs"] = list(decoding_codecs)
+    call("POST", "/System/Configuration/encoding", encoding, token=token, allow=(200, 204, 400))
+
+
+def transcode_probe(token: str, user_id: str) -> bool:
+    # Probe several high-risk items through Jellyfin's HLS transcode path.
+    # Any failed probe means clients can hit fatal playback errors.
+    candidates = []
+    for _ in range(24):
+        items = call(
+            "GET",
+            f"/Users/{user_id}/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Limit=2000&Fields=Path,MediaSources,MediaStreams",
+            token=token,
+            allow=(200, 204),
+        ) or {}
+        candidates = []
+        for item in items.get("Items") or []:
+            sources = item.get("MediaSources") or []
+            if not sources:
+                continue
+            item_id = (item.get("Id") or "").strip()
+            if not item_id:
+                continue
+            for source in sources:
+                media_source_id = (source.get("Id") or "").strip()
+                if not media_source_id:
+                    continue
+                streams = source.get("MediaStreams") or item.get("MediaStreams") or []
+                has_hevc = any(
+                    (str(stream.get("Codec") or "").strip().lower() == "hevc")
+                    and (str(stream.get("Type") or "").strip().lower() == "video")
+                    for stream in streams
+                )
+                has_dovi_or_hdr = False
+                for stream in streams:
+                    stream_tokens = " ".join(
+                        [
+                            str(stream.get("VideoRangeType") or ""),
+                            str(stream.get("VideoRange") or ""),
+                            str(stream.get("CodecTag") or ""),
+                            str(stream.get("Title") or ""),
+                            str(stream.get("Profile") or ""),
+                            str(stream.get("VideoDoViTitle") or ""),
+                            str(stream.get("ColorPrimaries") or ""),
+                            str(stream.get("ColorTransfer") or ""),
+                        ]
+                    ).strip().lower()
+                    if any(
+                        marker in stream_tokens
+                        for marker in (
+                            "dovi",
+                            "dolby",
+                            "vision",
+                            "hdr",
+                            "hdr10",
+                            "hlg",
+                            "bt2020",
+                            "smpte2084",
+                            "pq",
+                        )
+                    ):
+                        has_dovi_or_hdr = True
+                        break
+                    if int(stream.get("DvProfile") or 0) > 0 or int(stream.get("DvVersionMajor") or 0) > 0:
+                        has_dovi_or_hdr = True
+                        break
+                max_width = max(
+                    [
+                        int(stream.get("Width") or 0)
+                        for stream in streams
+                        if str(stream.get("Type") or "").strip().lower() == "video"
+                    ]
+                    or [0]
+                )
+                score = 0
+                if has_hevc:
+                    score += 4
+                if has_dovi_or_hdr:
+                    score += 4
+                if max_width >= 3840:
+                    score += 2
+                source_hints = " ".join(
+                    [
+                        str(source.get("Path") or ""),
+                        str(source.get("Name") or ""),
+                        str(source.get("Container") or ""),
+                        str(item.get("Name") or ""),
+                        str(item.get("Path") or ""),
+                    ]
+                ).lower()
+                if any(
+                    token in source_hints
+                    for token in (
+                        "2160",
+                        "4k",
+                        "uhd",
+                        "dovi",
+                        "dolby",
+                        "vision",
+                        "hdr",
+                        "dv.",
+                        ".dv",
+                        "h265",
+                        "hevc",
+                    )
+                ):
+                    score += 3
+                candidates.append(
+                    {
+                        "score": score,
+                        "item_id": item_id,
+                        "media_source_id": media_source_id,
+                        "has_hevc": has_hevc,
+                        "has_dovi_or_hdr": has_dovi_or_hdr,
+                        "max_width": max_width,
+                    }
+                )
+        if candidates:
+            break
+        time.sleep(5)
+    candidates.sort(
+        key=lambda row: (
+            -int(bool(row["has_dovi_or_hdr"] and row["has_hevc"])),
+            -int(bool(row["has_dovi_or_hdr"])),
+            -int(bool(row["has_hevc"])),
+            -int(row["max_width"] >= 3840),
+            -row["score"],
+            row["item_id"],
+            row["media_source_id"],
+        )
+    )
+    if not candidates:
+        # Fail closed when we cannot validate any media item. This keeps
+        # playback reliable on fresh stacks where indexing is still converging.
+        return False
+
+    probes = []
+    prioritized = [row for row in candidates if row["has_dovi_or_hdr"] and row["has_hevc"]]
+    for row in prioritized + candidates:
+        score = row["score"]
+        item_id = row["item_id"]
+        media_source_id = row["media_source_id"]
+        if score <= 0:
+            continue
+        pair = (item_id, media_source_id)
+        if pair in probes:
+            continue
+        probes.append(pair)
+        if len(probes) >= 8:
+            break
+    if not probes:
+        probe_item_id = candidates[0]["item_id"]
+        probe_media_source_id = candidates[0]["media_source_id"]
+        probes.append((probe_item_id, probe_media_source_id))
+
+    for probe_item_id, probe_media_source_id in probes:
+        if not probe_transcode_candidate(token, probe_item_id, probe_media_source_id):
+            return False
+    return True
 
 
 base = None
@@ -454,9 +729,15 @@ if not auth:
     existing_user = startup_user.get("Name") if startup_user else None
     if existing_user:
         auth = try_call("POST", "/Users/AuthenticateByName", {"Username": existing_user, "Pw": ""})
+if not auth:
+    for candidate_user in [auto_login_user, stremio_user, "media", "stremio"]:
+        auth = try_call("POST", "/Users/AuthenticateByName", {"Username": candidate_user, "Pw": ""})
+        if auth:
+            break
 token = auth.get("AccessToken") if auth else None
 
 if token:
+    max_streaming_bitrate = parse_positive_int(max_streaming_bitrate_raw, 12_000_000)
     info = try_call("GET", "/System/Info/Public", token=token) or {}
     server_id = (info.get("Id") or "").strip()
     admin_user_id = ensure_user(user, token)
@@ -470,6 +751,10 @@ if token:
     ensure_blank_password(auto_user_id, token)
     auto_auth = try_call("POST", "/Users/AuthenticateByName", {"Username": auto_login_user, "Pw": ""})
     auto_token = (auto_auth or {}).get("AccessToken") or token
+    stremio_user_id = ensure_user(stremio_user, token)
+    ensure_user_policy(admin_user_id, token, max_streaming_bitrate)
+    ensure_user_policy(auto_user_id, token, max_streaming_bitrate)
+    ensure_user_policy(stremio_user_id, token, max_streaming_bitrate)
 
     if config.get("AutoLoginUserId") != auto_user_id:
         config["AutoLoginUserId"] = auto_user_id
@@ -485,6 +770,75 @@ if token:
         os.makedirs(path, exist_ok=True)
         ensure_library(name, path, collection_type, token, admin_user_id)
     call("POST", "/Library/Refresh", token=token, allow=(200, 204, 400))
+
+    current_hwaccel = (os.environ.get("JELLYFIN_HWACCEL_TYPE") or "").strip().lower()
+    safe_qsv_codecs = ["h264", "mpeg2video", "vc1", "vp8", "vp9", "av1"]
+
+    def apply_safe_hardware_mode(mode: str) -> bool:
+        set_encoding_mode(
+            token,
+            mode,
+            True,
+            False,
+            False,
+            False,
+            safe_qsv_codecs,
+        )
+        set_env_value(env_file, "JELLYFIN_HWACCEL_TYPE", mode)
+        set_env_value(env_file, "JELLYFIN_HWACCEL_ENABLE_ENCODING", "true")
+        set_env_value(env_file, "JELLYFIN_HWACCEL_ENABLE_TONEMAPPING", "false")
+        set_env_value(env_file, "JELLYFIN_HWACCEL_ENABLE_VPP_TONEMAPPING", "false")
+        set_env_value(env_file, "JELLYFIN_HWACCEL_PREFER_NATIVE_DECODER", "false")
+        set_env_value(env_file, "JELLYFIN_HWACCEL_DECODING_CODECS", ",".join(safe_qsv_codecs))
+        return transcode_probe(token, admin_user_id)
+
+    probe_ok = transcode_probe(token, admin_user_id)
+    safe_hw_applied = False
+
+    # Recover from prior software fallback by actively re-probing hardware modes.
+    if current_hwaccel == "none":
+        for mode in ("qsv", "vaapi"):
+            if apply_safe_hardware_mode(mode):
+                safe_hw_applied = True
+                probe_ok = True
+                break
+
+    if not probe_ok and current_hwaccel in {"qsv", "vaapi"} and not safe_hw_applied:
+        safe_hw_applied = apply_safe_hardware_mode(current_hwaccel)
+        probe_ok = safe_hw_applied
+
+    if not probe_ok and not safe_hw_applied:
+        for mode in ("qsv", "vaapi"):
+            if mode == current_hwaccel:
+                continue
+            if apply_safe_hardware_mode(mode):
+                safe_hw_applied = True
+                probe_ok = True
+                break
+
+    if not probe_ok and not safe_hw_applied:
+        set_encoding_mode(
+            token,
+            "none",
+            False,
+            False,
+            False,
+            False,
+            [],
+        )
+        set_env_value(env_file, "JELLYFIN_HWACCEL_TYPE", "none")
+        set_env_value(env_file, "JELLYFIN_HWACCEL_ENABLE_ENCODING", "false")
+        set_env_value(env_file, "JELLYFIN_HWACCEL_ENABLE_TONEMAPPING", "false")
+        set_env_value(env_file, "JELLYFIN_HWACCEL_ENABLE_VPP_TONEMAPPING", "false")
+        set_env_value(env_file, "JELLYFIN_HWACCEL_PREFER_NATIVE_DECODER", "false")
+        set_env_value(env_file, "JELLYFIN_HWACCEL_DECODING_CODECS", "")
+
+    marker = (os.environ.get("JELLYFIN_SOFTWARE_TRANSCODE_MARKER") or "").strip()
+    if marker:
+        Path(marker).parent.mkdir(parents=True, exist_ok=True)
+        marker_value = "fallback=safe-hw\n" if safe_hw_applied else "fallback=software\n"
+        Path(marker).write_text(marker_value, encoding="utf-8")
+
     set_env_value(env_file, "JELLYFIN_AUTOLOGIN_USER", auto_login_user)
     set_env_value(env_file, "JELLYFIN_AUTO_AUTH_TOKEN", auto_token)
     autologin_params = urllib.parse.urlencode(
@@ -506,6 +860,12 @@ if token:
     ui_index.mkdir(parents=True, exist_ok=True)
     (ui_index / "jellyfin-autologin.url").write_text(autologin_url + "\n", encoding="utf-8")
 PY
+
+if [[ -f "$JELLYFIN_SOFTWARE_TRANSCODE_MARKER" ]]; then
+  rm -f "$JELLYFIN_SOFTWARE_TRANSCODE_MARKER"
+  docker_compose up -d jellyfin
+  docker_compose restart jellyfin
+fi
 
 if docker_compose config --services | grep -qx "caddy"; then
   set -a

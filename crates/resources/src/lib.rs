@@ -132,6 +132,19 @@ impl ResourceRegistry {
         self.root.join(&resource.name).join(kind).join(file)
     }
 
+    fn resource_module_root(&self, resource: &Resource) -> PathBuf {
+        self.root.join(&resource.name)
+    }
+
+    fn resolve_resource_hook_source(&self, resource: &Resource, hook: &str) -> PathBuf {
+        let hook_path = PathBuf::from(hook);
+        if hook_path.is_absolute() {
+            hook_path
+        } else {
+            self.resource_module_root(resource).join(hook_path)
+        }
+    }
+
     pub fn expand_resource(&self, resource: &Resource) -> Result<Expansion> {
         let Some(role_name) = &resource.role else {
             return Ok(Expansion::default());
@@ -154,10 +167,10 @@ impl ResourceRegistry {
             );
         }
 
-        let resource_scripts_root = self.root.join(&resource.name).join("scripts");
-        let mut bootstrap_steps = role.hooks.bootstrap.resolve(&resource_scripts_root)?;
+        let resource_module_root = self.resource_module_root(resource);
+        let mut bootstrap_steps = role.hooks.bootstrap.resolve(&resource_module_root)?;
         bootstrap_steps.dedup();
-        let validation_steps = role.hooks.validate.resolve(&resource_scripts_root)?;
+        let validation_steps = role.hooks.validate.resolve(&resource_module_root)?;
 
         let mut expansion = Expansion {
             files: role.render.templates.clone(),
@@ -187,10 +200,7 @@ impl ResourceRegistry {
             .iter()
             .chain(expansion.validation_steps.iter())
         {
-            if !self
-                .resource_owned_path(resource, "scripts", script)
-                .exists()
-            {
+            if !self.resolve_resource_hook_source(resource, script).exists() {
                 bail!(
                     "role resource `{}` references missing script `{script}`",
                     role.name
@@ -245,14 +255,15 @@ impl ResourceRegistry {
                 .iter()
                 .chain(expansion.validation_steps.iter())
             {
-                let source = self.resource_owned_path(resource, "scripts", script);
+                let source = self.resolve_resource_hook_source(resource, script);
                 if !source.exists() {
                     continue;
                 }
-                let output_dir = resource_dir.join("scripts");
-                std::fs::create_dir_all(&output_dir)
-                    .with_context(|| format!("failed to create {}", output_dir.display()))?;
-                let output_path = output_dir.join(script);
+                let output_path = resource_dir.join(script);
+                if let Some(parent) = output_path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .with_context(|| format!("failed to create {}", parent.display()))?;
+                }
                 std::fs::copy(&source, &output_path).with_context(|| {
                     format!(
                         "failed to copy bootstrap script {} to {}",
@@ -800,7 +811,7 @@ mod tests {
             templates = ["example.txt.hbs"]
 
             [hooks]
-            bootstrap = ["bootstrap.sh"]
+            bootstrap = ["scripts/bootstrap.sh"]
             "#,
         )
         .unwrap();

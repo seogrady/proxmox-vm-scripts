@@ -70,7 +70,10 @@ pub struct SystemSshExecutor;
 impl SshExecutor for SystemSshExecutor {
     fn upload(&self, step: &ProvisionStep) -> Result<()> {
         let target = format!("{}@{}", step.user, step.host);
-        let mkdir = format!("mkdir -p {}", step.remote_resource_dir);
+        let mkdir = format!(
+            "rm -rf {0} && mkdir -p {0}",
+            shell_quote_single(&step.remote_resource_dir)
+        );
         command_runner::run(
             CommandOptions::new(
                 "ssh",
@@ -152,7 +155,14 @@ impl SshExecutor for SystemSshExecutor {
 
 fn remote_execute_command(step: &ProvisionStep) -> String {
     let runner = if step.user == "root" { "" } else { "sudo " };
-    format!("chmod +x {0} && {runner}{0}", step.remote_script)
+    format!(
+        "chmod +x {0} && {runner}{0}",
+        shell_quote_single(&step.remote_script)
+    )
+}
+
+fn shell_quote_single(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 pub fn build_provision_plan(
@@ -325,14 +335,15 @@ fn resource_steps(
         .iter()
         .chain(expansion.validation_steps.iter())
     {
-        let local_script = local_resource_dir.join("scripts").join(script);
+        let local_script = local_resource_dir.join(script);
+        let remote_script = format!("{remote_resource_dir}/{script}");
         steps.push(ProvisionStep {
             resource: resource.name.clone(),
             host: host.to_string(),
             user: user.to_string(),
             private_key_file: private_key_file.to_string(),
             local_resource_dir: local_resource_dir.clone(),
-            remote_script: format!("{remote_resource_dir}/scripts/{script}"),
+            remote_script,
             remote_resource_dir: remote_resource_dir.clone(),
             local_script,
             retries,
@@ -387,7 +398,7 @@ mod tests {
             expansions: BTreeMap::from([(
                 "media-stack".to_string(),
                 Expansion {
-                    bootstrap_steps: vec!["bootstrap-media.sh".to_string()],
+                    bootstrap_steps: vec!["scripts/bootstrap-media.sh".to_string()],
                     ..Expansion::default()
                 },
             )]),
@@ -448,7 +459,7 @@ mod tests {
             expansions: BTreeMap::from([(
                 "kodi-htpc".to_string(),
                 Expansion {
-                    bootstrap_steps: vec!["bootstrap-kodi.sh".to_string()],
+                    bootstrap_steps: vec!["scripts/bootstrap-kodi.sh".to_string()],
                     ..Expansion::default()
                 },
             )]),
@@ -530,7 +541,7 @@ mod tests {
 
         assert_eq!(
             remote_execute_command(&step),
-            "chmod +x /tmp/vmctl-tailscale-gateway/scripts/bootstrap-tailscale.sh && /tmp/vmctl-tailscale-gateway/scripts/bootstrap-tailscale.sh"
+            "chmod +x '/tmp/vmctl-tailscale-gateway/scripts/bootstrap-tailscale.sh' && '/tmp/vmctl-tailscale-gateway/scripts/bootstrap-tailscale.sh'"
         );
     }
 
@@ -551,8 +562,74 @@ mod tests {
 
         assert_eq!(
             remote_execute_command(&step),
-            "chmod +x /tmp/vmctl-media-stack/scripts/bootstrap-media.sh && sudo /tmp/vmctl-media-stack/scripts/bootstrap-media.sh"
+            "chmod +x '/tmp/vmctl-media-stack/scripts/bootstrap-media.sh' && sudo '/tmp/vmctl-media-stack/scripts/bootstrap-media.sh'"
         );
+    }
+
+    #[test]
+    fn prefers_hook_artifacts_when_script_artifact_missing() {
+        let root = unique_temp_dir();
+        let local_resource_dir = root.join("backend/generated/workspace/resources/media-stack");
+        let hook_script = local_resource_dir
+            .join("hooks")
+            .join("jellyfin/scripts/bootstrap-jellyfin.sh");
+        std::fs::create_dir_all(hook_script.parent().unwrap()).unwrap();
+        std::fs::write(&hook_script, "#!/usr/bin/env bash\n").unwrap();
+
+        let workspace = Workspace {
+            root: root.clone(),
+            generated_dir: PathBuf::from("backend/generated/workspace"),
+        };
+        let desired = DesiredState {
+            backend: BackendConfig::default(),
+            images: BTreeMap::new(),
+            resources: vec![Resource {
+                name: "media-stack".to_string(),
+                kind: "vm".to_string(),
+                enabled: true,
+                image: None,
+                role: Some("media_stack".to_string()),
+                vmid: Some(210),
+                depends_on: Vec::new(),
+                features: BTreeMap::new(),
+                settings: BTreeMap::new(),
+            }],
+            normalized_resources: BTreeMap::from([(
+                "media-stack".to_string(),
+                NormalizedResource {
+                    name: "media-stack".to_string(),
+                    provision: Some(ProvisionConfig {
+                        host: Some("media-stack.home.arpa".to_string()),
+                        user: Some("ubuntu".to_string()),
+                        private_key_file: Some("/home/me/.ssh/id_ed25519".to_string()),
+                        retries: Some(3),
+                        retry_delay_seconds: Some(1),
+                    }),
+                    ..NormalizedResource::default()
+                },
+            )]),
+            expansions: BTreeMap::from([(
+                "media-stack".to_string(),
+                Expansion {
+                    bootstrap_steps: vec!["hooks/jellyfin/scripts/bootstrap-jellyfin.sh".to_string()],
+                    ..Expansion::default()
+                },
+            )]),
+            ..DesiredState::default()
+        };
+
+        let plan = build_provision_plan(&workspace, &desired).unwrap();
+        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(
+            plan.steps[0].local_script,
+            local_resource_dir.join("hooks/jellyfin/scripts/bootstrap-jellyfin.sh")
+        );
+        assert_eq!(
+            plan.steps[0].remote_script,
+            "/tmp/vmctl-media-stack/hooks/jellyfin/scripts/bootstrap-jellyfin.sh"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -654,5 +731,16 @@ mod tests {
         assert!(!host_key_changed_error(
             "ssh: connect to host media-stack port 22: No route to host"
         ));
+    }
+
+    fn unique_temp_dir() -> PathBuf {
+        let base = std::env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = base.join(format!("vmctl-provision-test-{nanos}"));
+        std::fs::create_dir_all(&path).unwrap();
+        path
     }
 }

@@ -981,6 +981,64 @@ if service_enabled "caddy"; then
       exit 1
     fi
     check_http_ok "http://127.0.0.1:80/jellio-${key}/manifest.json" "jellio manifest (${key})"
+    python3 - "$manifest_url" <<'PY'
+import json
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+manifest_url = sys.argv[1].strip()
+if not manifest_url:
+    raise SystemExit("validation failed: empty Jellio manifest URL")
+
+with urllib.request.urlopen(manifest_url, timeout=20) as response:
+    manifest = json.loads(response.read().decode("utf-8"))
+
+catalogs = manifest.get("catalogs") or []
+if not catalogs:
+    raise SystemExit("validation failed: Jellio manifest has no catalogs")
+catalog = catalogs[0]
+catalog_type = (catalog.get("type") or "").strip()
+catalog_id = (catalog.get("id") or "").strip()
+if not catalog_type or not catalog_id:
+    raise SystemExit("validation failed: Jellio catalog metadata is incomplete")
+
+base = manifest_url.rsplit("/manifest.json", 1)[0]
+catalog_url = f"{base}/catalog/{catalog_type}/{catalog_id}.json?skip=0"
+with urllib.request.urlopen(catalog_url, timeout=20) as response:
+    payload = json.loads(response.read().decode("utf-8"))
+metas = payload.get("metas") or []
+if not metas:
+    raise SystemExit("validation failed: Jellio catalog returned no items to probe")
+
+stream_item = metas[0]
+stream_id = (stream_item.get("id") or "").strip()
+if not stream_id:
+    raise SystemExit("validation failed: Jellio catalog item is missing id")
+
+stream_meta_url = f"{base}/stream/{catalog_type}/{urllib.parse.quote(stream_id, safe='')}.json"
+with urllib.request.urlopen(stream_meta_url, timeout=20) as response:
+    stream_payload = json.loads(response.read().decode("utf-8"))
+streams = stream_payload.get("streams") or []
+if not streams:
+    raise SystemExit("validation failed: Jellio stream payload returned no streams")
+stream_url = (streams[0].get("url") or "").strip()
+if not stream_url:
+    raise SystemExit("validation failed: Jellio stream URL is empty")
+
+req = urllib.request.Request(stream_url, method="GET")
+try:
+    with urllib.request.urlopen(req, timeout=20) as response:
+        if response.status not in (200, 206):
+            raise SystemExit(f"validation failed: Jellio stream probe returned HTTP {response.status}")
+except urllib.error.HTTPError as err:
+    # Redirects are valid because Jellyfin may redirect direct-stream paths.
+    if err.code in (301, 302, 303, 307, 308):
+        pass
+    else:
+        raise SystemExit(f"validation failed: Jellio stream probe returned HTTP {err.code}") from err
+PY
   done
 
   python3 <<'PY'

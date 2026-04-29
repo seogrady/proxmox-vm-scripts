@@ -84,13 +84,13 @@ fn merge_service_scripts_into_expansions(
             instance
                 .provision_scripts
                 .iter()
-                .map(|script| format!("{}/{}", instance.service, script)),
+                .map(|script| format!("hooks/{}/{}", instance.service, script)),
         );
         expansion.validation_steps.extend(
             instance
                 .validation_scripts
                 .iter()
-                .map(|script| format!("{}/{}", instance.service, script)),
+                .map(|script| format!("hooks/{}/{}", instance.service, script)),
         );
         expansion.bootstrap_steps.dedup();
         expansion.validation_steps.dedup();

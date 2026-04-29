@@ -3,5 +3,5 @@ kind = "host"
 apply = false
 
 [hooks]
-bootstrap = "hooks/setup-tailscale.sh"
+setup = "hooks/setup-tailscale.sh"
 serve-ui = "hooks/serve-ui.sh"

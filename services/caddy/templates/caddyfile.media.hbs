@@ -57,59 +57,6 @@
     path /jellio/*
   }
 
-  @tizen_stream {
-    header_regexp User-Agent (?i).*tizen.*
-    path_regexp tizen_stream ^/[Vv]ideos/([^/]+)/stream$
-  }
-
-  @tizen_jf_stream {
-    header_regexp User-Agent (?i).*tizen.*
-    path_regexp tizen_jf_stream ^/jf/[Vv]ideos/([^/]+)/stream$
-  }
-
-  # Stremio playback should favor HLS on the Jellyfin proxy path so clients
-  # get a format that is broadly compatible and less likely to fall back to a
-  # heavy direct-transcode path.
-  @jf_stream {
-    path_regexp jf_stream ^/jf/[Vv]ideos/([^/]+)/stream$
-  }
-
-  @jellyfin_stream {
-    path_regexp jellyfin_stream ^/[Vv]ideos/([^/]+)/stream$
-  }
-
-  handle @tizen_stream {
-    rewrite * /Videos/{re.tizen_stream.1}/master.m3u8?{query}
-    reverse_proxy {$JELLYFIN_INTERNAL_URL} {
-      header_up Accept-Encoding identity
-      header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}
-    }
-  }
-
-  handle @tizen_jf_stream {
-    rewrite * /jf/Videos/{re.tizen_jf_stream.1}/master.m3u8?{query}
-    reverse_proxy {$JELLYFIN_INTERNAL_URL} {
-      header_up Accept-Encoding identity
-      header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}
-    }
-  }
-
-  handle @jf_stream {
-    rewrite * /jf/Videos/{re.jf_stream.1}/master.m3u8?{query}
-    reverse_proxy {$JELLYFIN_INTERNAL_URL} {
-      header_up Accept-Encoding identity
-      header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}
-    }
-  }
-
-  handle @jellyfin_stream {
-    rewrite * /Videos/{re.jellyfin_stream.1}/master.m3u8?{query}
-    reverse_proxy {$JELLYFIN_INTERNAL_URL} {
-      header_up Accept-Encoding identity
-      header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}
-    }
-  }
-
   handle @tailscale_tizen_jellio {
     # Proxy Jellio JSON via a shim that rewrites http://<host> -> https://<host>.
     rewrite * /jf{uri}
@@ -141,34 +88,26 @@
     reverse_proxy {$JELLYFIN_INTERNAL_URL}
   }
 
+  # Keep stream/auth behavior native to Jellyfin so every client gets
+  # consistent direct-play/transcode fallback decisions.
   handle /jf/* {
-    reverse_proxy {$JELLYFIN_INTERNAL_URL} {
-      header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}
-    }
+    reverse_proxy {$JELLYFIN_INTERNAL_URL}
   }
 
   handle /Items/* {
-    reverse_proxy {$JELLYFIN_INTERNAL_URL} {
-      header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}
-    }
+    reverse_proxy {$JELLYFIN_INTERNAL_URL}
   }
 
   handle /items/* {
-    reverse_proxy {$JELLYFIN_INTERNAL_URL} {
-      header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}
-    }
+    reverse_proxy {$JELLYFIN_INTERNAL_URL}
   }
 
   handle /Videos/* {
-    reverse_proxy {$JELLYFIN_INTERNAL_URL} {
-      header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}
-    }
+    reverse_proxy {$JELLYFIN_INTERNAL_URL}
   }
 
   handle /videos/* {
-    reverse_proxy {$JELLYFIN_INTERNAL_URL} {
-      header_up X-MediaBrowser-Token {$JELLYFIN_STREMIO_AUTH_TOKEN}
-    }
+    reverse_proxy {$JELLYFIN_INTERNAL_URL}
   }
 
   handle {

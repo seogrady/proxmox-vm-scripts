@@ -135,7 +135,7 @@ fn build_resource_nodes(
         let Some(hooks) = manifest.hooks.hook_refs(command) else {
             continue;
         };
-        let scripts = hooks.resolve(&registry.root().join(&resource.name).join("scripts"))?;
+        let scripts = hooks.resolve(&registry.root().join(&resource.name))?;
         if scripts.is_empty() {
             continue;
         }
@@ -148,7 +148,7 @@ fn build_resource_nodes(
             kind: HookModuleKind::Resource,
             name: resource.name.clone(),
             target: Some(resource.name.clone()),
-            scripts_root: registry.root().join(&resource.name).join("scripts"),
+            scripts_root: registry.root().join(&resource.name),
             scripts,
             dependencies,
             env,
@@ -884,7 +884,7 @@ mod tests {
             role = "a_role"
 
             [hooks]
-            bootstrap = "bootstrap.sh"
+            bootstrap = "scripts/bootstrap.sh"
             "#,
         );
         write_resource(
@@ -896,7 +896,7 @@ mod tests {
             depends_on = ["a"]
 
             [hooks]
-            bootstrap = "bootstrap.sh"
+            bootstrap = "scripts/bootstrap.sh"
             "#,
         );
         write_resource(
@@ -908,7 +908,7 @@ mod tests {
             depends_on = ["a"]
 
             [hooks]
-            bootstrap = "bootstrap.sh"
+            bootstrap = "scripts/bootstrap.sh"
             "#,
         );
 
@@ -983,7 +983,7 @@ mod tests {
             role = "a_role"
 
             [hooks]
-            bootstrap = "bootstrap.sh"
+            bootstrap = "scripts/bootstrap.sh"
             "#,
         );
         write_resource(
@@ -995,7 +995,7 @@ mod tests {
             depends_on = ["a"]
 
             [hooks]
-            bootstrap = "bootstrap.sh"
+            bootstrap = "scripts/bootstrap.sh"
             "#,
         );
         write_resource(
@@ -1007,7 +1007,7 @@ mod tests {
             depends_on = ["a"]
 
             [hooks]
-            bootstrap = "bootstrap.sh"
+            bootstrap = "scripts/bootstrap.sh"
             "#,
         );
 

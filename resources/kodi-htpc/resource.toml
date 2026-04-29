@@ -60,4 +60,4 @@ requires = ["kodi", "xorg", "jellyfin"]
 templates = ["kodi.env.hbs", "tailscale-setup.sh.hbs"]
 
 [hooks]
-bootstrap = ["bootstrap-node.sh", "bootstrap-tailscale.sh", "bootstrap-kodi.sh", "bootstrap-kodi-jellyfin.sh"]
+bootstrap = ["scripts/bootstrap-node.sh", "scripts/bootstrap-tailscale.sh", "scripts/bootstrap-kodi.sh", "scripts/bootstrap-kodi-jellyfin.sh"]

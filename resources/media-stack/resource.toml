@@ -75,10 +75,10 @@ templates = ["docker-compose.media.hbs", "media.env.hbs", "media-index.html.hbs"
 
 [hooks]
 bootstrap = [
-  "bootstrap-node.sh",
-  "bootstrap-tailscale.sh",
-  "bootstrap-media.sh",
-  "bootstrap-arr.sh",
-  "bootstrap-download-unpack.sh",
+  "scripts/bootstrap-node.sh",
+  "scripts/bootstrap-tailscale.sh",
+  "scripts/bootstrap-media.sh",
+  "scripts/bootstrap-arr.sh",
+  "scripts/bootstrap-download-unpack.sh",
 ]
 cleanup = "hooks/cleanup.sh"

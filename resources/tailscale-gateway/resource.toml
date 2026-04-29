@@ -35,4 +35,4 @@ requires = ["tailscale"]
 templates = ["tailscale-setup.sh.hbs"]
 
 [hooks]
-bootstrap = ["bootstrap-node.sh", "bootstrap-tailscale.sh"]
+bootstrap = ["scripts/bootstrap-node.sh", "scripts/bootstrap-tailscale.sh"]
