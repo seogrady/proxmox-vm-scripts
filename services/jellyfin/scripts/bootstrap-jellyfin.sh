@@ -25,7 +25,6 @@ export BASE_URL_VALUE
 export JELLYFIN_NETWORK_XML
 export JELLYFIN_ENCODING_XML
 export JELLYFIN_ENV_FILE="$ENV_FILE"
-export JELLYFIN_SOFTWARE_TRANSCODE_MARKER="$STACK_DIR/config/jellyfin/.vmctl-force-software-transcode"
 
 jellyfin_base_updated="$(
 python3 <<'PY'
@@ -198,6 +197,7 @@ fi
 python3 <<'PY'
 import json
 import os
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -772,73 +772,44 @@ if token:
         ensure_library(name, path, collection_type, token, admin_user_id)
     call("POST", "/Library/Refresh", token=token, allow=(200, 204, 400))
 
-    current_hwaccel = (os.environ.get("JELLYFIN_HWACCEL_TYPE") or "").strip().lower()
     safe_qsv_codecs = ["h264", "mpeg2video", "vc1", "vp8", "vp9", "av1"]
 
-    def apply_safe_hardware_mode(mode: str) -> bool:
+    def ensure_qsv_only_mode(token: str) -> None:
         set_encoding_mode(
             token,
-            mode,
+            "qsv",
             True,
-            False,
+            True,
             False,
             False,
             safe_qsv_codecs,
         )
-        set_env_value(env_file, "JELLYFIN_HWACCEL_TYPE", mode)
+        set_env_value(env_file, "JELLYFIN_HWACCEL_TYPE", "qsv")
         set_env_value(env_file, "JELLYFIN_HWACCEL_ENABLE_ENCODING", "true")
         set_env_value(env_file, "JELLYFIN_HWACCEL_ENABLE_TONEMAPPING", "false")
         set_env_value(env_file, "JELLYFIN_HWACCEL_ENABLE_VPP_TONEMAPPING", "false")
-        set_env_value(env_file, "JELLYFIN_HWACCEL_PREFER_NATIVE_DECODER", "false")
+        set_env_value(env_file, "JELLYFIN_HWACCEL_PREFER_NATIVE_DECODER", "true")
         set_env_value(env_file, "JELLYFIN_HWACCEL_DECODING_CODECS", ",".join(safe_qsv_codecs))
-        return transcode_probe(token, admin_user_id)
+        set_env_value(env_file, "JELLYFIN_FFMPEG_PATH", "/usr/lib/jellyfin-ffmpeg/ffmpeg")
 
-    probe_ok = transcode_probe(token, admin_user_id)
-    safe_hw_applied = False
-
-    # Recover from prior software fallback by actively re-probing hardware modes.
-    if current_hwaccel == "none":
-        for mode in ("qsv", "vaapi"):
-            if apply_safe_hardware_mode(mode):
-                safe_hw_applied = True
-                probe_ok = True
-                break
-
-    if not probe_ok and current_hwaccel in {"qsv", "vaapi"} and not safe_hw_applied:
-        safe_hw_applied = apply_safe_hardware_mode(current_hwaccel)
-        probe_ok = safe_hw_applied
-
-    if not probe_ok and not safe_hw_applied:
-        for mode in ("qsv", "vaapi"):
-            if mode == current_hwaccel:
-                continue
-            if apply_safe_hardware_mode(mode):
-                safe_hw_applied = True
-                probe_ok = True
-                break
-
-    if not probe_ok and not safe_hw_applied:
-        set_encoding_mode(
-            token,
-            "none",
-            False,
-            False,
-            False,
-            False,
-            [],
+    def trigger_pre_normalize_scan() -> None:
+        cmd = "/usr/local/lib/vmctl/media_download_unpack.py --scan-existing"
+        subprocess.run(
+            cmd.split(),
+            check=True,
         )
-        set_env_value(env_file, "JELLYFIN_HWACCEL_TYPE", "none")
-        set_env_value(env_file, "JELLYFIN_HWACCEL_ENABLE_ENCODING", "false")
-        set_env_value(env_file, "JELLYFIN_HWACCEL_ENABLE_TONEMAPPING", "false")
-        set_env_value(env_file, "JELLYFIN_HWACCEL_ENABLE_VPP_TONEMAPPING", "false")
-        set_env_value(env_file, "JELLYFIN_HWACCEL_PREFER_NATIVE_DECODER", "false")
-        set_env_value(env_file, "JELLYFIN_HWACCEL_DECODING_CODECS", "")
 
-    marker = (os.environ.get("JELLYFIN_SOFTWARE_TRANSCODE_MARKER") or "").strip()
-    if marker:
-        Path(marker).parent.mkdir(parents=True, exist_ok=True)
-        marker_value = "fallback=safe-hw\n" if safe_hw_applied else "fallback=software\n"
-        Path(marker).write_text(marker_value, encoding="utf-8")
+    ensure_qsv_only_mode(token)
+    probe_ok = transcode_probe(token, admin_user_id)
+
+    if not probe_ok:
+        trigger_pre_normalize_scan()
+        call("POST", "/Library/Refresh", token=token, allow=(200, 204, 400))
+        ensure_qsv_only_mode(token)
+        probe_ok = transcode_probe(token, admin_user_id)
+
+    if not probe_ok:
+        raise RuntimeError("QSV-only transcoding validation failed after pre-normalization")
 
     set_env_value(env_file, "JELLYFIN_AUTOLOGIN_USER", auto_login_user)
     set_env_value(env_file, "JELLYFIN_AUTO_AUTH_TOKEN", auto_token)
@@ -861,12 +832,6 @@ if token:
     ui_index.mkdir(parents=True, exist_ok=True)
     (ui_index / "jellyfin-autologin.url").write_text(autologin_url + "\n", encoding="utf-8")
 PY
-
-if [[ -f "$JELLYFIN_SOFTWARE_TRANSCODE_MARKER" ]]; then
-  rm -f "$JELLYFIN_SOFTWARE_TRANSCODE_MARKER"
-  docker_compose up -d jellyfin
-  docker_compose restart jellyfin
-fi
 
 if docker_compose config --services | grep -qx "caddy"; then
   set -a

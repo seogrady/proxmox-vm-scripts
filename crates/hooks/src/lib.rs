@@ -313,12 +313,12 @@ fn execute_hook_plan(
 
 fn execute_node(node: &HookNode) -> Result<()> {
     for script in &node.scripts {
-        let script_path = node.scripts_root.join(script);
+        let script_path = resolve_script_path(node.scripts_root.join(script))?;
         ensure_executable(&script_path)?;
         eprintln!("[vmctl] hook {} -> {}", node.label(), script);
         let output = command_runner::run(
             CommandOptions::new(script_path.to_string_lossy().to_string(), std::iter::empty::<&str>())
-                .cwd(node.scripts_root.parent().unwrap_or(&node.scripts_root))
+                .cwd(&node.scripts_root)
                 .envs(node.env.iter().map(|(key, value)| (key.clone(), value.clone())))
                 .prefix(LogPrefix::Vmctl)
                 .timeout(std::time::Duration::from_secs(3600))
@@ -330,6 +330,14 @@ fn execute_node(node: &HookNode) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn resolve_script_path(path: PathBuf) -> Result<PathBuf> {
+    if path.is_absolute() {
+        return Ok(path);
+    }
+    let cwd = std::env::current_dir().context("failed to resolve current directory")?;
+    Ok(cwd.join(path))
 }
 
 fn ensure_executable(path: &Path) -> Result<()> {

@@ -55,6 +55,7 @@ COMPATIBILITY_SUMMARY_JSON = Path("/var/lib/vmctl/download-unpack/compatibility-
 COMPATIBILITY_SUMMARY_TXT = Path("/var/lib/vmctl/download-unpack/compatibility-summary.txt")
 STALE_STATE_FILE = Path("/var/lib/vmctl/download-unpack/stale-state.json")
 STORAGE_HEALTH_FILE = Path("/opt/media/config/caddy/ui-index/storage-health.json")
+PRENORMALIZE_SUMMARY_FILE = Path("/var/lib/vmctl/download-unpack/pre-normalize-summary.json")
 VIDEO_SUFFIXES = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".ts", ".webm", ".iso"}
 ARCHIVE_SUFFIXES = {".rar", ".r00", ".r01", ".r02", ".zip", ".7z"}
 RADARR_CATEGORIES = {"radarr", "movies"}
@@ -227,6 +228,25 @@ def jellyfin_refresh():
     )
 
 
+def jellyfin_is_ready() -> bool:
+    try:
+        req = urllib.request.Request(f"{JELLYFIN_URL}/System/Info/Public", method="GET")
+        with urllib.request.urlopen(req, timeout=10) as response:
+            return int(response.status) == 200
+    except Exception:
+        return False
+
+
+def refresh_jellyfin_if_ready() -> bool:
+    if not jellyfin_is_ready():
+        return False
+    try:
+        jellyfin_refresh()
+        return True
+    except Exception:
+        return False
+
+
 def ffprobe(path: Path):
     try:
         completed = subprocess.run(
@@ -275,6 +295,22 @@ def stream_language_tokens(stream):
 
 def stream_is_english(stream) -> bool:
     return any(token in ENGLISH_LANGUAGE_TOKENS for token in stream_language_tokens(stream))
+
+
+def video_stream_has_hdr_or_dv_metadata(stream) -> bool:
+    tokens = " ".join(
+        [
+            str(stream.get("profile") or ""),
+            str(stream.get("codec_tag_string") or ""),
+            str(stream.get("color_primaries") or ""),
+            str(stream.get("color_transfer") or ""),
+            str(stream.get("color_space") or ""),
+            str(stream.get("side_data_list") or ""),
+        ]
+    ).lower()
+    dv_markers = ("dovi", "dolby", "vision", "dv_profile")
+    hdr_markers = ("hdr", "hdr10", "hlg", "bt2020", "smpte2084", "bt2100")
+    return any(marker in tokens for marker in dv_markers) or any(marker in tokens for marker in hdr_markers)
 
 
 def compatibility_report(path: Path):
@@ -332,6 +368,13 @@ def compatibility_report(path: Path):
     if any(codec not in STREMIO_VIDEO_CODECS for codec in video_codecs if codec):
         report["reason"] = "unsupported video codec"
         return report
+    if any(
+        video_stream_has_hdr_or_dv_metadata(stream)
+        for stream in streams
+        if stream.get("codec_type") == "video"
+    ):
+        report["reason"] = "unsupported video range metadata"
+        return report
     if any(codec and codec not in STREMIO_AUDIO_CODECS for codec in audio_codecs):
         report["reason"] = "unsupported audio codec"
         return report
@@ -352,21 +395,25 @@ def compatibility_report(path: Path):
     return report
 
 
-def first_media_file(path: Path) -> Path | None:
+def iter_media_files(path: Path):
     if path.is_file():
-        return path if path.suffix.lower() in VIDEO_SUFFIXES else None
+        if path.suffix.lower() in VIDEO_SUFFIXES:
+            yield path
+        return
     if not path.is_dir():
-        return None
+        return
     files = sorted(
         [child for child in path.rglob("*") if child.is_file() and child.suffix.lower() in VIDEO_SUFFIXES],
-        key=lambda item: item.name.lower(),
+        key=lambda item: item.as_posix().lower(),
     )
-    if not files:
-        return None
-    return files[0]
+    for media_file in files:
+        yield media_file
 
 
-def is_high_risk_playback(probe: dict) -> bool:
+def high_risk_playback_reason(probe: dict):
+    """
+    Returns: (is_high_risk, priority, reason)
+    """
     streams = probe.get("streams") or []
     for stream in streams:
         if stream.get("codec_type") != "video":
@@ -385,23 +432,17 @@ def is_high_risk_playback(probe: dict) -> bool:
                 str(stream.get("side_data_list") or ""),
             ]
         ).lower()
-        has_hdr_or_dv = any(
-            marker in tokens
-            for marker in (
-                "dovi",
-                "dolby",
-                "vision",
-                "hdr",
-                "hdr10",
-                "hlg",
-                "bt2020",
-                "smpte2084",
-                "dv_profile",
-            )
-        )
-        if width >= 3840 or has_hdr_or_dv:
-            return True
-    return False
+        dv_markers = ("dovi", "dolby", "vision", "dv_profile")
+        hdr_markers = ("hdr", "hdr10", "hlg", "bt2020", "smpte2084")
+        has_dv = any(marker in tokens for marker in dv_markers)
+        has_hdr = any(marker in tokens for marker in hdr_markers)
+        if has_dv:
+            return (True, 140, "high-risk HEVC Dolby Vision source")
+        if has_hdr:
+            return (True, 120, "high-risk HEVC HDR source")
+        if width >= 3840:
+            return (True, 100, "high-risk 4K HEVC source")
+    return (False, 0, "")
 
 
 def normalize_output_path(media_file: Path) -> Path:
@@ -410,26 +451,82 @@ def normalize_output_path(media_file: Path) -> Path:
     return parent / f"{base_name} - vmctl-1080p-sdr.mkv"
 
 
-def pre_normalize_media(path: Path) -> bool:
-    if not PLAYBACK_PRENORMALIZE_ENABLED:
-        return False
+def normalization_target_path(media_file: Path) -> tuple[Path, bool]:
+    # When remove-original is enabled, normalize in-place to keep Jellyfin item paths stable.
+    if PLAYBACK_REMOVE_ORIGINAL_AFTER_NORMALIZATION:
+        return (media_file, True)
+    return (normalize_output_path(media_file), False)
 
-    media_file = first_media_file(path)
-    if media_file is None:
-        return False
 
+def pre_normalize_decision(media_file: Path):
+    """
+    Returns: (should_convert, priority, reason)
+    """
+    if media_file.name.endswith(" - vmctl-1080p-sdr.mkv"):
+        return (False, 0, "already normalized output")
     probe = ffprobe(media_file)
     if not probe:
-        return False
-    report = compatibility_report(path)
-    if report.get("compatible") and not is_high_risk_playback(probe):
-        return False
+        return (False, 0, "ffprobe unavailable or failed")
+    report = compatibility_report(media_file)
+    is_high_risk, high_risk_priority, high_risk_reason = high_risk_playback_reason(probe)
+    if is_high_risk:
+        return (True, high_risk_priority, high_risk_reason)
 
-    normalized_file = normalize_output_path(media_file)
-    if normalized_file.exists():
-        return False
+    if report.get("compatible"):
+        return (False, 0, "already compatible")
+
+    reason = str(report.get("reason") or "incompatible")
+    if reason in {"unsupported video codec", "unsupported audio codec", "unsupported container"}:
+        return (True, 60, reason)
+    if reason == "unsupported video range metadata":
+        return (True, 80, reason)
+    if reason == "unsupported subtitle codec":
+        # Subtitle incompatibility alone is not a reason to fully re-encode video.
+        return (False, 0, reason)
+    if reason == "missing english audio track":
+        return (False, 0, reason)
+
+    return (True, 20, reason)
+
+
+def pre_normalize_file(media_file: Path, decision_reason: str) -> tuple[bool, str]:
+    normalized_file, replace_source_in_place = normalization_target_path(media_file)
+    if not replace_source_in_place and normalized_file.exists():
+        source_probe = ffprobe(media_file) or {}
+        existing_probe = ffprobe(normalized_file)
+        existing_streams = (existing_probe or {}).get("streams") or []
+        source_duration = float(((source_probe.get("format") or {}).get("duration") or 0) or 0)
+        existing_duration = float((((existing_probe or {}).get("format") or {}).get("duration") or 0) or 0)
+        has_video = any(stream.get("codec_type") == "video" for stream in existing_streams)
+        duration_is_valid = False
+        if source_duration > 0 and existing_duration > 0:
+            duration_is_valid = existing_duration >= (source_duration * 0.90)
+        elif source_duration <= 0 and existing_duration > 0:
+            duration_is_valid = True
+        if has_video and duration_is_valid:
+            return (False, f"skip (normalized exists): {normalized_file}")
+        try:
+            normalized_file.unlink()
+        except Exception:
+            return (False, f"skip (invalid normalized output exists): {normalized_file}")
+
+    if decision_reason == "already normalized output":
+        return (False, "skip (already normalized output)")
+    if decision_reason in {"ffprobe unavailable or failed", "already compatible", "unsupported subtitle codec", "missing english audio track"}:
+        return (False, f"skip ({decision_reason})")
+
+    if not media_file.exists():
+        return (False, "skip (source file missing)")
 
     normalized_file.parent.mkdir(parents=True, exist_ok=True)
+    temp_output = normalized_file.with_name(f"{normalized_file.stem}.tmp{normalized_file.suffix}")
+    try:
+        if temp_output.exists():
+            temp_output.unlink()
+    except Exception:
+        return (False, f"failed (could not remove stale temp output: {temp_output})")
+
+    print(f"pre-normalize: converting {media_file} -> {normalized_file} ({decision_reason})")
     cmd = [
         "ffmpeg",
         "-y",
@@ -438,6 +535,10 @@ def pre_normalize_media(path: Path) -> bool:
         "error",
         "-i",
         str(media_file),
+        "-map_metadata",
+        "-1",
+        "-map_chapters",
+        "-1",
         "-map",
         "0:v:0",
         "-map",
@@ -445,34 +546,71 @@ def pre_normalize_media(path: Path) -> bool:
         "-map",
         "-0:s",
         "-vf",
-        "scale='min(1920,iw)':-2:flags=lanczos,format=yuv420p",
+        "scale='min(1920,iw)':-2:flags=lanczos,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709",
         "-c:v",
         "libx264",
         "-preset",
-        "veryfast",
+        "superfast",
         "-crf",
-        "20",
+        "23",
+        "-bsf:v",
+        "filter_units=remove_types=6",
         "-c:a",
         "aac",
         "-b:a",
         "192k",
         "-ac",
         "2",
-        str(normalized_file),
+        str(temp_output),
     ]
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as exc:
-        print(f"warning: failed pre-normalization for {media_file}: {exc}")
+        try:
+            if temp_output.exists():
+                temp_output.unlink()
+        except Exception:
+            pass
+        return (False, f"failed ({exc})")
+    try:
+        temp_output.replace(normalized_file)
+    except Exception as exc:
+        return (False, f"failed (could not finalize output: {exc})")
+
+    if replace_source_in_place:
+        return (True, "converted (in-place)")
+    return (True, "converted")
+
+
+def pre_normalize_media(path: Path, summary: dict | None = None) -> bool:
+    if not PLAYBACK_PRENORMALIZE_ENABLED:
         return False
 
-    if PLAYBACK_REMOVE_ORIGINAL_AFTER_NORMALIZATION:
-        try:
-            media_file.unlink()
-        except Exception as exc:
-            print(f"warning: failed to remove original media file {media_file}: {exc}")
+    candidates = []
+    for media_file in iter_media_files(path):
+        should_convert, priority, reason = pre_normalize_decision(media_file)
+        candidates.append((priority, str(media_file).lower(), media_file, should_convert, reason))
+    candidates.sort(key=lambda row: (-row[0], row[1]))
 
-    return True
+    changed = False
+    for _priority, _key, media_file, should_convert, reason in candidates:
+        converted, status = pre_normalize_file(media_file, reason if should_convert else reason)
+        changed = converted or changed
+        if summary is not None:
+            summary["scanned"] += 1
+            if converted:
+                summary["converted"] += 1
+            else:
+                summary["skipped"] += 1
+            summary["items"].append(
+                {
+                    "path": str(media_file),
+                    "convert": bool(should_convert),
+                    "decision": reason,
+                    "status": status,
+                }
+            )
+    return changed
 
 
 def load_state():
@@ -820,11 +958,7 @@ def cleanup_stale_state(state):
         save_state(state)
         save_json_file(COMPATIBILITY_FILE, compatibility)
         rebuild_compatibility_summary()
-        try:
-            jellyfin_refresh()
-            cleanup["refreshedJellyfin"] = True
-        except Exception as exc:
-            print(f"warning: Jellyfin refresh skipped: {exc}")
+        cleanup["refreshedJellyfin"] = refresh_jellyfin_if_ready()
     save_json_file(STALE_STATE_FILE, cleanup)
 
     return changed
@@ -840,22 +974,62 @@ def process():
         changed = process_usenet_downloads(state) or changed
     if changed:
         save_state(state)
-        try:
-            jellyfin_refresh()
-        except Exception as exc:
-            print(f"warning: Jellyfin refresh skipped: {exc}")
+        refresh_jellyfin_if_ready()
     trigger_recovery()
     rebuild_compatibility_summary()
     write_storage_health()
 
 
-wait_for("http://127.0.0.1:8080/api/v2/app/version", 240)
-wait_for("http://127.0.0.1:7878/ping", 240)
-wait_for("http://127.0.0.1:8989/ping", 240)
-try:
-    process()
-except Exception as exc:
-    print(f"warning: media unpack/import pass failed: {exc}")
+def scan_existing_media() -> None:
+    if not PLAYBACK_PRENORMALIZE_ENABLED:
+        print("pre-normalization is disabled; skipping existing media scan")
+        return
+    roots = []
+    for candidate in (
+        os.environ.get("RADARR_ROOT_FOLDER") or "/data/media/movies",
+        os.environ.get("SONARR_ROOT_FOLDER") or "/data/media/tv",
+    ):
+        path = Path(candidate).expanduser()
+        if path.exists() and path not in roots:
+            roots.append(path)
+    summary = {
+        "startedAt": int(time.time()),
+        "scanned": 0,
+        "converted": 0,
+        "skipped": 0,
+        "roots": [str(root) for root in roots],
+        "items": [],
+    }
+    changed = False
+    for root in roots:
+        changed = pre_normalize_media(root, summary) or changed
+    summary["completedAt"] = int(time.time())
+    PRENORMALIZE_SUMMARY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PRENORMALIZE_SUMMARY_FILE.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    print(
+        f"pre-normalization summary: scanned={summary['scanned']} "
+        f"converted={summary['converted']} skipped={summary['skipped']} "
+        f"report={PRENORMALIZE_SUMMARY_FILE}"
+    )
+    rebuild_compatibility_summary()
+    write_storage_health()
+    if changed:
+        refresh_jellyfin_if_ready()
+
+
+if "--scan-existing" in os.sys.argv:
+    try:
+        scan_existing_media()
+    except Exception as exc:
+        print(f"warning: pre-normalization scan failed: {exc}")
+else:
+    wait_for("http://127.0.0.1:8080/api/v2/app/version", 240)
+    wait_for("http://127.0.0.1:7878/ping", 240)
+    wait_for("http://127.0.0.1:8989/ping", 240)
+    try:
+        process()
+    except Exception as exc:
+        print(f"warning: media unpack/import pass failed: {exc}")
 PY
 chmod +x /usr/local/lib/vmctl/media_download_unpack.py
 
