@@ -45,5 +45,9 @@ services = ["gitea"]
 templates = ["tailscale-setup.sh.hbs", "gitea.env.hbs"]
 
 [hooks]
-bootstrap = ["bootstrap-node.sh", "bootstrap-tailscale.sh", "bootstrap-gitea.sh"]
-validate = ["validate-gitea.sh"]
+bootstrap = [
+    "scripts/bootstrap-node.sh",
+    "scripts/bootstrap-tailscale.sh",
+    "scripts/bootstrap-gitea.sh"
+]
+validate = ["scripts/validate-gitea.sh"]

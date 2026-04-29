@@ -2536,7 +2536,7 @@ mod tests {
         assert!(script.contains("gitea ssh push smoke test failed"));
         assert!(script.contains("\"$api_base/version\""));
         assert!(script.contains("\"$api_base/user\""));
-        assert!(script.contains("ssh://git@${gitea_ssh_host}:${GITEA_SSH_PORT}"));
+        assert!(script.contains("ssh://gitea@${gitea_ssh_host}:${GITEA_SSH_PORT}"));
     }
 
     #[test]

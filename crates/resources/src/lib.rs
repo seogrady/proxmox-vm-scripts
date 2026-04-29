@@ -273,10 +273,52 @@ impl ResourceRegistry {
                 })?;
                 written.push(output_path);
             }
+
+            copy_directory_files(
+                &self.resource_module_root(resource).join("scripts"),
+                &resource_dir.join("scripts"),
+                &mut written,
+            )?;
         }
 
         Ok(written)
     }
+}
+
+fn copy_directory_files(source_root: &Path, target_root: &Path, written: &mut Vec<PathBuf>) -> Result<()> {
+    if !source_root.exists() {
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(target_root)
+        .with_context(|| format!("failed to create {}", target_root.display()))?;
+
+    for entry in std::fs::read_dir(source_root)
+        .with_context(|| format!("failed to read {}", source_root.display()))?
+    {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = target_root.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_directory_files(&source_path, &target_path, written)?;
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+
+        std::fs::copy(&source_path, &target_path).with_context(|| {
+            format!(
+                "failed to copy script file {} to {}",
+                source_path.display(),
+                target_path.display()
+            )
+        })?;
+        written.push(target_path);
+    }
+
+    Ok(())
 }
 
 fn load_resource_manifests(
@@ -861,6 +903,62 @@ mod tests {
         assert!(output
             .join("resources/guest/scripts/bootstrap.sh")
             .is_file());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copies_non_hook_scripts_needed_by_hook_scripts() {
+        let root = unique_temp_dir();
+        let resources_root = root.join("resources");
+        let services_root = root.join("services");
+        std::fs::create_dir_all(resources_root.join("guest/scripts")).unwrap();
+
+        std::fs::write(
+            resources_root.join("guest/resource.toml"),
+            r#"
+            name = "guest"
+            kind = "vm"
+            role = "example"
+
+            [hooks]
+            bootstrap = ["scripts/bootstrap.sh"]
+            "#,
+        )
+        .unwrap();
+        std::fs::write(
+            resources_root.join("guest/scripts/bootstrap.sh"),
+            "#!/usr/bin/env bash\n. \"$(dirname \"$0\")/helper.sh\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            resources_root.join("guest/scripts/helper.sh"),
+            "#!/usr/bin/env bash\necho helper\n",
+        )
+        .unwrap();
+
+        let registry = ResourceRegistry::load(&resources_root, &services_root).unwrap();
+        let resource = Resource {
+            name: "guest".to_string(),
+            kind: "vm".to_string(),
+            enabled: true,
+            image: None,
+            role: Some("example".to_string()),
+            vmid: None,
+            depends_on: Vec::new(),
+            features: BTreeMap::new(),
+            settings: BTreeMap::new(),
+        };
+        let expansion = registry.expand_resource(&resource).unwrap();
+        let expansions = BTreeMap::from([("guest".to_string(), expansion)]);
+        let output = root.join("generated");
+
+        registry
+            .render_artifacts(&output, &[resource], &expansions)
+            .unwrap();
+
+        assert!(output.join("resources/guest/scripts/bootstrap.sh").is_file());
+        assert!(output.join("resources/guest/scripts/helper.sh").is_file());
 
         std::fs::remove_dir_all(root).unwrap();
     }

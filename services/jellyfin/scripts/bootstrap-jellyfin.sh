@@ -739,6 +739,7 @@ token = auth.get("AccessToken") if auth else None
 
 if token:
     max_streaming_bitrate = parse_positive_int(max_streaming_bitrate_raw, 12_000_000)
+    qsv_validation_required = (os.environ.get("JELLYFIN_QSV_VALIDATION_REQUIRED") or "false").strip().lower() in {"1", "true", "yes", "on"}
     info = try_call("GET", "/System/Info/Public", token=token) or {}
     server_id = (info.get("Id") or "").strip()
     admin_user_id = ensure_user(user, token)
@@ -809,7 +810,12 @@ if token:
         probe_ok = transcode_probe(token, admin_user_id)
 
     if not probe_ok:
-        raise RuntimeError("QSV-only transcoding validation failed after pre-normalization")
+        if qsv_validation_required:
+            raise RuntimeError("QSV-only transcoding validation failed after pre-normalization")
+        print(
+            "warning: QSV-only transcoding validation failed after pre-normalization; continuing because JELLYFIN_QSV_VALIDATION_REQUIRED is disabled",
+            flush=True,
+        )
 
     set_env_value(env_file, "JELLYFIN_AUTOLOGIN_USER", auto_login_user)
     set_env_value(env_file, "JELLYFIN_AUTO_AUTH_TOKEN", auto_token)

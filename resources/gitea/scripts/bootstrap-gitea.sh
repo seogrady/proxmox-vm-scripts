@@ -14,12 +14,73 @@ if [[ "$GITEA_ENABLED" != "true" ]]; then
 fi
 
 missing=()
-for package in ca-certificates curl git jq openssh-client openssh-server python3 sqlite3 gitea; do
+for package in ca-certificates curl git jq openssh-client openssh-server python3 sqlite3; do
   dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'install ok installed' || missing+=("$package")
 done
 if ((${#missing[@]} > 0)); then
   apt-get update
   apt-get install -y "${missing[@]}"
+fi
+
+ensure_gitea_user() {
+  if id gitea >/dev/null 2>&1; then
+    return 0
+  fi
+  groupadd --system gitea
+  useradd --system --home /var/lib/gitea --create-home --shell /usr/sbin/nologin --gid gitea gitea
+}
+
+install_gitea_binary_release() {
+  local arch version url
+  case "$(uname -m)" in
+    x86_64) arch="amd64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    *)
+      echo "unsupported architecture for gitea binary install: $(uname -m)"
+      exit 1
+      ;;
+  esac
+
+  version="${GITEA_VERSION:-1.25.5}"
+  url="https://dl.gitea.com/gitea/${version}/gitea-${version}-linux-${arch}"
+  curl -fsSL "$url" -o /usr/local/bin/gitea
+  chmod 0755 /usr/local/bin/gitea
+}
+
+ensure_gitea_systemd_unit() {
+  cat > /etc/systemd/system/gitea.service <<'EOF_UNIT'
+[Unit]
+Description=Gitea
+After=network.target
+
+[Service]
+Type=simple
+User=gitea
+Group=gitea
+WorkingDirectory=/var/lib/gitea
+ExecStart=/usr/local/bin/gitea web --config /etc/gitea/conf/app.ini
+Restart=always
+RestartSec=2s
+Environment=USER=gitea HOME=/var/lib/gitea GITEA_WORK_DIR=/var/lib/gitea
+
+[Install]
+WantedBy=multi-user.target
+EOF_UNIT
+  systemctl daemon-reload
+}
+
+if ! command -v gitea >/dev/null 2>&1; then
+  if apt-cache show gitea >/dev/null 2>&1; then
+    apt-get install -y gitea
+  else
+    ensure_gitea_user
+    install_gitea_binary_release
+    ensure_gitea_systemd_unit
+  fi
+fi
+
+if systemctl list-unit-files | grep -q '^gitea\.service'; then
+  ensure_gitea_user
 fi
 
 if systemctl list-unit-files | grep -q '^ssh\.service'; then
@@ -102,7 +163,7 @@ ROOT_PATH = ${GITEA_DATA_ROOT}/log
 MODE = console
 LEVEL = Info
 EOF_INI
-install -m 0640 -o root -g "$gitea_user" /tmp/vmctl-gitea-app.ini /etc/gitea/conf/app.ini
+install -m 0640 -o "$gitea_user" -g "$gitea_user" /tmp/vmctl-gitea-app.ini /etc/gitea/conf/app.ini
 rm -f /tmp/vmctl-gitea-app.ini
 
 systemctl enable gitea
@@ -118,6 +179,10 @@ if [[ -z "$gitea_bin" ]]; then
   echo "gitea binary not found"
   exit 1
 fi
+
+run_gitea_admin_user_command() {
+  runuser -u "$gitea_user" -- "$gitea_bin" --config /etc/gitea/conf/app.ini admin user "$@"
+}
 
 user_exists="$(python3 - "$GITEA_DATA_ROOT/data/gitea.db" "$GITEA_ADMIN_USER" <<'PY'
 import sqlite3
@@ -139,11 +204,11 @@ PY
 )"
 
 if [[ "$user_exists" == "1" ]]; then
-  "$gitea_bin" --config /etc/gitea/conf/app.ini admin user change-password \
+  run_gitea_admin_user_command change-password \
     --username "$GITEA_ADMIN_USER" \
     --password "$GITEA_ADMIN_PASSWORD"
 else
-  "$gitea_bin" --config /etc/gitea/conf/app.ini admin user create \
+  run_gitea_admin_user_command create \
     --username "$GITEA_ADMIN_USER" \
     --password "$GITEA_ADMIN_PASSWORD" \
     --email "$GITEA_ADMIN_EMAIL" \
@@ -160,7 +225,7 @@ conn = sqlite3.connect(db_path)
 try:
     cur = conn.cursor()
     cur.execute(
-        "UPDATE user SET is_admin = 1, email = ? WHERE lower_name = lower(?)",
+        "UPDATE user SET is_admin = 1, email = ?, must_change_password = 0 WHERE lower_name = lower(?)",
         (email, user),
     )
     if cur.rowcount == 0:
@@ -241,4 +306,4 @@ rm -f "$key_file"
 
 echo "gitea bootstrap complete"
 echo "web: ${gitea_root_url}"
-echo "ssh: ssh://git@${gitea_ssh_host}:${GITEA_SSH_PORT}/${GITEA_ADMIN_USER}/<repo>.git"
+echo "ssh: ssh://gitea@${gitea_ssh_host}:${GITEA_SSH_PORT}/${GITEA_ADMIN_USER}/<repo>.git"

@@ -47,12 +47,14 @@ ssh_key="$work_dir/vmctl-gitea-smoke"
 ssh-keygen -q -t ed25519 -N '' -f "$ssh_key" >/dev/null
 
 smoke_key_payload="$(python3 - "$ssh_key.pub" <<'PY'
+import hashlib
 import json
 import sys
 from pathlib import Path
 
 key = Path(sys.argv[1]).read_text(encoding="utf-8").strip()
-print(json.dumps({"title": "vmctl-validate-smoke", "key": key}))
+title = "vmctl-validate-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+print(json.dumps({"title": title, "key": key}))
 PY
 )"
 
@@ -107,10 +109,11 @@ mkdir -p "$smoke_repo_dir"
   git add README.md
   git commit -q -m "vmctl ssh smoke"
 
-  remote_url="ssh://git@${gitea_ssh_host}:${GITEA_SSH_PORT}/${GITEA_ADMIN_USER}/${repo_name}.git"
+  remote_url="ssh://gitea@${gitea_ssh_host}:${GITEA_SSH_PORT}/${GITEA_ADMIN_USER}/${repo_name}.git"
+  smoke_branch="vmctl-smoke-$(date -u +%Y%m%d%H%M%S)-$RANDOM"
   export GIT_SSH_COMMAND="ssh -i $ssh_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$work_dir/known_hosts -p ${GITEA_SSH_PORT}"
   git remote add origin "$remote_url"
-  git push -q -u origin HEAD:main
+  git push -q -u origin "HEAD:${smoke_branch}"
 ) || {
   echo "gitea ssh push smoke test failed"
   exit 1
