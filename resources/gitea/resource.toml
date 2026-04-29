@@ -1,0 +1,49 @@
+name = "gitea"
+kind = "lxc"
+image = "debian_12_lxc"
+role = "gitea"
+vmid = 212
+rootfs_gb = 16
+memory = 2048
+cores = 2
+description = "Gitea source control service (LXC preferred, VM-capable hooks)"
+
+[network]
+mode = "dhcp"
+
+[provision]
+user = "root"
+private_key_file = "${env.DEFAULT_SSH_PRIVATE_KEY_FILE}"
+retries = 20
+retry_delay_seconds = 15
+
+[features.lxc]
+nesting = true
+
+[features.tailscale]
+enabled = true
+mode = "client"
+auth_key = "${env.TAILSCALE_AUTH_KEY}"
+tags = ["tag:homelab"]
+
+[features.gitea]
+enabled = true
+admin_user = "${env.GITEA_ADMIN_USER}"
+admin_password = "${env.GITEA_ADMIN_PASSWORD}"
+admin_email = "${env.GITEA_ADMIN_EMAIL}"
+domain = "${env.GITEA_DOMAIN}"
+http_port = "${env.GITEA_HTTP_PORT}"
+ssh_port = "${env.GITEA_SSH_PORT}"
+repo_root = "/var/lib/gitea/repositories"
+data_root = "/var/lib/gitea"
+admin_ssh_key_source = "/root/.ssh/authorized_keys"
+
+[features.gitea_bundle]
+services = ["gitea"]
+
+[render]
+templates = ["tailscale-setup.sh.hbs", "gitea.env.hbs"]
+
+[hooks]
+bootstrap = ["bootstrap-node.sh", "bootstrap-tailscale.sh", "bootstrap-gitea.sh"]
+validate = ["validate-gitea.sh"]
