@@ -2432,6 +2432,47 @@ mod tests {
     }
 
     #[test]
+    fn gitea_resource_defaults_to_lxc_with_service_bundle() {
+        let resource = include_str!("../../../resources/gitea/resource.toml");
+        assert!(resource.contains("kind = \"lxc\""));
+        assert!(resource.contains("role = \"gitea\""));
+        assert!(resource.contains("services = [\"gitea\"]"));
+        assert!(resource.contains("bootstrap-gitea.sh"));
+        assert!(resource.contains("validate-gitea.sh"));
+    }
+
+    #[test]
+    fn gitea_bootstrap_fixture_configures_admin_base_url_and_ssh_server() {
+        let script = include_str!("../../../resources/gitea/scripts/bootstrap-gitea.sh");
+        assert!(script.contains("START_SSH_SERVER = true"));
+        assert!(script.contains("SSH_LISTEN_PORT = ${GITEA_SSH_PORT}"));
+        assert!(script.contains("ROOT_URL = ${gitea_root_url}"));
+        assert!(script.contains("admin user create"));
+        assert!(script.contains("admin user change-password"));
+        assert!(script.contains("\"$api_base/user\""));
+        assert!(script.contains("\"/user/keys\""));
+    }
+
+    #[test]
+    fn gitea_validate_fixture_enforces_http_auth_api_and_ssh_push() {
+        let script = include_str!("../../../resources/gitea/scripts/validate-gitea.sh");
+        assert!(script.contains("gitea service not reachable"));
+        assert!(script.contains("gitea login failed for admin user"));
+        assert!(script.contains("gitea ssh push smoke test failed"));
+        assert!(script.contains("\"$api_base/version\""));
+        assert!(script.contains("\"$api_base/user\""));
+        assert!(script.contains("ssh://git@${gitea_ssh_host}:${GITEA_SSH_PORT}"));
+    }
+
+    #[test]
+    fn gitea_service_definition_supports_lxc_and_vm_targets() {
+        let service = include_str!("../../../services/gitea/service.toml");
+        assert!(service.contains("targets = [\"lxc\", \"vm\"]"));
+        assert!(service.contains("default_target = \"lxc\""));
+        assert!(service.contains("fallback_target = \"vm\""));
+    }
+
+    #[test]
     fn kodi_bootstrap_configures_tailscale_https_serve() {
         let script = include_str!(
             "../tests/fixtures/example-workspace/resources/kodi-htpc/scripts/bootstrap-kodi.sh"
