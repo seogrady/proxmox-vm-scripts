@@ -30,6 +30,15 @@ remote_transcoder_host = ""
 remote_transcoder_user = "ubuntu"
 remote_transcoder_ssh_key = "/root/.ssh/id_ed25519"
 remote_transcoder_ffmpeg = "/usr/lib/jellyfin-ffmpeg/ffmpeg"
+normalize_video_codec = "libx265"
+normalize_preset = "slow"
+normalize_crf = 19
+normalize_audio_codec = "aac"
+normalize_audio_bitrate = "384k"
+normalize_max_width = 0
+tone_map_enabled = true
+tone_map_algorithm = "hable"
+tone_map_desat = "0.0"
 
 [defaults.cloud_init]
 ssh_key_file = "${DEFAULT_SSH_KEY_FILE}"
@@ -61,6 +70,10 @@ GITEA_ADMIN_EMAIL = "admin@gitea.local"
 GITEA_DOMAIN = "gitea"
 GITEA_HTTP_PORT = "3000"
 GITEA_SSH_PORT = "2222"
+GITEA_BASE_URL = ""
+GITEA_SSH_HOST = ""
+GITEA_TAILSCALE_HTTPS_ENABLED = "true"
+GITEA_TAILSCALE_HTTPS_TARGET = ""
 QBITTORRENT_CATEGORY_TV_PATH = "/data/torrents/tv"
 QBITTORRENT_CATEGORY_MOVIES_PATH = "/data/torrents/movies"
 SEERR_API_KEY = ""

@@ -2161,9 +2161,11 @@ mod tests {
         assert!(script.contains("def video_stream_has_hdr_or_dv_metadata(stream) -> bool:"));
         assert!(script.contains("def pre_normalize_decision(media_file: Path):"));
         assert!(script.contains("def pre_normalize_media(path: Path, summary: dict | None = None) -> bool:"));
-        assert!(script.contains("vmctl-1080p-sdr.mkv"));
+        assert!(script.contains("vmctl-sdr.mkv"));
         assert!(script.contains("converted (in-place)"));
-        assert!(script.contains("filter_units=remove_types=6"));
+        assert!(script.contains("build_video_filter_chain"));
+        assert!(script.contains("PLAYBACK_TONE_MAP_ENABLED"));
+        assert!(script.contains("PLAYBACK_NORMALIZE_VIDEO_CODEC"));
         assert!(script.contains("def scan_existing_media() -> None:"));
         assert!(script.contains("PRENORMALIZE_SUMMARY_FILE"));
         assert!(script.contains("pre-normalization summary: scanned="));
@@ -2336,6 +2338,15 @@ mod tests {
         assert!(env.contains("VMCTL_PLAYBACK_REMOTE_TRANSCODER_USER={{features.media_services.playback.remote_transcoder_user}}"));
         assert!(env.contains("VMCTL_PLAYBACK_REMOTE_TRANSCODER_SSH_KEY={{features.media_services.playback.remote_transcoder_ssh_key}}"));
         assert!(env.contains("VMCTL_PLAYBACK_REMOTE_TRANSCODER_FFMPEG={{features.media_services.playback.remote_transcoder_ffmpeg}}"));
+        assert!(env.contains("VMCTL_PLAYBACK_NORMALIZE_VIDEO_CODEC={{features.media_services.playback.normalize_video_codec}}"));
+        assert!(env.contains("VMCTL_PLAYBACK_NORMALIZE_PRESET={{features.media_services.playback.normalize_preset}}"));
+        assert!(env.contains("VMCTL_PLAYBACK_NORMALIZE_CRF={{features.media_services.playback.normalize_crf}}"));
+        assert!(env.contains("VMCTL_PLAYBACK_NORMALIZE_AUDIO_CODEC={{features.media_services.playback.normalize_audio_codec}}"));
+        assert!(env.contains("VMCTL_PLAYBACK_NORMALIZE_AUDIO_BITRATE={{features.media_services.playback.normalize_audio_bitrate}}"));
+        assert!(env.contains("VMCTL_PLAYBACK_NORMALIZE_MAX_WIDTH={{features.media_services.playback.normalize_max_width}}"));
+        assert!(env.contains("VMCTL_PLAYBACK_TONE_MAP_ENABLED={{features.media_services.playback.tone_map_enabled}}"));
+        assert!(env.contains("VMCTL_PLAYBACK_TONE_MAP_ALGORITHM={{features.media_services.playback.tone_map_algorithm}}"));
+        assert!(env.contains("VMCTL_PLAYBACK_TONE_MAP_DESAT={{features.media_services.playback.tone_map_desat}}"));
         assert!(env.contains("JELLYFIN_FFMPEG_PATH=/usr/lib/jellyfin-ffmpeg/ffmpeg"));
         assert!(env.contains(
             "PROWLARR_BOOTSTRAP_INDEXERS_TORRENT=\"{{#each seed_indexers_torrent}}"
@@ -2522,8 +2533,8 @@ mod tests {
         assert!(script.contains("START_SSH_SERVER = true"));
         assert!(script.contains("SSH_LISTEN_PORT = ${GITEA_SSH_PORT}"));
         assert!(script.contains("ROOT_URL = ${gitea_root_url}"));
-        assert!(script.contains("admin user create"));
-        assert!(script.contains("admin user change-password"));
+        assert!(script.contains("run_gitea_admin_user_command create"));
+        assert!(script.contains("run_gitea_admin_user_command change-password"));
         assert!(script.contains("\"$api_base/user\""));
         assert!(script.contains("\"/user/keys\""));
     }

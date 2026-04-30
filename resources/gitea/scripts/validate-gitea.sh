@@ -13,11 +13,24 @@ fi
 
 gitea_root_url="$(resolve_gitea_root_url)"
 gitea_ssh_host="$(resolve_gitea_ssh_host)"
-api_base="${gitea_root_url%/}/api/v1"
+api_base="http://127.0.0.1:${GITEA_HTTP_PORT}/api/v1"
 
-if ! wait_for_gitea_version "$gitea_root_url"; then
+if ! wait_for_gitea_version "http://127.0.0.1:${GITEA_HTTP_PORT}/"; then
   echo "gitea service not reachable"
   exit 1
+fi
+
+if is_truthy "$GITEA_TAILSCALE_HTTPS_ENABLED"; then
+  expected_target="${GITEA_TAILSCALE_HTTPS_TARGET:-http://127.0.0.1:${GITEA_HTTP_PORT}}"
+  serve_status="$(tailscale serve status 2>/dev/null || true)"
+  if [[ "$serve_status" != *"proxy ${expected_target}"* ]]; then
+    echo "gitea tailscale serve target mismatch"
+    exit 1
+  fi
+  if ! curl --noproxy '*' -fsS "${gitea_root_url%/}/api/v1/version" >/tmp/vmctl-gitea-version-external.json; then
+    echo "gitea tailscale HTTPS endpoint is not reachable"
+    exit 1
+  fi
 fi
 
 if ! curl -fsS -u "$GITEA_ADMIN_USER:$GITEA_ADMIN_PASSWORD" "$api_base/user" >/tmp/vmctl-gitea-user.json; then

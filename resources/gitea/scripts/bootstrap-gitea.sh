@@ -22,6 +22,24 @@ if ((${#missing[@]} > 0)); then
   apt-get install -y "${missing[@]}"
 fi
 
+configure_tailscale_https_serve() {
+  if ! is_truthy "$GITEA_TAILSCALE_HTTPS_ENABLED"; then
+    return 0
+  fi
+  if ! command -v tailscale >/dev/null 2>&1; then
+    echo "gitea tailscale HTTPS is enabled but tailscale is unavailable"
+    return 1
+  fi
+
+  local tailscale_target
+  tailscale_target="${GITEA_TAILSCALE_HTTPS_TARGET:-http://127.0.0.1:${GITEA_HTTP_PORT}}"
+  if [[ -z "$tailscale_target" ]]; then
+    tailscale_target="http://127.0.0.1:${GITEA_HTTP_PORT}"
+  fi
+
+  tailscale serve --yes --bg "$tailscale_target"
+}
+
 ensure_gitea_user() {
   if id gitea >/dev/null 2>&1; then
     return 0
@@ -169,9 +187,18 @@ rm -f /tmp/vmctl-gitea-app.ini
 systemctl enable gitea
 systemctl restart gitea
 
-if ! wait_for_gitea_version "$gitea_root_url"; then
+if ! wait_for_gitea_version "http://127.0.0.1:${GITEA_HTTP_PORT}/"; then
   echo "gitea service not reachable after bootstrap"
   exit 1
+fi
+
+configure_tailscale_https_serve
+
+if is_truthy "$GITEA_TAILSCALE_HTTPS_ENABLED"; then
+  if ! curl --noproxy '*' -fsS "${gitea_root_url%/}/api/v1/version" >/tmp/vmctl-gitea-version-external.json; then
+    echo "gitea tailscale HTTPS endpoint is not reachable: ${gitea_root_url}"
+    exit 1
+  fi
 fi
 
 gitea_bin="$(command -v gitea || true)"
@@ -235,7 +262,7 @@ finally:
     conn.close()
 PY
 
-api_base="${gitea_root_url%/}/api/v1"
+api_base="http://127.0.0.1:${GITEA_HTTP_PORT}/api/v1"
 if ! curl -fsS -u "$GITEA_ADMIN_USER:$GITEA_ADMIN_PASSWORD" "$api_base/user" >/tmp/vmctl-gitea-user.json; then
   echo "gitea login failed for admin user"
   exit 1

@@ -89,6 +89,26 @@ def env_bool(name: str, default: bool = False) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+def env_int(name: str, default: int) -> int:
+    raw = (ENV.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except Exception:
+        return default
+
+
+def env_float(name: str, default: float) -> float:
+    raw = (ENV.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except Exception:
+        return default
+
+
 def service_enabled(name: str) -> bool:
     services = {
         item.strip()
@@ -108,6 +128,17 @@ PLAYBACK_PRENORMALIZE_ENABLED = env_bool("VMCTL_PLAYBACK_PRENORMALIZE_ENABLED", 
 PLAYBACK_REMOVE_ORIGINAL_AFTER_NORMALIZATION = env_bool(
     "VMCTL_PLAYBACK_REMOVE_ORIGINAL_AFTER_NORMALIZATION", False
 )
+PLAYBACK_NORMALIZE_VIDEO_CODEC = (ENV.get("VMCTL_PLAYBACK_NORMALIZE_VIDEO_CODEC") or "libx265").strip() or "libx265"
+PLAYBACK_NORMALIZE_PRESET = (ENV.get("VMCTL_PLAYBACK_NORMALIZE_PRESET") or "slow").strip() or "slow"
+PLAYBACK_NORMALIZE_CRF = env_int("VMCTL_PLAYBACK_NORMALIZE_CRF", 19)
+PLAYBACK_NORMALIZE_AUDIO_CODEC = (ENV.get("VMCTL_PLAYBACK_NORMALIZE_AUDIO_CODEC") or "aac").strip() or "aac"
+PLAYBACK_NORMALIZE_AUDIO_BITRATE = (ENV.get("VMCTL_PLAYBACK_NORMALIZE_AUDIO_BITRATE") or "384k").strip() or "384k"
+PLAYBACK_NORMALIZE_MAX_WIDTH = env_int("VMCTL_PLAYBACK_NORMALIZE_MAX_WIDTH", 0)
+PLAYBACK_TONE_MAP_ENABLED = env_bool("VMCTL_PLAYBACK_TONE_MAP_ENABLED", True)
+PLAYBACK_TONE_MAP_ALGORITHM = (ENV.get("VMCTL_PLAYBACK_TONE_MAP_ALGORITHM") or "hable").strip() or "hable"
+PLAYBACK_TONE_MAP_DESAT = env_float("VMCTL_PLAYBACK_TONE_MAP_DESAT", 0.0)
+NORMALIZED_FILE_SUFFIX = " - vmctl-sdr.mkv"
+LEGACY_NORMALIZED_FILE_SUFFIX = " - vmctl-1080p-sdr.mkv"
 
 
 def request_json(method: str, url: str, payload=None, headers=None, allow=(200, 204)):
@@ -448,7 +479,7 @@ def high_risk_playback_reason(probe: dict):
 def normalize_output_path(media_file: Path) -> Path:
     parent = media_file.parent
     base_name = parent.name if parent.name else media_file.stem
-    return parent / f"{base_name} - vmctl-1080p-sdr.mkv"
+    return parent / f"{base_name}{NORMALIZED_FILE_SUFFIX}"
 
 
 def normalization_target_path(media_file: Path) -> tuple[Path, bool]:
@@ -462,7 +493,7 @@ def pre_normalize_decision(media_file: Path):
     """
     Returns: (should_convert, priority, reason)
     """
-    if media_file.name.endswith(" - vmctl-1080p-sdr.mkv"):
+    if media_file.name.endswith(NORMALIZED_FILE_SUFFIX) or media_file.name.endswith(LEGACY_NORMALIZED_FILE_SUFFIX):
         return (False, 0, "already normalized output")
     probe = ffprobe(media_file)
     if not probe:
@@ -487,6 +518,28 @@ def pre_normalize_decision(media_file: Path):
         return (False, 0, reason)
 
     return (True, 20, reason)
+
+
+def first_stream(probe: dict, stream_type: str):
+    for stream in (probe.get("streams") or []):
+        if stream.get("codec_type") == stream_type:
+            return stream
+    return None
+
+
+def build_video_filter_chain(has_hdr_or_dv: bool) -> str:
+    filters = []
+    if PLAYBACK_NORMALIZE_MAX_WIDTH > 0:
+        filters.append(f"scale='min({PLAYBACK_NORMALIZE_MAX_WIDTH},iw)':-2:flags=lanczos")
+    if has_hdr_or_dv and PLAYBACK_TONE_MAP_ENABLED:
+        filters.extend(
+            [
+                "zscale=transfer=linear:npl=100",
+                f"tonemap=tonemap={PLAYBACK_TONE_MAP_ALGORITHM}:desat={PLAYBACK_TONE_MAP_DESAT}",
+                "zscale=transfer=bt709:primaries=bt709:matrix=bt709",
+            ]
+        )
+    return ",".join(filters)
 
 
 def pre_normalize_file(media_file: Path, decision_reason: str) -> tuple[bool, str]:
@@ -527,6 +580,20 @@ def pre_normalize_file(media_file: Path, decision_reason: str) -> tuple[bool, st
         return (False, f"failed (could not remove stale temp output: {temp_output})")
 
     print(f"pre-normalize: converting {media_file} -> {normalized_file} ({decision_reason})")
+    source_probe = ffprobe(media_file) or {}
+    source_video = first_stream(source_probe, "video") or {}
+    source_audio = first_stream(source_probe, "audio") or {}
+    source_video_codec = str(source_video.get("codec_name") or "").strip().lower()
+    source_audio_codec = str(source_audio.get("codec_name") or "").strip().lower()
+    has_hdr_or_dv = video_stream_has_hdr_or_dv_metadata(source_video)
+
+    needs_video_reencode = decision_reason not in {"unsupported audio codec", "unsupported container"}
+    needs_audio_reencode = decision_reason == "unsupported audio codec"
+    if source_audio_codec and source_audio_codec not in STREMIO_AUDIO_CODECS:
+        needs_audio_reencode = True
+
+    video_filter = build_video_filter_chain(has_hdr_or_dv) if needs_video_reencode else ""
+
     cmd = [
         "ffmpeg",
         "-y",
@@ -535,34 +602,55 @@ def pre_normalize_file(media_file: Path, decision_reason: str) -> tuple[bool, st
         "error",
         "-i",
         str(media_file),
-        "-map_metadata",
-        "-1",
-        "-map_chapters",
-        "-1",
         "-map",
         "0:v:0",
         "-map",
         "0:a:0?",
         "-map",
         "-0:s",
-        "-vf",
-        "scale='min(1920,iw)':-2:flags=lanczos,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "superfast",
-        "-crf",
-        "23",
-        "-bsf:v",
-        "filter_units=remove_types=6",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-ac",
-        "2",
-        str(temp_output),
     ]
+    if needs_video_reencode:
+        cmd.extend(
+            [
+                "-c:v",
+                PLAYBACK_NORMALIZE_VIDEO_CODEC,
+                "-preset",
+                PLAYBACK_NORMALIZE_PRESET,
+                "-crf",
+                str(PLAYBACK_NORMALIZE_CRF),
+                "-pix_fmt",
+                "yuv420p",
+            ]
+        )
+        if not has_hdr_or_dv or PLAYBACK_TONE_MAP_ENABLED:
+            cmd.extend(
+                [
+                    "-color_primaries",
+                    "bt709",
+                    "-color_trc",
+                    "bt709",
+                    "-colorspace",
+                    "bt709",
+                ]
+            )
+        if video_filter:
+            cmd.extend(["-vf", video_filter])
+    else:
+        cmd.extend(["-c:v", "copy"])
+
+    if needs_audio_reencode:
+        cmd.extend(
+            [
+                "-c:a",
+                PLAYBACK_NORMALIZE_AUDIO_CODEC,
+                "-b:a",
+                PLAYBACK_NORMALIZE_AUDIO_BITRATE,
+            ]
+        )
+    else:
+        cmd.extend(["-c:a", "copy"])
+
+    cmd.append(str(temp_output))
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as exc:

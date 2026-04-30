@@ -37,6 +37,10 @@ ssh_port = "${env.GITEA_SSH_PORT}"
 repo_root = "/var/lib/gitea/repositories"
 data_root = "/var/lib/gitea"
 admin_ssh_key_source = "/root/.ssh/authorized_keys"
+base_url = "${env.GITEA_BASE_URL}"
+ssh_host = "${env.GITEA_SSH_HOST}"
+tailscale_https_enabled = "${env.GITEA_TAILSCALE_HTTPS_ENABLED}"
+tailscale_https_target = "${env.GITEA_TAILSCALE_HTTPS_TARGET}"
 
 [features.gitea_bundle]
 services = ["gitea"]

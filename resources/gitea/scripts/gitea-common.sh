@@ -24,10 +24,21 @@ load_gitea_env() {
   GITEA_BASE_URL="${GITEA_BASE_URL:-}"
   GITEA_SSH_HOST="${GITEA_SSH_HOST:-}"
   GITEA_ADMIN_SSH_PUBLIC_KEYS="${GITEA_ADMIN_SSH_PUBLIC_KEYS:-}"
+  GITEA_TAILSCALE_HTTPS_ENABLED="${GITEA_TAILSCALE_HTTPS_ENABLED:-true}"
+  GITEA_TAILSCALE_HTTPS_TARGET="${GITEA_TAILSCALE_HTTPS_TARGET:-}"
 
   export GITEA_ENABLED GITEA_ADMIN_USER GITEA_ADMIN_PASSWORD GITEA_ADMIN_EMAIL
   export GITEA_DOMAIN GITEA_HTTP_PORT GITEA_SSH_PORT GITEA_DATA_ROOT GITEA_REPO_ROOT
   export GITEA_SSH_KEY_SOURCE GITEA_BASE_URL GITEA_SSH_HOST GITEA_ADMIN_SSH_PUBLIC_KEYS
+  export GITEA_TAILSCALE_HTTPS_ENABLED GITEA_TAILSCALE_HTTPS_TARGET
+}
+
+is_truthy() {
+  local value="${1:-}"
+  case "${value,,}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 detect_tailscale_hostname() {
@@ -89,6 +100,10 @@ resolve_gitea_root_url() {
   fi
   local host
   host="$(resolve_gitea_http_host)"
+  if is_truthy "$GITEA_TAILSCALE_HTTPS_ENABLED"; then
+    printf 'https://%s/\n' "$host"
+    return 0
+  fi
   printf 'http://%s:%s/\n' "$host" "$GITEA_HTTP_PORT"
 }
 

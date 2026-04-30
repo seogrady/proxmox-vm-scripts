@@ -55,6 +55,15 @@ require_client = true
 [features.media_services.playback]
 enable_pre_normalization = true
 remove_original_after_normalization = true
+normalize_video_codec = "libx265"
+normalize_preset = "slow"
+normalize_crf = 19
+normalize_audio_codec = "aac"
+normalize_audio_bitrate = "384k"
+normalize_max_width = 0
+tone_map_enabled = true
+tone_map_algorithm = "hable"
+tone_map_desat = "0.0"
 
 [features.media_services.exposure]
 tailscale_https_enabled = true
