@@ -216,7 +216,7 @@ The lower-level commands are useful for inspection and troubleshooting:
    a compatibility fallback. This requires reachable Proxmox and
    `TF_VAR_proxmox_api_token`.
 10. `vmctl provision` uploads and executes pack-generated bootstrap scripts over
-   SSH using each resource's `[resources.provision]` settings.
+   SSH using each resource's `[resources.<name>.config.provision]` settings.
 
 The default backend is `tofu`, with `terraform` still accepted as a config
 compatibility alias for the same renderer. The current OpenTofu/Terraform
@@ -252,8 +252,7 @@ content_type = "vztmpl"
 template = "debian-12-standard_12.12-1_amd64.tar.zst"
 file_name = "debian-12-standard_12.12-1_amd64.tar.zst"
 
-[[resources]]
-name = "tailscale-gateway"
+[resources.tailscale-gateway]
 kind = "lxc"
 image = "debian_12_lxc"
 ```
@@ -273,8 +272,7 @@ content_type = "import"
 file_name = "noble-server-cloudimg-amd64.qcow2"
 url = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
 
-[[resources]]
-name = "media-stack"
+[resources.media-stack]
 kind = "vm"
 image = "ubuntu_24_cloud_image"
 ```
@@ -495,7 +493,7 @@ device to the VM.
    Configure vmctl with both the mapping name and the physical PCI device:
 
    ```toml
-   [resources.features.intel_igpu]
+   [resources.media-stack.config.features.intel_igpu]
    enabled = true
    mapping = "intel-igpu"
    pci_device = "00:02.0"
@@ -612,9 +610,38 @@ changes to `root@pam`. The example enables only nesting for the Tailscale
 gateway:
 
 ```toml
-[resources.features.lxc]
+[resources.tailscale-gateway.config.features.lxc]
 nesting = true
 ```
+
+### Module Sources (`[sources].git`)
+
+`[sources].git` declares remote module collection roots:
+
+```toml
+[sources]
+git = [
+  "git::https://github.com/example/vmctl-modules?ref=main",
+  "git::https://github.com/example/vmctl-modules//media?ref=main",
+]
+```
+
+Behavior:
+
+1. `git::...?...ref=...` (no `//subdir`) indexes the whole repo checkout.
+2. `git::...//subdir?ref=...` indexes only that subtree.
+3. vmctl recursively discovers all `resource.toml` and `service.toml` files in
+   the indexed root and merges them into the global module registry.
+4. Resource modules discovered from those roots are eligible for planning via
+   normal resource resolution; service modules are globally available and used
+   when selected/referenced.
+
+Operational notes:
+
+1. `vmctl fetch` and `vmctl update` fetch/update configured git sources and
+   update lockfile source pins.
+2. `vmctl sources` lists cached repos/modules and can explain the winning origin
+   for a module with `--module <name>`.
 
 Do not enable other LXC feature flags unless the Proxmox user/token has the
 required privilege for that operation.
