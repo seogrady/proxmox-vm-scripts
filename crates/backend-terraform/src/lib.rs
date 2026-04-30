@@ -22,9 +22,16 @@ impl TerraformBackend {
         workspace: &Workspace,
         desired: &DesiredState,
         registry: &ResourceRegistry,
+        service_registry: &ServiceRegistry,
         mode: PlanMode,
     ) -> Result<RenderResult> {
-        render_workspace(workspace, desired, registry, mode == PlanMode::Online)
+        render_workspace(
+            workspace,
+            desired,
+            registry,
+            service_registry,
+            mode == PlanMode::Online,
+        )
     }
 
     pub fn apply_with_output(
@@ -32,9 +39,17 @@ impl TerraformBackend {
         workspace: &Workspace,
         desired: &DesiredState,
         registry: &ResourceRegistry,
+        service_registry: &ServiceRegistry,
         verbose: bool,
     ) -> Result<ApplyResult> {
-        self.apply_with_output_refresh(workspace, desired, registry, verbose, true)
+        self.apply_with_output_refresh(
+            workspace,
+            desired,
+            registry,
+            service_registry,
+            verbose,
+            true,
+        )
     }
 
     pub fn apply_with_output_refresh(
@@ -42,10 +57,19 @@ impl TerraformBackend {
         workspace: &Workspace,
         desired: &DesiredState,
         registry: &ResourceRegistry,
+        service_registry: &ServiceRegistry,
         verbose: bool,
         refresh: bool,
     ) -> Result<ApplyResult> {
-        self.apply_with_output_refresh_target(workspace, desired, registry, verbose, refresh, None)
+        self.apply_with_output_refresh_target(
+            workspace,
+            desired,
+            registry,
+            service_registry,
+            verbose,
+            refresh,
+            None,
+        )
     }
 
     pub fn apply_with_output_refresh_target(
@@ -53,11 +77,12 @@ impl TerraformBackend {
         workspace: &Workspace,
         desired: &DesiredState,
         registry: &ResourceRegistry,
+        service_registry: &ServiceRegistry,
         verbose: bool,
         refresh: bool,
         target: Option<&str>,
     ) -> Result<ApplyResult> {
-        self.render(workspace, desired, registry)?;
+        self.render(workspace, desired, registry, service_registry)?;
         run_terraform(workspace, &["init", "-input=false"])?;
         let args = terraform_apply_args(refresh, target);
         let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
@@ -101,8 +126,9 @@ impl EngineBackend for TerraformBackend {
         workspace: &Workspace,
         desired: &DesiredState,
         registry: &ResourceRegistry,
+        service_registry: &ServiceRegistry,
     ) -> Result<RenderResult> {
-        render_workspace(workspace, desired, registry, true)
+        render_workspace(workspace, desired, registry, service_registry, true)
     }
 
     fn plan(
@@ -146,8 +172,9 @@ impl EngineBackend for TerraformBackend {
         workspace: &Workspace,
         desired: &DesiredState,
         registry: &ResourceRegistry,
+        service_registry: &ServiceRegistry,
     ) -> Result<ApplyResult> {
-        self.apply_with_output(workspace, desired, registry, false)
+        self.apply_with_output(workspace, desired, registry, service_registry, false)
     }
 
     fn destroy(&self, workspace: &Workspace, target: &TargetSelector) -> Result<ApplyResult> {
@@ -173,6 +200,7 @@ fn render_workspace(
     workspace: &Workspace,
     desired: &DesiredState,
     registry: &ResourceRegistry,
+    service_registry: &ServiceRegistry,
     include_proxmox_resources: bool,
 ) -> Result<RenderResult> {
     if include_proxmox_resources {
@@ -233,15 +261,6 @@ fn render_workspace(
     files.extend(write_base_modules(&generated, include_proxmox_resources)?);
 
     files.extend(registry.render_artifacts(&generated, &desired.resources, &desired.expansions)?);
-    let workspace_services = workspace.root.join("services");
-    let services_root = if workspace_services.exists() {
-        workspace_services
-    } else {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join("services")
-    };
-    let service_registry = ServiceRegistry::load(&services_root)?;
     files.extend(service_registry.render_artifacts(&generated, &desired.service_plan)?);
     files.extend(service_registry.render_resource_artifacts(&generated, &desired.service_plan)?);
 
@@ -299,7 +318,11 @@ fn validate_live_inputs(desired: &DesiredState) -> Result<()> {
         bail!("live Terraform backend requires backend.proxmox.node or per-resource node");
     }
 
-    for resource in desired.resources.iter().filter(|resource| resource.applies()) {
+    for resource in desired
+        .resources
+        .iter()
+        .filter(|resource| resource.applies())
+    {
         let normalized = desired
             .normalized_resources
             .get(&resource.name)
@@ -517,7 +540,11 @@ fn provider_json(desired: &DesiredState) -> serde_json::Value {
 
 fn main_json(desired: &DesiredState, include_proxmox_resources: bool) -> serde_json::Value {
     let mut services = Map::new();
-    for resource in desired.resources.iter().filter(|resource| resource.applies()) {
+    for resource in desired
+        .resources
+        .iter()
+        .filter(|resource| resource.applies())
+    {
         services.insert(module_name(resource), module_json(resource, desired));
     }
 
@@ -1730,7 +1757,12 @@ mod tests {
         };
 
         TerraformBackend
-            .render(&workspace, &desired, &ResourceRegistry::default())
+            .render(
+                &workspace,
+                &desired,
+                &ResourceRegistry::default(),
+                &ServiceRegistry::default(),
+            )
             .unwrap();
 
         let main =
@@ -1933,19 +1965,26 @@ mod tests {
         assert!(script.contains("transcode_probe(token, admin_user_id)"));
         assert!(script.contains("def ensure_qsv_only_mode(token: str) -> None:"));
         assert!(script.contains("set_env_value(env_file, \"JELLYFIN_HWACCEL_TYPE\", \"qsv\")"));
-        assert!(script.contains("set_env_value(env_file, \"JELLYFIN_HWACCEL_ENABLE_ENCODING\", \"true\")"));
-        assert!(script.contains("set_env_value(env_file, \"JELLYFIN_HWACCEL_PREFER_NATIVE_DECODER\", \"true\")"));
+        assert!(script
+            .contains("set_env_value(env_file, \"JELLYFIN_HWACCEL_ENABLE_ENCODING\", \"true\")"));
+        assert!(script.contains(
+            "set_env_value(env_file, \"JELLYFIN_HWACCEL_PREFER_NATIVE_DECODER\", \"true\")"
+        ));
         assert!(script.contains("def trigger_pre_normalize_scan() -> None:"));
         assert!(script.contains("/usr/local/lib/vmctl/media_download_unpack.py --scan-existing"));
         assert!(script.contains("QSV-only transcoding validation failed after pre-normalization"));
         assert!(!script.contains("fallback=software"));
         assert!(!script.contains("JELLYFIN_HWACCEL_TYPE\", \"none\""));
         assert!(script.contains("JELLYFIN_HWACCEL_DECODING_CODECS"));
-        assert!(script.contains("def ensure_user_policy(user_id: str, token: str, max_streaming_bitrate: int) -> None:"));
+        assert!(script.contains(
+            "def ensure_user_policy(user_id: str, token: str, max_streaming_bitrate: int) -> None:"
+        ));
         assert!(script.contains("RemoteClientBitrateLimit"));
         assert!(script.contains("JELLYFIN_MAX_STREAMING_BITRATE"));
         assert!(script.contains("stremio_user_id = ensure_user(stremio_user, token)"));
-        assert!(script.contains("for candidate_user in [auto_login_user, stremio_user, \"media\", \"stremio\"]:"));
+        assert!(script.contains(
+            "for candidate_user in [auto_login_user, stremio_user, \"media\", \"stremio\"]:"
+        ));
         assert!(script.contains("/System/Configuration/encoding"));
     }
 
@@ -2157,10 +2196,12 @@ mod tests {
         assert!(script.contains("unsupported video range metadata"));
         assert!(script.contains("PLAYBACK_PRENORMALIZE_ENABLED"));
         assert!(script.contains("PLAYBACK_REMOVE_ORIGINAL_AFTER_NORMALIZATION"));
-        assert!(script.contains("def normalization_target_path(media_file: Path) -> tuple[Path, bool]:"));
+        assert!(script
+            .contains("def normalization_target_path(media_file: Path) -> tuple[Path, bool]:"));
         assert!(script.contains("def video_stream_has_hdr_or_dv_metadata(stream) -> bool:"));
         assert!(script.contains("def pre_normalize_decision(media_file: Path):"));
-        assert!(script.contains("def pre_normalize_media(path: Path, summary: dict | None = None) -> bool:"));
+        assert!(script
+            .contains("def pre_normalize_media(path: Path, summary: dict | None = None) -> bool:"));
         assert!(script.contains("vmctl-sdr.mkv"));
         assert!(script.contains("converted (in-place)"));
         assert!(script.contains("build_video_filter_chain"));
@@ -2307,7 +2348,9 @@ mod tests {
         assert!(env.contains("JELLYFIN_HWACCEL_ENABLE_INTEL_LOW_POWER_H264=false"));
         assert!(env.contains("JELLYFIN_HWACCEL_ENABLE_INTEL_LOW_POWER_HEVC=false"));
         assert!(env.contains("JELLYFIN_HWACCEL_PREFER_NATIVE_DECODER=true"));
-        assert!(env.contains("JELLYFIN_HWACCEL_DECODING_CODECS=h264,hevc,mpeg2video,vc1,vp8,vp9,av1"));
+        assert!(
+            env.contains("JELLYFIN_HWACCEL_DECODING_CODECS=h264,hevc,mpeg2video,vc1,vp8,vp9,av1")
+        );
         assert!(env.contains("JELLYFIN_MAX_STREAMING_BITRATE=12000000"));
         assert!(env.contains("AUTOBRR_URL=http://localhost:7474"));
         assert!(env.contains("AUTOBRR_INTERNAL_URL=http://autobrr:7474"));
@@ -2339,21 +2382,27 @@ mod tests {
         assert!(env.contains("VMCTL_PLAYBACK_REMOTE_TRANSCODER_SSH_KEY={{features.media_services.playback.remote_transcoder_ssh_key}}"));
         assert!(env.contains("VMCTL_PLAYBACK_REMOTE_TRANSCODER_FFMPEG={{features.media_services.playback.remote_transcoder_ffmpeg}}"));
         assert!(env.contains("VMCTL_PLAYBACK_NORMALIZE_VIDEO_CODEC={{features.media_services.playback.normalize_video_codec}}"));
-        assert!(env.contains("VMCTL_PLAYBACK_NORMALIZE_PRESET={{features.media_services.playback.normalize_preset}}"));
-        assert!(env.contains("VMCTL_PLAYBACK_NORMALIZE_CRF={{features.media_services.playback.normalize_crf}}"));
+        assert!(env.contains(
+            "VMCTL_PLAYBACK_NORMALIZE_PRESET={{features.media_services.playback.normalize_preset}}"
+        ));
+        assert!(env.contains(
+            "VMCTL_PLAYBACK_NORMALIZE_CRF={{features.media_services.playback.normalize_crf}}"
+        ));
         assert!(env.contains("VMCTL_PLAYBACK_NORMALIZE_AUDIO_CODEC={{features.media_services.playback.normalize_audio_codec}}"));
         assert!(env.contains("VMCTL_PLAYBACK_NORMALIZE_AUDIO_BITRATE={{features.media_services.playback.normalize_audio_bitrate}}"));
         assert!(env.contains("VMCTL_PLAYBACK_NORMALIZE_MAX_WIDTH={{features.media_services.playback.normalize_max_width}}"));
-        assert!(env.contains("VMCTL_PLAYBACK_TONE_MAP_ENABLED={{features.media_services.playback.tone_map_enabled}}"));
+        assert!(env.contains(
+            "VMCTL_PLAYBACK_TONE_MAP_ENABLED={{features.media_services.playback.tone_map_enabled}}"
+        ));
         assert!(env.contains("VMCTL_PLAYBACK_TONE_MAP_ALGORITHM={{features.media_services.playback.tone_map_algorithm}}"));
-        assert!(env.contains("VMCTL_PLAYBACK_TONE_MAP_DESAT={{features.media_services.playback.tone_map_desat}}"));
+        assert!(env.contains(
+            "VMCTL_PLAYBACK_TONE_MAP_DESAT={{features.media_services.playback.tone_map_desat}}"
+        ));
         assert!(env.contains("JELLYFIN_FFMPEG_PATH=/usr/lib/jellyfin-ffmpeg/ffmpeg"));
-        assert!(env.contains(
-            "PROWLARR_BOOTSTRAP_INDEXERS_TORRENT=\"{{#each seed_indexers_torrent}}"
-        ));
-        assert!(env.contains(
-            "PROWLARR_BOOTSTRAP_INDEXERS_USENET=\"{{#each seed_indexers_usenet}}"
-        ));
+        assert!(
+            env.contains("PROWLARR_BOOTSTRAP_INDEXERS_TORRENT=\"{{#each seed_indexers_torrent}}")
+        );
+        assert!(env.contains("PROWLARR_BOOTSTRAP_INDEXERS_USENET=\"{{#each seed_indexers_usenet}}"));
         assert!(env.contains("SABNZBD_SERVER_ENABLE=false"));
         assert!(env.contains("VMCTL_QBITTORRENT_CONFIGURED="));
         assert!(env.contains("VMCTL_QBITTORRENT_HEALTHY="));
@@ -2622,7 +2671,7 @@ mod tests {
         };
 
         TerraformBackend
-            .render(&workspace, &desired, &registry)
+            .render(&workspace, &desired, &registry, &service_registry)
             .unwrap();
 
         let main: Value = serde_json::from_str(

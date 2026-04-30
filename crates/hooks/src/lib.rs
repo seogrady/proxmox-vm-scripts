@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use toml::Value;
-pub use vmctl_hook_schema::{HookRefs, HookSection};
 use vmctl_config::Config;
 use vmctl_domain::{DesiredState, Resource, ServiceInstancePlan};
+pub use vmctl_hook_schema::{HookRefs, HookSection};
 use vmctl_resources::{ResourceManifest, ResourceRegistry};
 use vmctl_services::{ServiceManifest, ServiceRegistry};
 use vmctl_util::command_runner::{self, CommandOptions, LogPrefix};
@@ -70,7 +70,13 @@ pub fn run_hooks(
     resource_registry: &ResourceRegistry,
     service_registry: &ServiceRegistry,
 ) -> Result<HookRunReport> {
-    let plan = build_hook_plan(&request, config, desired, resource_registry, service_registry)?;
+    let plan = build_hook_plan(
+        &request,
+        config,
+        desired,
+        resource_registry,
+        service_registry,
+    )?;
     if request.dry_run {
         print_hook_plan(&plan);
         return Ok(HookRunReport {
@@ -172,7 +178,8 @@ fn build_service_nodes(
         let Some(hooks) = manifest.hooks.hook_refs(command) else {
             continue;
         };
-        let scripts = hooks.resolve(&registry.root().join(&instance.service))?;
+        let service_root = registry.module_root(&instance.service);
+        let scripts = hooks.resolve(&service_root)?;
         if scripts.is_empty() {
             continue;
         }
@@ -185,7 +192,7 @@ fn build_service_nodes(
             kind: HookModuleKind::Service,
             name: instance.service.clone(),
             target: instance.target.clone(),
-            scripts_root: registry.root().join(&instance.service),
+            scripts_root: service_root,
             scripts,
             dependencies,
             env,
@@ -317,12 +324,19 @@ fn execute_node(node: &HookNode) -> Result<()> {
         ensure_executable(&script_path)?;
         eprintln!("[vmctl] hook {} -> {}", node.label(), script);
         let output = command_runner::run(
-            CommandOptions::new(script_path.to_string_lossy().to_string(), std::iter::empty::<&str>())
-                .cwd(&node.scripts_root)
-                .envs(node.env.iter().map(|(key, value)| (key.clone(), value.clone())))
-                .prefix(LogPrefix::Vmctl)
-                .timeout(std::time::Duration::from_secs(3600))
-                .stream(true),
+            CommandOptions::new(
+                script_path.to_string_lossy().to_string(),
+                std::iter::empty::<&str>(),
+            )
+            .cwd(&node.scripts_root)
+            .envs(
+                node.env
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone())),
+            )
+            .prefix(LogPrefix::Vmctl)
+            .timeout(std::time::Duration::from_secs(3600))
+            .stream(true),
         )
         .with_context(|| format!("failed to run hook `{script}` for {}", node.label()))?;
         if !output.stderr.trim().is_empty() {
@@ -457,7 +471,12 @@ fn find_cycle(nodes_by_key: &BTreeMap<String, HookNode>) -> Vec<String> {
 fn dependents_for(node: &HookNode, nodes: &[HookNode]) -> Vec<String> {
     nodes
         .iter()
-        .filter(|candidate| candidate.dependencies.iter().any(|dependency| dependency == &node.key))
+        .filter(|candidate| {
+            candidate
+                .dependencies
+                .iter()
+                .any(|dependency| dependency == &node.key)
+        })
         .map(|candidate| candidate.key.clone())
         .collect()
 }
@@ -472,7 +491,12 @@ fn expand_selectors(
         selectors.insert(target.clone());
     }
     for group in groups {
-        expand_group(group, configured_groups, &mut selectors, &mut BTreeSet::new())?;
+        expand_group(
+            group,
+            configured_groups,
+            &mut selectors,
+            &mut BTreeSet::new(),
+        )?;
     }
     if selectors.is_empty() {
         Ok(None)
@@ -506,10 +530,7 @@ fn expand_group(
     Ok(())
 }
 
-fn select_hook_nodes(
-    nodes: Vec<HookNode>,
-    selectors: Option<&BTreeSet<String>>,
-) -> Vec<HookNode> {
+fn select_hook_nodes(nodes: Vec<HookNode>, selectors: Option<&BTreeSet<String>>) -> Vec<HookNode> {
     let Some(selectors) = selectors else {
         return nodes;
     };
@@ -633,7 +654,10 @@ fn build_resource_env(
     );
     env.insert(
         "VMCTL_RESOURCE_VMID".to_string(),
-        resource.vmid.map(|value| value.to_string()).unwrap_or_default(),
+        resource
+            .vmid
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
     );
     env.insert("VMCTL_HOST_SHORT".to_string(), resource.name.clone());
     env.insert(
@@ -643,14 +667,22 @@ fn build_resource_env(
     if let Some(target_service_urls) = service_urls_for_target(desired, &resource.name) {
         env.extend(target_service_urls);
     }
-    env.extend(flatten_value_map("VMCTL_RESOURCE", &serde_json::to_value(resource).unwrap_or_default()));
+    env.extend(flatten_value_map(
+        "VMCTL_RESOURCE",
+        &serde_json::to_value(resource).unwrap_or_default(),
+    ));
     env.extend(flatten_value_map(
         "VMCTL_RESOURCE_MANIFEST",
         &serde_json::to_value(manifest).unwrap_or_default(),
     ));
     env.insert(
         "VMCTL_RESOURCE_SCRIPT_ROOT".to_string(),
-        registry.root().join(&resource.name).join("hooks").to_string_lossy().to_string(),
+        registry
+            .root()
+            .join(&resource.name)
+            .join("hooks")
+            .to_string_lossy()
+            .to_string(),
     );
     env
 }
@@ -671,10 +703,7 @@ fn build_service_env(
     env.insert("VMCTL_COMMAND".to_string(), command.to_string());
     env.insert("VMCTL_SERVICE_NAME".to_string(), instance.service.clone());
     env.insert("VMCTL_SERVICE_KEY".to_string(), instance.key.clone());
-    env.insert(
-        "VMCTL_SERVICE_SCOPE".to_string(),
-        instance.scope.clone(),
-    );
+    env.insert("VMCTL_SERVICE_SCOPE".to_string(), instance.scope.clone());
     env.insert(
         "VMCTL_SERVICE_TARGET".to_string(),
         instance.target.clone().unwrap_or_default(),
@@ -701,7 +730,11 @@ fn build_service_env(
     ));
     env.insert(
         "VMCTL_SERVICE_SCRIPT_ROOT".to_string(),
-        registry.root().join(&instance.service).to_string_lossy().to_string(),
+        registry
+            .root()
+            .join(&instance.service)
+            .to_string_lossy()
+            .to_string(),
     );
     if let Some(port) = instance
         .outputs
@@ -754,7 +787,10 @@ fn service_urls_for_target(
 }
 
 fn service_url(instance: &ServiceInstancePlan) -> Option<String> {
-    let port = instance.outputs.get("http_port").and_then(Value::as_integer)?;
+    let port = instance
+        .outputs
+        .get("http_port")
+        .and_then(Value::as_integer)?;
     let base_url = instance
         .outputs
         .get("base_url")
@@ -770,7 +806,10 @@ fn service_url(instance: &ServiceInstancePlan) -> Option<String> {
 
 fn base_env(desired: &DesiredState) -> BTreeMap<String, String> {
     let mut env = std::env::vars().collect::<BTreeMap<_, _>>();
-    env.insert("VMCTL_RUNTIME_ENGINE".to_string(), desired.runtime.engine.clone());
+    env.insert(
+        "VMCTL_RUNTIME_ENGINE".to_string(),
+        desired.runtime.engine.clone(),
+    );
     env
 }
 
@@ -806,7 +845,14 @@ fn flatten_toml_value(prefix: &str, value: &Value, out: &mut BTreeMap<String, St
             }
         }
         Value::Array(items) => {
-            out.insert(prefix.to_string(), items.iter().map(toml_value_text).collect::<Vec<_>>().join(","));
+            out.insert(
+                prefix.to_string(),
+                items
+                    .iter()
+                    .map(toml_value_text)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
         }
         _ => {
             out.insert(prefix.to_string(), toml_value_text(value));
@@ -920,9 +966,21 @@ mod tests {
             "#,
         );
 
-        std::fs::write(resources_root.join("a/scripts/bootstrap.sh"), "#!/usr/bin/env bash\n").unwrap();
-        std::fs::write(resources_root.join("b/scripts/bootstrap.sh"), "#!/usr/bin/env bash\n").unwrap();
-        std::fs::write(resources_root.join("c/scripts/bootstrap.sh"), "#!/usr/bin/env bash\n").unwrap();
+        std::fs::write(
+            resources_root.join("a/scripts/bootstrap.sh"),
+            "#!/usr/bin/env bash\n",
+        )
+        .unwrap();
+        std::fs::write(
+            resources_root.join("b/scripts/bootstrap.sh"),
+            "#!/usr/bin/env bash\n",
+        )
+        .unwrap();
+        std::fs::write(
+            resources_root.join("c/scripts/bootstrap.sh"),
+            "#!/usr/bin/env bash\n",
+        )
+        .unwrap();
         make_executable(&resources_root.join("a/scripts/bootstrap.sh"));
         make_executable(&resources_root.join("b/scripts/bootstrap.sh"));
         make_executable(&resources_root.join("c/scripts/bootstrap.sh"));
@@ -945,6 +1003,8 @@ mod tests {
             consts: BTreeMap::new(),
             env: BTreeMap::new(),
             groups: BTreeMap::from([("pair".to_string(), vec!["b".to_string(), "c".to_string()])]),
+            paths: Default::default(),
+            sources: Default::default(),
             images: BTreeMap::new(),
             resources: Vec::new(),
         };
@@ -967,7 +1027,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            plan.nodes.iter().map(|node| node.name.as_str()).collect::<Vec<_>>(),
+            plan.nodes
+                .iter()
+                .map(|node| node.name.as_str())
+                .collect::<Vec<_>>(),
             vec!["a", "b", "c"]
         );
 
@@ -1054,6 +1117,8 @@ echo "${VMCTL_RESOURCE_NAME}:${VMCTL_COMMAND}" >> "$HOOK_LOG_PATH"
                 Value::String(log_path.to_string_lossy().to_string()),
             )]),
             groups: BTreeMap::new(),
+            paths: Default::default(),
+            sources: Default::default(),
             images: BTreeMap::new(),
             resources: Vec::new(),
         };
@@ -1075,9 +1140,15 @@ echo "${VMCTL_RESOURCE_NAME}:${VMCTL_COMMAND}" >> "$HOOK_LOG_PATH"
         )
         .unwrap();
 
-        assert_eq!(report.executed, vec!["resource::a", "resource::b", "resource::c"]);
+        assert_eq!(
+            report.executed,
+            vec!["resource::a", "resource::b", "resource::c"]
+        );
         let log = std::fs::read_to_string(&log_path).unwrap();
-        assert_eq!(log.lines().collect::<Vec<_>>(), vec!["a:bootstrap", "b:bootstrap", "c:bootstrap"]);
+        assert_eq!(
+            log.lines().collect::<Vec<_>>(),
+            vec!["a:bootstrap", "b:bootstrap", "c:bootstrap"]
+        );
 
         std::fs::remove_dir_all(root).unwrap();
     }

@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use toml::Value;
-use vmctl_hook_schema::HookSection;
 use vmctl_domain::{
     Resource, RuntimeConfig, ServiceExecutionPlan, ServiceInstancePlan, ServiceSelection,
     ServiceTemplatePlan,
 };
+use vmctl_hook_schema::HookSection;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceManifest {
@@ -95,6 +95,7 @@ pub struct OutputSection {
 pub struct ServiceRegistry {
     root: PathBuf,
     manifests: BTreeMap<String, ServiceManifest>,
+    module_roots: BTreeMap<String, PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,10 +179,12 @@ impl ContainerRuntime for PodmanRuntime {
 impl ServiceRegistry {
     pub fn load(root: &Path) -> Result<Self> {
         let mut manifests = BTreeMap::new();
+        let mut module_roots = BTreeMap::new();
         if !root.exists() {
             return Ok(Self {
                 root: root.to_path_buf(),
                 manifests,
+                module_roots,
             });
         }
 
@@ -208,24 +211,59 @@ impl ServiceRegistry {
             if manifests.insert(manifest.name.clone(), manifest).is_some() {
                 bail!("duplicate service `{expected}`");
             }
+            module_roots.insert(expected, entry.path());
         }
 
         Ok(Self {
             root: root.to_path_buf(),
             manifests,
+            module_roots,
         })
     }
 
     pub fn from_manifests(manifests: Vec<ServiceManifest>) -> Result<Self> {
         let mut by_name = BTreeMap::new();
+        let mut module_roots = BTreeMap::new();
         for manifest in manifests {
-            if by_name.insert(manifest.name.clone(), manifest).is_some() {
+            if by_name
+                .insert(manifest.name.clone(), manifest.clone())
+                .is_some()
+            {
                 bail!("duplicate service manifest");
             }
+            module_roots.insert(
+                manifest.name.clone(),
+                PathBuf::from("services").join(&manifest.name),
+            );
         }
         Ok(Self {
             root: PathBuf::from("services"),
             manifests: by_name,
+            module_roots,
+        })
+    }
+
+    pub fn load_from_module_dirs(module_dirs: &[PathBuf]) -> Result<Self> {
+        let mut manifests = BTreeMap::new();
+        let mut module_roots = BTreeMap::new();
+        for module_dir in module_dirs {
+            let path = module_dir.join("service.toml");
+            if !path.exists() {
+                continue;
+            }
+            let manifest = load_manifest(&path)?;
+            if manifests
+                .insert(manifest.name.clone(), manifest.clone())
+                .is_some()
+            {
+                bail!("duplicate service `{}`", manifest.name);
+            }
+            module_roots.insert(manifest.name.clone(), module_dir.clone());
+        }
+        Ok(Self {
+            root: PathBuf::from("services"),
+            manifests,
+            module_roots,
         })
     }
 
@@ -235,6 +273,13 @@ impl ServiceRegistry {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn module_root(&self, name: &str) -> PathBuf {
+        self.module_roots
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| self.root.join(name))
     }
 
     pub fn manifests(&self) -> &BTreeMap<String, ServiceManifest> {
@@ -332,11 +377,11 @@ impl ServiceRegistry {
                 provision_scripts: manifest
                     .hooks
                     .bootstrap
-                    .resolve(&self.root.join(&manifest.name))?,
+                    .resolve(&self.module_root(&manifest.name))?,
                 validation_scripts: manifest
                     .hooks
                     .validate
-                    .resolve(&self.root.join(&manifest.name))?,
+                    .resolve(&self.module_root(&manifest.name))?,
                 runtime_requirements: manifest.runtime.requirements.clone(),
                 outputs: config,
             });
@@ -406,7 +451,7 @@ impl ServiceRegistry {
             let Some(manifest) = self.manifests.get(&instance.service) else {
                 continue;
             };
-            let module_dir = self.root.join(&manifest.name);
+            let module_dir = self.module_root(&manifest.name);
             let output_dir = generated_root.join("service-artifacts").join(&instance.key);
             std::fs::create_dir_all(&output_dir)
                 .with_context(|| format!("failed to create {}", output_dir.display()))?;
@@ -457,7 +502,7 @@ impl ServiceRegistry {
             let Some(manifest) = self.manifests.get(&instance.service) else {
                 continue;
             };
-            let service_dir = self.root.join(&manifest.name);
+            let service_dir = self.module_root(&manifest.name);
             let resource_dir = generated_root.join("resources").join(target);
 
             for template in &manifest.runtime.templates {

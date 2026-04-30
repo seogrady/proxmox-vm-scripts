@@ -4,6 +4,7 @@ use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use vmctl_domain::{DesiredState, Workspace};
 use vmctl_resources::ResourceRegistry;
+use vmctl_services::ServiceRegistry;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenderResult {
@@ -59,6 +60,7 @@ pub trait EngineBackend {
         workspace: &Workspace,
         desired: &DesiredState,
         registry: &ResourceRegistry,
+        service_registry: &ServiceRegistry,
     ) -> Result<RenderResult>;
 
     fn plan(
@@ -79,6 +81,7 @@ pub trait EngineBackend {
         _workspace: &Workspace,
         _desired: &DesiredState,
         _registry: &ResourceRegistry,
+        _service_registry: &ServiceRegistry,
     ) -> Result<ApplyResult> {
         bail!("backend apply execution is not implemented")
     }

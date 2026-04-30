@@ -9,6 +9,95 @@ use vmctl_domain::{
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModulePathsConfig {
+    #[serde(default = "default_module_paths")]
+    pub modules: Vec<PathBuf>,
+}
+
+impl Default for ModulePathsConfig {
+    fn default() -> Self {
+        Self {
+            modules: default_module_paths(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourceCatalogConfig {
+    #[serde(default)]
+    pub git: Vec<String>,
+}
+
+fn default_module_paths() -> Vec<PathBuf> {
+    vec![PathBuf::from("./resources"), PathBuf::from("./services")]
+}
+
+fn deserialize_resources<'de, D>(deserializer: D) -> std::result::Result<Vec<Resource>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+    let value = Option::<Value>::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+
+    match value {
+        Value::Table(entries) => {
+            let mut resources = Vec::new();
+            let mut names = entries.keys().cloned().collect::<Vec<_>>();
+            names.sort();
+            for name in names {
+                let entry = entries
+                    .get(&name)
+                    .cloned()
+                    .ok_or_else(|| D::Error::custom("failed to read resource entry"))?;
+                let entry_table = entry.as_table().cloned().ok_or_else(|| {
+                    D::Error::custom(format!("resource `{name}` must be a table"))
+                })?;
+                let resource_value = normalize_resource_entry(&name, entry_table)
+                    .map_err(|error| D::Error::custom(error.to_string()))?;
+                let resource: Resource = resource_value
+                    .try_into()
+                    .map_err(|error| D::Error::custom(format!("resource `{name}`: {error}")))?;
+                resources.push(resource);
+            }
+            Ok(resources)
+        }
+        Value::Array(_) => Err(D::Error::custom(
+            "legacy `[[resources]]` format is not supported; migrate to `[resources.<name>]`",
+        )),
+        _ => Err(D::Error::custom(
+            "`resources` must be a table keyed by resource name",
+        )),
+    }
+}
+
+fn normalize_resource_entry(name: &str, mut entry: toml::map::Map<String, Value>) -> Result<Value> {
+    let mut normalized = toml::map::Map::<String, Value>::new();
+    normalized.insert("name".to_string(), Value::String(name.to_string()));
+
+    if let Some(config) = entry.remove("config") {
+        let config_table = config
+            .as_table()
+            .cloned()
+            .ok_or_else(|| anyhow!("resource `{name}` config must be a table"))?;
+        for (key, value) in config_table {
+            normalized.insert(key, value);
+        }
+    }
+
+    entry.remove("source");
+    entry.remove("services");
+
+    for (key, value) in entry {
+        normalized.insert(key, value);
+    }
+
+    Ok(Value::Table(normalized))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub backend: BackendConfig,
@@ -26,8 +115,12 @@ pub struct Config {
     #[serde(default)]
     pub groups: BTreeMap<String, Vec<String>>,
     #[serde(default)]
-    pub images: BTreeMap<String, ImageConfig>,
+    pub paths: ModulePathsConfig,
     #[serde(default)]
+    pub sources: SourceCatalogConfig,
+    #[serde(default)]
+    pub images: BTreeMap<String, ImageConfig>,
+    #[serde(default, deserialize_with = "deserialize_resources")]
     pub resources: Vec<Resource>,
 }
 
@@ -100,6 +193,9 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
+        if self.paths.modules.is_empty() {
+            bail!("paths.modules must include at least one module collection root");
+        }
         let mut names = BTreeSet::new();
         for resource in &self.resources {
             if resource.name.trim().is_empty() {
@@ -758,6 +854,57 @@ mod tests {
         let image = cfg.images.get("debian_12_lxc").unwrap();
         assert_eq!(image.kind, ImageKind::Lxc);
         assert_eq!(image.source, ImageSource::Pveam);
+    }
+
+    #[test]
+    fn parses_resources_table_format() {
+        let cfg = Config::from_toml(
+            r#"
+            [resources.media-stack]
+            kind = "vm"
+            role = "media_stack"
+            vmid = 210
+
+            [resources.media-stack.config]
+            memory = 8192
+
+            [resources.media-stack.config.features.media_services]
+            services = ["jellyfin", "radarr"]
+            "#,
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(cfg.resources.len(), 1);
+        let resource = &cfg.resources[0];
+        assert_eq!(resource.name, "media-stack");
+        assert_eq!(resource.kind, "vm");
+        assert_eq!(resource.vmid, Some(210));
+        assert_eq!(
+            resource.settings.get("memory").and_then(Value::as_integer),
+            Some(8192)
+        );
+    }
+
+    #[test]
+    fn rejects_legacy_resources_array_format() {
+        let err = Config::from_toml(
+            r#"
+            [[resources]]
+            name = "media-stack"
+            kind = "vm"
+            "#,
+            &BTreeMap::new(),
+        )
+        .unwrap_err();
+
+        let message = err.to_string();
+        assert!(
+            message.contains("legacy `[[resources]]` format")
+                || message.contains("resources")
+                || message.contains("deserialize"),
+            "{message}"
+        );
     }
 
     #[test]

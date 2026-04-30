@@ -8,4 +8,4 @@ anyhow.workspace = true
 serde.workspace = true
 vmctl-domain.workspace = true
 vmctl-resources.workspace = true
-
+vmctl-services.workspace = true

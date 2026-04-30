@@ -1,4 +1,4 @@
-version = 1
+version = 2
 backend = "tofu"
 generated_at = "unix:0"
 
@@ -324,7 +324,7 @@ digest = "sha256:868ea0c53f2a254b4159e821401828df8fbccd07d11ca2ecd869b9bebd92581
 
 [[artifacts]]
 path = "terraform.tfstate"
-digest = "sha256:4bec3f768e4bd87b4feba2cc9295b0182d3f87f790b0dfebd98d4aa18a71d2d7"
+digest = "sha256:77ebf5494e2a71570cf77ac72032bf3c68ae3710ab6f9331ae45dcac0100d8e0"
 
 [[artifacts]]
 path = "terraform.tfstate.1776751520.backup"
@@ -332,7 +332,7 @@ digest = "sha256:e671ed0896848f962f4011997fb8470a86dff0c9f69d9dc6f562e8b4fb3153f
 
 [[artifacts]]
 path = "terraform.tfstate.backup"
-digest = "sha256:1deb15026d628f38a7a9fb07d0c674b62a621b5decdcc1bc220f072e6d01a65b"
+digest = "sha256:4bec3f768e4bd87b4feba2cc9295b0182d3f87f790b0dfebd98d4aa18a71d2d7"
 
 [[artifacts]]
 path = "terraform.tfvars.json"
@@ -341,3 +341,7 @@ digest = "sha256:45c0013b597cd2c703d851296f17f39c54519f9ebf8030ab596b3aef868c7ee
 [[artifacts]]
 path = "variables.tf.json"
 digest = "sha256:749bb2f5fd49f9de6bf9d55941158f00255faf2ca9b220e1a4c9f874392b44f5"
+
+[sources]
+git = []
+inline = []

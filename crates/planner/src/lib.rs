@@ -932,6 +932,8 @@ mod tests {
             consts: BTreeMap::new(),
             env: BTreeMap::new(),
             groups: BTreeMap::new(),
+            paths: Default::default(),
+            sources: Default::default(),
             images: BTreeMap::new(),
             resources: vec![resource("enabled", "vm", vec![]), disabled],
         };

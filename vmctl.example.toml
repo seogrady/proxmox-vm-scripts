@@ -14,6 +14,12 @@ tls_insecure = true
 [runtime]
 engine = "docker"
 
+[paths]
+modules = ["./resources", "./services"]
+
+[sources]
+git = []
+
 [defaults]
 bridge = "${bridge}"
 storage = "local-lvm"
@@ -106,28 +112,30 @@ content_type = "import"
 file_name = "noble-server-cloudimg-amd64.qcow2"
 url = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
 
-[[resources]]
-name = "tailscale-gateway"
+[resources.tailscale-gateway]
 kind = "lxc"
 image = "debian_12_lxc"
 role = "tailscale_gateway"
+
+[resources.tailscale-gateway.config]
 vmid = 101
 rootfs_gb = 8
 memory = 1024
 cores = 1
 description = "Tailscale subnet router managed by vmctl"
 
-[resources.network]
+[resources.tailscale-gateway.config.network]
 mode = "dhcp"
 
 # Uncomment if want to override defaults
-# [resources.provision]
+# [resources.tailscale-gateway.config.provision]
 # user = "ubuntu"
 # private_key_file = "${DEFAULT_SSH_PRIVATE_KEY_FILE}"
 # retries = 20
 # retry_delay_seconds = 15
 
-[resources.features.lxc]
+[resources.tailscale-gateway.config.features.lxc]
 nesting = true
 
-[resources.features.tailscale]
+[resources.tailscale-gateway.config.features.tailscale]
+enabled = true

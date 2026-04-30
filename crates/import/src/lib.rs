@@ -276,7 +276,7 @@ mod tests {
             ..DesiredState::default()
         };
         let lockfile = Lockfile {
-            version: 1,
+            version: 2,
             backend: "terraform".to_string(),
             generated_at: "test".to_string(),
             artifacts: Vec::new(),
@@ -288,6 +288,7 @@ mod tests {
                 digest: "sha256:old".to_string(),
                 exists: true,
             }],
+            sources: Default::default(),
         };
 
         let summary = compare_desired_to_lockfile(&desired, &lockfile);
@@ -322,7 +323,7 @@ mod tests {
         )
         .unwrap();
         let lockfile = Lockfile {
-            version: 1,
+            version: 2,
             backend: "terraform".to_string(),
             generated_at: "test".to_string(),
             artifacts: Vec::new(),
@@ -335,6 +336,7 @@ mod tests {
                 digest: "sha256:media".to_string(),
                 exists: true,
             }],
+            sources: Default::default(),
         };
 
         let summary =
@@ -361,7 +363,7 @@ mod tests {
         let state_path = root.join("terraform.tfstate");
         std::fs::write(&state_path, r#"{"resources":[]}"#).unwrap();
         let lockfile = Lockfile {
-            version: 1,
+            version: 2,
             backend: "terraform".to_string(),
             generated_at: "test".to_string(),
             artifacts: Vec::new(),
@@ -374,6 +376,7 @@ mod tests {
                 digest: "sha256:media".to_string(),
                 exists: true,
             }],
+            sources: Default::default(),
         };
 
         let reconciliation = reconcile_terraform_state(&state_path, &lockfile).unwrap();

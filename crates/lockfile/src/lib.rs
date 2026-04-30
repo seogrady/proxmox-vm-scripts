@@ -14,6 +14,8 @@ pub struct Lockfile {
     pub resources: Vec<LockedResource>,
     #[serde(default)]
     pub artifacts: Vec<LockedArtifact>,
+    #[serde(default)]
+    pub sources: LockedSources,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +31,27 @@ pub struct LockedResource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockedArtifact {
     pub path: String,
+    pub digest: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LockedSources {
+    #[serde(default)]
+    pub git: Vec<LockedGitSource>,
+    #[serde(default)]
+    pub inline: Vec<LockedInlineSource>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockedGitSource {
+    pub repo_url: String,
+    pub r#ref: String,
+    pub commit: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockedInlineSource {
+    pub config_path: String,
     pub digest: String,
 }
 
@@ -55,12 +78,18 @@ impl Lockfile {
             .collect::<Result<Vec<_>>>()?;
 
         Ok(Self {
-            version: 1,
+            version: 2,
             backend: desired.backend.kind.clone(),
             generated_at: generated_at(),
             resources,
             artifacts,
+            sources: LockedSources::default(),
         })
+    }
+
+    pub fn with_sources(mut self, sources: LockedSources) -> Self {
+        self.sources = sources;
+        self
     }
 
     pub fn write_to_path(&self, path: &Path) -> Result<()> {

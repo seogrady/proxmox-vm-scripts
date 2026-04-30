@@ -6,8 +6,8 @@ use handlebars::handlebars_helper;
 use handlebars::Handlebars;
 use serde::{Deserialize, Serialize};
 use toml::Value;
-use vmctl_hook_schema::HookSection;
 use vmctl_domain::{Expansion, Resource};
+use vmctl_hook_schema::HookSection;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceManifest {
@@ -78,6 +78,8 @@ pub struct ResourceRegistry {
     resources: Vec<Resource>,
     roles: BTreeMap<String, ResourceManifest>,
     services: BTreeMap<String, ServiceDefinition>,
+    resource_roots: BTreeMap<String, PathBuf>,
+    role_roots: BTreeMap<String, PathBuf>,
 }
 
 impl ResourceRegistry {
@@ -85,7 +87,23 @@ impl ResourceRegistry {
         let roles = load_resource_roles(root, None, None)?;
         let resources = load_resource_manifests(root, None, None)?;
         let services = load_service_definitions(services_root, None, None)?;
-        Self::from_loaded(root, services_root, resources, roles, services)
+        let resource_roots = resources
+            .iter()
+            .map(|resource| (resource.name.clone(), root.join(&resource.name)))
+            .collect();
+        let role_roots = roles
+            .iter()
+            .map(|(role, manifest)| (role.clone(), root.join(&manifest.name)))
+            .collect();
+        Self::from_loaded(
+            root,
+            services_root,
+            resources,
+            roles,
+            services,
+            resource_roots,
+            role_roots,
+        )
     }
 
     pub fn load_with_config(
@@ -98,7 +116,80 @@ impl ResourceRegistry {
         let resources = load_resource_manifests(root, Some(config_context), Some(process_env))?;
         let services =
             load_service_definitions(services_root, Some(config_context), Some(process_env))?;
-        Self::from_loaded(root, services_root, resources, roles, services)
+        let resource_roots = resources
+            .iter()
+            .map(|resource| (resource.name.clone(), root.join(&resource.name)))
+            .collect();
+        let role_roots = roles
+            .iter()
+            .map(|(role, manifest)| (role.clone(), root.join(&manifest.name)))
+            .collect();
+        Self::from_loaded(
+            root,
+            services_root,
+            resources,
+            roles,
+            services,
+            resource_roots,
+            role_roots,
+        )
+    }
+
+    pub fn load_from_module_dirs(
+        resource_module_dirs: &[PathBuf],
+        service_module_dirs: &[PathBuf],
+        config_context: &Value,
+        process_env: &BTreeMap<String, String>,
+    ) -> Result<Self> {
+        let mut resources = Vec::new();
+        let mut roles = BTreeMap::new();
+        let mut resource_roots = BTreeMap::new();
+        let mut role_roots = BTreeMap::new();
+
+        for module_dir in resource_module_dirs {
+            let path = module_dir.join("resource.toml");
+            if !path.exists() {
+                continue;
+            }
+            let value = load_toml_value(&path, Some(config_context), Some(process_env))?;
+            let mut resource: Resource = value
+                .clone()
+                .try_into()
+                .with_context(|| format!("failed to deserialize {}", path.display()))?;
+            for owned_key in ["defaults", "render", "hooks"] {
+                resource.settings.remove(owned_key);
+            }
+            let role: ResourceManifest = value
+                .clone()
+                .try_into()
+                .with_context(|| format!("failed to deserialize {}", path.display()))?;
+            let role_name = resource
+                .role
+                .clone()
+                .unwrap_or_else(|| resource.name.clone());
+            if roles.insert(role_name.clone(), role).is_some() {
+                bail!("duplicate resource role in {}", path.display());
+            }
+            resource_roots.insert(resource.name.clone(), module_dir.clone());
+            role_roots.insert(role_name, module_dir.clone());
+            resources.push(resource);
+        }
+        resources.sort_by(|left, right| left.name.cmp(&right.name));
+        let services = load_service_definitions_from_module_dirs(
+            service_module_dirs,
+            Some(config_context),
+            Some(process_env),
+        )?;
+
+        Self::from_loaded(
+            Path::new("resources"),
+            Path::new("services"),
+            resources,
+            roles,
+            services,
+            resource_roots,
+            role_roots,
+        )
     }
 
     fn from_loaded(
@@ -107,12 +198,16 @@ impl ResourceRegistry {
         resources: Vec<Resource>,
         roles: BTreeMap<String, ResourceManifest>,
         services: BTreeMap<String, ServiceDefinition>,
+        resource_roots: BTreeMap<String, PathBuf>,
+        role_roots: BTreeMap<String, PathBuf>,
     ) -> Result<Self> {
         Ok(Self {
             root: root.to_path_buf(),
             resources,
             roles,
             services,
+            resource_roots,
+            role_roots,
         })
     }
 
@@ -129,11 +224,20 @@ impl ResourceRegistry {
     }
 
     fn resource_owned_path(&self, resource: &Resource, kind: &str, file: &str) -> PathBuf {
-        self.root.join(&resource.name).join(kind).join(file)
+        self.resource_module_root(resource).join(kind).join(file)
     }
 
     fn resource_module_root(&self, resource: &Resource) -> PathBuf {
-        self.root.join(&resource.name)
+        let role_name = resource
+            .role
+            .as_deref()
+            .unwrap_or(resource.name.as_str())
+            .to_string();
+        self.role_roots
+            .get(&role_name)
+            .cloned()
+            .or_else(|| self.resource_roots.get(&resource.name).cloned())
+            .unwrap_or_else(|| self.root.join(&resource.name))
     }
 
     fn resolve_resource_hook_source(&self, resource: &Resource, hook: &str) -> PathBuf {
@@ -285,7 +389,11 @@ impl ResourceRegistry {
     }
 }
 
-fn copy_directory_files(source_root: &Path, target_root: &Path, written: &mut Vec<PathBuf>) -> Result<()> {
+fn copy_directory_files(
+    source_root: &Path,
+    target_root: &Path,
+    written: &mut Vec<PathBuf>,
+) -> Result<()> {
     if !source_root.exists() {
         return Ok(());
     }
@@ -441,6 +549,31 @@ fn load_service_definitions(
         }
     }
 
+    Ok(services)
+}
+
+fn load_service_definitions_from_module_dirs(
+    service_module_dirs: &[PathBuf],
+    config_context: Option<&Value>,
+    process_env: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, ServiceDefinition>> {
+    let mut services = BTreeMap::new();
+    for module_dir in service_module_dirs {
+        let path = module_dir.join("service.toml");
+        if !path.exists() {
+            continue;
+        }
+        let value = service_definition_value(load_toml_value(&path, config_context, process_env)?);
+        let service: ServiceDefinition = value
+            .try_into()
+            .with_context(|| format!("failed to deserialize {}", path.display()))?;
+        if services
+            .insert(service.name.clone(), service.clone())
+            .is_some()
+        {
+            bail!("duplicate service `{}`", service.name);
+        }
+    }
     Ok(services)
 }
 
@@ -957,7 +1090,9 @@ mod tests {
             .render_artifacts(&output, &[resource], &expansions)
             .unwrap();
 
-        assert!(output.join("resources/guest/scripts/bootstrap.sh").is_file());
+        assert!(output
+            .join("resources/guest/scripts/bootstrap.sh")
+            .is_file());
         assert!(output.join("resources/guest/scripts/helper.sh").is_file());
 
         std::fs::remove_dir_all(root).unwrap();

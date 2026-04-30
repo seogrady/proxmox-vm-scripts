@@ -19,7 +19,12 @@ use vmctl_config::{resolve_config_path, Config};
 use vmctl_dependencies::{backend_kind, CommandScope, DependencyPlan};
 use vmctl_domain::{DesiredState, ImageKind, ImageSource, ResolvedImage, Workspace};
 use vmctl_hooks::{run_hooks, HookRunRequest};
-use vmctl_lockfile::Lockfile;
+use vmctl_lockfile::{LockedGitSource, LockedInlineSource, LockedSources, Lockfile};
+use vmctl_modules::{
+    DefaultSourceResolver, FsModuleIndexer, GitRepoManager, ModuleIndexer, ModuleLayer,
+    ModuleOrigin, ModuleRegistry as ResolvedModuleRegistry, ModuleRegistryBuilder, RepoManager,
+    SourceResolver, SourceSpec,
+};
 use vmctl_resources::ResourceRegistry;
 use vmctl_services::ServiceRegistry;
 use vmctl_util::command_runner::{self, CommandOptions, LogPrefix};
@@ -69,6 +74,18 @@ enum Command {
     },
     Inspect {
         target: Option<String>,
+    },
+    Fetch {
+        #[arg(long)]
+        offline: bool,
+    },
+    Update {
+        #[arg(long)]
+        source: Option<String>,
+    },
+    Sources {
+        #[arg(long)]
+        module: Option<String>,
     },
     Debug {
         name: String,
@@ -171,7 +188,7 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Init => init_workspace(cli.config.as_deref(), &cli.resources, &cli.services),
         Command::Validate => {
-            let (_workspace, desired, _registry) =
+            let (_workspace, desired, _registry, _service_registry) =
                 load_workspace(cli.config.as_deref(), &cli.resources, &cli.services, None)?;
             check_dependencies(&desired, CommandScope::ValidateConfig)?;
             println!(
@@ -182,7 +199,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Plan { target } => {
-            let (_workspace, desired, _registry) = load_workspace(
+            let (_workspace, desired, _registry, _service_registry) = load_workspace(
                 cli.config.as_deref(),
                 &cli.resources,
                 &cli.services,
@@ -222,6 +239,35 @@ fn main() -> Result<()> {
             target.as_deref(),
             InspectMode::Inspect,
         ),
+        Command::Fetch { offline } => {
+            fetch_sources_command(
+                cli.config.as_deref(),
+                &cli.resources,
+                &cli.services,
+                offline,
+                None,
+            )?;
+            Ok(())
+        }
+        Command::Update { source } => {
+            fetch_sources_command(
+                cli.config.as_deref(),
+                &cli.resources,
+                &cli.services,
+                false,
+                source.as_deref(),
+            )?;
+            Ok(())
+        }
+        Command::Sources { module } => {
+            sources_command(
+                cli.config.as_deref(),
+                &cli.resources,
+                &cli.services,
+                module.as_deref(),
+            )?;
+            Ok(())
+        }
         Command::Debug { name } => inspect_command(
             cli.config.as_deref(),
             &cli.resources,
@@ -255,7 +301,7 @@ fn main() -> Result<()> {
             target,
         } => {
             require_auto_approve(auto_approve, "destroy")?;
-            let (workspace, desired, _registry) =
+            let (workspace, desired, _registry, _service_registry) =
                 load_workspace(cli.config.as_deref(), &cli.resources, &cli.services, None)?;
             check_dependencies(&desired, CommandScope::Destroy)?;
             let result = TerraformBackend.destroy(&workspace, &TargetSelector { name: target })?;
@@ -263,10 +309,16 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Import => {
-            let (workspace, desired, _registry) =
+            let (workspace, desired, _registry, _service_registry) =
                 load_workspace(cli.config.as_deref(), &cli.resources, &cli.services, None)?;
             let lockfile_path = workspace.root.join("vmctl.lock");
-            let lockfile = ensure_lockfile(&workspace, &desired)?;
+            let lockfile = ensure_lockfile(
+                &workspace,
+                &desired,
+                cli.config.as_deref(),
+                &cli.resources,
+                &cli.services,
+            )?;
             print!("{}", vmctl_import::summarize_lockfile(&lockfile_path)?);
             let state_path = workspace
                 .root
@@ -284,15 +336,21 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Sync => {
-            let (workspace, desired, _registry) =
+            let (workspace, desired, _registry, _service_registry) =
                 load_workspace(cli.config.as_deref(), &cli.resources, &cli.services, None)?;
-            let lockfile = ensure_lockfile(&workspace, &desired)?;
+            let lockfile = ensure_lockfile(
+                &workspace,
+                &desired,
+                cli.config.as_deref(),
+                &cli.resources,
+                &cli.services,
+            )?;
             let summary = vmctl_import::compare_desired_to_lockfile(&desired, &lockfile);
             print!("{}", vmctl_import::render_sync_summary(&summary));
             Ok(())
         }
         Command::Provision { target } => {
-            let (workspace, desired, registry, source_fingerprint) =
+            let (workspace, desired, registry, _service_registry, source_fingerprint) =
                 load_workspace_with_fingerprint(
                     cli.config.as_deref(),
                     &cli.resources,
@@ -311,6 +369,7 @@ fn main() -> Result<()> {
                 &workspace,
                 &desired,
                 &registry,
+                &_service_registry,
                 &vmctl_provision::SystemSshExecutor,
                 &progress,
             )?;
@@ -358,13 +417,13 @@ fn main() -> Result<()> {
         }
         Command::Backend { command } => match command {
             BackendCommand::Doctor => {
-                let (workspace, desired, _registry) =
+                let (workspace, desired, _registry, _service_registry) =
                     load_workspace(cli.config.as_deref(), &cli.resources, &cli.services, None)?;
                 check_dependencies(&desired, CommandScope::Doctor)?;
                 TerraformBackend.validate_backend(&workspace)
             }
             BackendCommand::Plan { dry_run, target } => {
-                let (workspace, desired, registry) = load_workspace(
+                let (workspace, desired, registry, service_registry) = load_workspace(
                     cli.config.as_deref(),
                     &cli.resources,
                     &cli.services,
@@ -380,6 +439,7 @@ fn main() -> Result<()> {
                     &backend_workspace,
                     &desired,
                     &registry,
+                    &service_registry,
                     if dry_run {
                         PlanMode::DryRun
                     } else {
@@ -399,22 +459,24 @@ fn main() -> Result<()> {
                 Ok(())
             }
             BackendCommand::Render => {
-                let (workspace, desired, registry) =
+                let (workspace, desired, registry, service_registry) =
                     load_workspace(cli.config.as_deref(), &cli.resources, &cli.services, None)?;
                 check_dependencies(&desired, CommandScope::Render)?;
-                let result = TerraformBackend.render(&workspace, &desired, &registry)?;
-                let lockfile = Lockfile::from_desired_with_artifacts(
+                let result =
+                    TerraformBackend.render(&workspace, &desired, &registry, &service_registry)?;
+                write_lockfile(
+                    &workspace,
                     &desired,
-                    &workspace.root.join(&workspace.generated_dir),
-                    &result.files,
+                    cli.config.as_deref(),
+                    &cli.resources,
+                    &cli.services,
                 )?;
-                lockfile.write_to_path(&workspace.root.join("vmctl.lock"))?;
                 println!("{}; wrote vmctl.lock", result.summary);
                 Ok(())
             }
             BackendCommand::ShowState => show_backend_state(&default_workspace()?),
             BackendCommand::Validate { live } => {
-                let (workspace, desired, registry) =
+                let (workspace, desired, registry, service_registry) =
                     load_workspace(cli.config.as_deref(), &cli.resources, &cli.services, None)?;
                 let backend_workspace = if live {
                     workspace.clone()
@@ -426,6 +488,7 @@ fn main() -> Result<()> {
                     &backend_workspace,
                     &desired,
                     &registry,
+                    &service_registry,
                     if live {
                         PlanMode::Online
                     } else {
@@ -438,7 +501,7 @@ fn main() -> Result<()> {
             }
         },
         Command::Images { command } => {
-            let (_workspace, desired, _registry) =
+            let (_workspace, desired, _registry, _service_registry) =
                 load_workspace(cli.config.as_deref(), &cli.resources, &cli.services, None)?;
             match command {
                 ImagesCommand::List => {
@@ -459,7 +522,7 @@ fn main() -> Result<()> {
             }
         }
         Command::Passthrough { command } => {
-            let (_workspace, desired, _registry) =
+            let (_workspace, desired, _registry, _service_registry) =
                 load_workspace(cli.config.as_deref(), &cli.resources, &cli.services, None)?;
             match command {
                 PassthroughCommand::Doctor => {
@@ -489,11 +552,16 @@ fn apply_command(
     target: Option<&str>,
     _command: &str,
 ) -> Result<()> {
-    let (workspace, mut desired, registry, source_fingerprint) =
+    let (workspace, mut desired, registry, service_registry, source_fingerprint) =
         load_workspace_with_fingerprint(config_path, resources_path, services_path, None)?;
     let mut provision_desired = if target.is_some() {
-        let (_target_workspace, target_desired, _target_registry, _target_fingerprint) =
-            load_workspace_with_fingerprint(config_path, resources_path, services_path, target)?;
+        let (
+            _target_workspace,
+            target_desired,
+            _target_registry,
+            _target_service_registry,
+            _target_fingerprint,
+        ) = load_workspace_with_fingerprint(config_path, resources_path, services_path, target)?;
         target_desired
     } else {
         desired.clone()
@@ -529,7 +597,7 @@ fn apply_command(
 
     guard.checkpoint("backend validation")?;
     let validation = progress.run("validating generated OpenTofu workspace", || {
-        validate_live_backend(&workspace, &desired, &registry)
+        validate_live_backend(&workspace, &desired, &registry, &service_registry)
     })?;
     println!("{}", validation.summary);
     guard.checkpoint("state recovery")?;
@@ -540,7 +608,7 @@ fn apply_command(
     guard.checkpoint("terraform apply")?;
     let result = if no_start {
         progress.run("rendering OpenTofu workspace in no-start mode", || {
-            TerraformBackend.render(&workspace, &desired, &registry)?;
+            TerraformBackend.render(&workspace, &desired, &registry, &service_registry)?;
             Ok(vmctl_backend::ApplyResult {
                 summary: "terraform apply skipped: no-start mode avoids Proxmox VM runtime changes"
                     .to_string(),
@@ -549,7 +617,13 @@ fn apply_command(
     } else {
         progress.run("applying OpenTofu plan", || {
             TerraformBackend.apply_with_output_refresh_target(
-                &workspace, &desired, &registry, verbose, true, target,
+                &workspace,
+                &desired,
+                &registry,
+                &service_registry,
+                verbose,
+                true,
+                target,
             )
         })?
     };
@@ -563,7 +637,13 @@ fn apply_command(
     repair_existing_runtime_settings(&desired)?;
     guard.checkpoint("lockfile write")?;
     progress.run("writing vmctl.lock", || {
-        write_lockfile(&workspace, &desired)
+        write_lockfile(
+            &workspace,
+            &desired,
+            config_path,
+            resources_path,
+            services_path,
+        )
     })?;
     if ignore_lock {
         eprintln!("warning: --ignore-lock is enabled; vmctl.lock was ignored as an input cache");
@@ -574,6 +654,7 @@ fn apply_command(
             &workspace,
             &provision_desired,
             &registry,
+            &service_registry,
             &vmctl_provision::SystemSshExecutor,
             &progress,
         )?;
@@ -628,7 +709,7 @@ fn inspect_command(
     target: Option<&str>,
     mode: InspectMode,
 ) -> Result<()> {
-    let (workspace, desired, _registry) =
+    let (workspace, desired, _registry, _service_registry) =
         load_workspace(config_path, resources_path, services_path, target)?;
     inspect_workspace(&workspace, &desired, mode)
 }
@@ -1170,8 +1251,15 @@ fn validate_live_backend(
     workspace: &Workspace,
     desired: &DesiredState,
     registry: &ResourceRegistry,
+    service_registry: &ServiceRegistry,
 ) -> Result<vmctl_backend::BackendValidation> {
-    TerraformBackend.render_for_plan(workspace, desired, registry, PlanMode::Online)?;
+    TerraformBackend.render_for_plan(
+        workspace,
+        desired,
+        registry,
+        service_registry,
+        PlanMode::Online,
+    )?;
     TerraformBackend.validate_rendered(workspace)
 }
 
@@ -2403,10 +2491,10 @@ fn load_workspace(
     resources_path: &Path,
     services_path: &Path,
     target: Option<&str>,
-) -> Result<(Workspace, DesiredState, ResourceRegistry)> {
-    let (workspace, desired, registry, _) =
+) -> Result<(Workspace, DesiredState, ResourceRegistry, ServiceRegistry)> {
+    let (workspace, desired, registry, service_registry, _) =
         load_workspace_with_fingerprint(config_path, resources_path, services_path, target)?;
-    Ok((workspace, desired, registry))
+    Ok((workspace, desired, registry, service_registry))
 }
 
 fn load_hook_workspace(
@@ -2423,13 +2511,13 @@ fn load_hook_workspace(
         &process_env,
     )?;
     let config = Config::from_value(config_value.clone())?;
-    let registry = ResourceRegistry::load_with_config(
-        resources_path,
-        services_path,
+    let (registry, service_registry, _) = load_module_registries(
+        &config,
         &config_value,
         &process_env,
+        resources_path,
+        services_path,
     )?;
-    let service_registry = ServiceRegistry::load(services_path)?;
     let desired = vmctl_planner::build_desired_state_with_services(
         config.clone(),
         &registry,
@@ -2444,7 +2532,13 @@ fn load_workspace_with_fingerprint(
     resources_path: &Path,
     services_path: &Path,
     target: Option<&str>,
-) -> Result<(Workspace, DesiredState, ResourceRegistry, String)> {
+) -> Result<(
+    Workspace,
+    DesiredState,
+    ResourceRegistry,
+    ServiceRegistry,
+    String,
+)> {
     let workspace = default_workspace()?;
     let config_path = resolve_config_path(config_path)?.path;
     let raw = std::fs::read_to_string(&config_path)
@@ -2455,22 +2549,185 @@ fn load_workspace_with_fingerprint(
         &process_env,
     )?;
     let config = Config::from_value(config_value.clone())?;
-    let registry = ResourceRegistry::load_with_config(
-        resources_path,
-        services_path,
+    let (registry, service_registry, module_roots) = load_module_registries(
+        &config,
         &config_value,
         &process_env,
+        resources_path,
+        services_path,
     )?;
-    let service_registry = vmctl_services::ServiceRegistry::load(services_path)?;
     let desired = vmctl_planner::build_desired_state_with_services(
         config,
         &registry,
         &service_registry,
         target,
     )?;
-    let source_fingerprint =
-        workspace_source_fingerprint(&config_path, resources_path, services_path)?;
-    Ok((workspace, desired, registry, source_fingerprint))
+    let source_fingerprint = workspace_source_fingerprint(&config_path, &module_roots)?;
+    Ok((
+        workspace,
+        desired,
+        registry,
+        service_registry,
+        source_fingerprint,
+    ))
+}
+
+fn load_module_registries(
+    config: &Config,
+    config_value: &Value,
+    process_env: &BTreeMap<String, String>,
+    resources_path: &Path,
+    services_path: &Path,
+) -> Result<(ResourceRegistry, ServiceRegistry, Vec<PathBuf>)> {
+    let workspace_root = std::env::current_dir().context("failed to read current directory")?;
+    let resolver = DefaultSourceResolver;
+    let indexer = FsModuleIndexer;
+    let repo_manager = GitRepoManager::new(workspace_root.join("backend/cache/git"));
+    let mut scanned_roots = Vec::<PathBuf>::new();
+
+    let module_registry = build_module_registry(
+        config,
+        resources_path,
+        services_path,
+        &workspace_root,
+        &resolver,
+        &indexer,
+        &repo_manager,
+        false,
+        &mut scanned_roots,
+    )?;
+
+    let resource_dirs = unique_parent_dirs(module_registry.resources.values().map(|location| {
+        location
+            .manifest_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| location.manifest_path.clone())
+    }));
+    let service_dirs = unique_parent_dirs(module_registry.services.values().map(|location| {
+        location
+            .manifest_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| location.manifest_path.clone())
+    }));
+
+    scanned_roots.extend(resource_dirs.clone());
+    scanned_roots.extend(service_dirs.clone());
+    scanned_roots.sort();
+    scanned_roots.dedup();
+
+    let resource_registry = ResourceRegistry::load_from_module_dirs(
+        &resource_dirs,
+        &service_dirs,
+        config_value,
+        process_env,
+    )?;
+    let service_registry = ServiceRegistry::load_from_module_dirs(&service_dirs)?;
+    Ok((resource_registry, service_registry, scanned_roots))
+}
+
+fn build_module_registry(
+    config: &Config,
+    resources_path: &Path,
+    services_path: &Path,
+    workspace_root: &Path,
+    resolver: &DefaultSourceResolver,
+    indexer: &FsModuleIndexer,
+    repo_manager: &GitRepoManager,
+    offline: bool,
+    scanned_roots: &mut Vec<PathBuf>,
+) -> Result<ResolvedModuleRegistry> {
+    let mut registry_builder = ModuleRegistryBuilder::default();
+
+    for root in &config.paths.modules {
+        let path = resolve_workspace_path(&workspace_root, root);
+        scanned_roots.push(path.clone());
+        registry_builder.add_indexed(
+            indexer.index_collection(
+                &path,
+                &ModuleOrigin::Local {
+                    collection_root: path.clone(),
+                    module_dir: PathBuf::new(),
+                },
+            )?,
+            ModuleLayer::Local,
+        )?;
+    }
+
+    // Keep CLI overrides as explicit high-priority local collections.
+    for cli_root in [resources_path, services_path] {
+        let path = resolve_workspace_path(&workspace_root, cli_root);
+        if !scanned_roots.iter().any(|root| root == &path) {
+            scanned_roots.push(path.clone());
+            registry_builder.add_indexed(
+                indexer.index_collection(
+                    &path,
+                    &ModuleOrigin::Local {
+                        collection_root: path.clone(),
+                        module_dir: PathBuf::new(),
+                    },
+            )?,
+            ModuleLayer::Local,
+        )?;
+    }
+    }
+
+    for git_source in &config.sources.git {
+        let SourceSpec::Git {
+            repo_url,
+            ref_,
+            subdir,
+        } = resolver.parse(git_source)?
+        else {
+            bail!("sources.git entry must be git::..., got `{git_source}`");
+        };
+        let resolved = repo_manager.ensure_repo(
+            &vmctl_modules::RepoRef {
+                repo_url: repo_url.clone(),
+                ref_: ref_.clone(),
+            },
+            offline,
+        )?;
+        let collection_root = match subdir {
+            Some(subdir) => resolved.checkout_root.join(subdir),
+            None => resolved.checkout_root.clone(),
+        };
+        scanned_roots.push(collection_root.clone());
+        registry_builder.add_indexed(
+            indexer.index_collection(
+                &collection_root,
+                &ModuleOrigin::Git {
+                    repo_url,
+                    ref_,
+                    commit: resolved.commit,
+                    checkout_root: resolved.checkout_root,
+                    module_dir: PathBuf::new(),
+                },
+            )?,
+            ModuleLayer::Remote,
+        )?;
+    }
+
+    Ok(registry_builder.build())
+}
+
+fn unique_parent_dirs<I>(dirs: I) -> Vec<PathBuf>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    let mut dirs = dirs.into_iter().collect::<Vec<_>>();
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+fn resolve_workspace_path(workspace_root: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        workspace_root.join(path)
+    }
 }
 
 fn default_workspace() -> Result<Workspace> {
@@ -2493,11 +2750,23 @@ fn warn_workspace_sources_changed(
     services_path: &Path,
     expected_fingerprint: &str,
 ) -> Result<()> {
-    let current_fingerprint = workspace_source_fingerprint(
-        &resolve_config_path(config_path)?.path,
+    let config_path = resolve_config_path(config_path)?.path;
+    let raw = std::fs::read_to_string(&config_path)
+        .with_context(|| format!("failed to read {}", config_path.display()))?;
+    let process_env = vmctl_config::process_env_with_shell_fallback(&std::env::vars().collect())?;
+    let config_value = vmctl_config::resolve_toml_value(
+        raw.parse().context("failed to parse vmctl TOML")?,
+        &process_env,
+    )?;
+    let config = Config::from_value(config_value.clone())?;
+    let (_registry, _service_registry, module_roots) = load_module_registries(
+        &config,
+        &config_value,
+        &process_env,
         resources_path,
         services_path,
     )?;
+    let current_fingerprint = workspace_source_fingerprint(&config_path, &module_roots)?;
     if current_fingerprint != expected_fingerprint {
         eprintln!(
             "warning: workspace sources changed during apply; regenerating rendered artifacts before provisioning"
@@ -2506,11 +2775,7 @@ fn warn_workspace_sources_changed(
     Ok(())
 }
 
-fn workspace_source_fingerprint(
-    config_path: &Path,
-    resources_path: &Path,
-    services_path: &Path,
-) -> Result<String> {
+fn workspace_source_fingerprint(config_path: &Path, module_roots: &[PathBuf]) -> Result<String> {
     let mut hasher = Sha256::new();
     let config_bytes = std::fs::read(config_path)
         .with_context(|| format!("failed to read {}", config_path.display()))?;
@@ -2520,11 +2785,16 @@ fn workspace_source_fingerprint(
     hasher.update(&config_bytes);
     hasher.update(b"\0");
 
-    let mut files = list_absolute_files(resources_path)?;
-    files.extend(list_absolute_files(services_path)?);
+    let mut files = Vec::new();
+    for root in module_roots {
+        files.extend(list_absolute_files(root)?);
+    }
     files.sort();
     for path in files {
-        let rel = path.strip_prefix(resources_path).unwrap_or(&path);
+        let rel = module_roots
+            .iter()
+            .find_map(|root| path.strip_prefix(root).ok())
+            .unwrap_or(path.as_path());
         let bytes =
             std::fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
         hasher.update(rel.to_string_lossy().as_bytes());
@@ -2534,6 +2804,289 @@ fn workspace_source_fingerprint(
     }
 
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn fetch_sources_command(
+    config_path: Option<&Path>,
+    resources_path: &Path,
+    services_path: &Path,
+    offline: bool,
+    source_filter: Option<&str>,
+) -> Result<()> {
+    let resolved_config_path = resolve_config_path(config_path)?.path;
+    let raw = std::fs::read_to_string(&resolved_config_path)
+        .with_context(|| format!("failed to read {}", resolved_config_path.display()))?;
+    let process_env = vmctl_config::process_env_with_shell_fallback(&std::env::vars().collect())?;
+    let config_value = vmctl_config::resolve_toml_value(
+        raw.parse().context("failed to parse vmctl TOML")?,
+        &process_env,
+    )?;
+    let config = Config::from_value(config_value)?;
+
+    let workspace_root = std::env::current_dir().context("failed to read current directory")?;
+    let resolver = DefaultSourceResolver;
+    let repo_manager = GitRepoManager::new(workspace_root.join("backend/cache/git"));
+    let refs = resolve_git_refs(&config, source_filter, &resolver)?;
+    if refs.is_empty() {
+        println!("no git sources found");
+        return Ok(());
+    }
+
+    for repo in refs {
+        let resolved = repo_manager.ensure_repo(&repo, offline)?;
+        println!(
+            "{}@{} => {} ({})",
+            resolved.repo.repo_url,
+            resolved.repo.ref_,
+            resolved.commit,
+            resolved.checkout_root.display()
+        );
+    }
+    let (workspace, desired, _registry, _service_registry) = load_workspace(
+        Some(resolved_config_path.as_path()),
+        resources_path,
+        services_path,
+        None,
+    )?;
+    write_lockfile(
+        &workspace,
+        &desired,
+        Some(resolved_config_path.as_path()),
+        resources_path,
+        services_path,
+    )?;
+    println!("updated vmctl.lock source pins");
+    Ok(())
+}
+
+fn sources_command(
+    config_path: Option<&Path>,
+    resources_path: &Path,
+    services_path: &Path,
+    module_filter: Option<&str>,
+) -> Result<()> {
+    let config_path = resolve_config_path(config_path)?.path;
+    let raw = std::fs::read_to_string(&config_path)
+        .with_context(|| format!("failed to read {}", config_path.display()))?;
+    let process_env = vmctl_config::process_env_with_shell_fallback(&std::env::vars().collect())?;
+    let config_value = vmctl_config::resolve_toml_value(
+        raw.parse().context("failed to parse vmctl TOML")?,
+        &process_env,
+    )?;
+    let config = Config::from_value(config_value)?;
+
+    let workspace_root = std::env::current_dir().context("failed to read current directory")?;
+    let resolver = DefaultSourceResolver;
+    let repo_manager = GitRepoManager::new(workspace_root.join("backend/cache/git"));
+    let indexer = FsModuleIndexer;
+    let mut scanned_roots = Vec::new();
+    let module_registry = build_module_registry(
+        &config,
+        resources_path,
+        services_path,
+        &workspace_root,
+        &resolver,
+        &indexer,
+        &repo_manager,
+        true,
+        &mut scanned_roots,
+    )?;
+    let tracked_refs = resolve_git_refs(&config, None, &resolver)?;
+    let cached = repo_manager.list_repos()?;
+    if cached.is_empty() {
+        println!("no cached git sources");
+        return Ok(());
+    }
+
+    for repo in cached {
+        println!(
+            "- {}@{} commit {}",
+            repo.repo.repo_url, repo.repo.ref_, repo.commit
+        );
+        let tracked = tracked_refs
+            .iter()
+            .any(|entry| entry.repo_url == repo.repo.repo_url && entry.ref_ == repo.repo.ref_);
+        println!("  tracked: {}", if tracked { "yes" } else { "no" });
+        println!("  checkout: {}", repo.checkout_root.display());
+
+        let modules = indexer.index_collection(
+            &repo.checkout_root,
+            &ModuleOrigin::Git {
+                repo_url: repo.repo.repo_url.clone(),
+                ref_: repo.repo.ref_.clone(),
+                commit: repo.commit.clone(),
+                checkout_root: repo.checkout_root.clone(),
+                module_dir: PathBuf::new(),
+            },
+        )?;
+        if modules.is_empty() {
+            println!("  modules: none");
+            continue;
+        }
+        for module in modules {
+            let kind = match module.kind {
+                vmctl_modules::ModuleKind::Resource => "resource",
+                vmctl_modules::ModuleKind::Service => "service",
+            };
+            println!(
+                "  module: {kind}/{} ({})",
+                module.name,
+                module.module_dir.display()
+            );
+        }
+    }
+
+    if let Some(module_name) = module_filter {
+        if let Some(location) = module_registry.resources.get(module_name) {
+            println!("resolved resource `{module_name}` => {}", location.origin);
+        } else if let Some(location) = module_registry.services.get(module_name) {
+            println!("resolved service `{module_name}` => {}", location.origin);
+        } else {
+            println!("module `{module_name}` was not resolved");
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_git_refs(
+    config: &Config,
+    source_filter: Option<&str>,
+    resolver: &impl SourceResolver,
+) -> Result<Vec<vmctl_modules::RepoRef>> {
+    let mut refs = config
+        .sources
+        .git
+        .iter()
+        .map(|source| {
+            let SourceSpec::Git {
+                repo_url,
+                ref_,
+                subdir: _,
+            } = resolver.parse(source)?
+            else {
+                bail!("sources.git entry must be git::..., got `{source}`");
+            };
+            Ok(vmctl_modules::RepoRef { repo_url, ref_ })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    if let Some(filter) = source_filter {
+        refs.retain(|repo| repo.repo_url.contains(filter) || repo.ref_ == filter);
+    }
+    refs.sort_by(|a, b| {
+        a.repo_url
+            .cmp(&b.repo_url)
+            .then_with(|| a.ref_.cmp(&b.ref_))
+    });
+    refs.dedup_by(|left, right| left.repo_url == right.repo_url && left.ref_ == right.ref_);
+    Ok(refs)
+}
+
+fn collect_locked_sources(
+    config_path: Option<&Path>,
+    resources_path: &Path,
+    services_path: &Path,
+) -> Result<LockedSources> {
+    let config_path = resolve_config_path(config_path)?.path;
+    let raw = std::fs::read_to_string(&config_path)
+        .with_context(|| format!("failed to read {}", config_path.display()))?;
+    let process_env = vmctl_config::process_env_with_shell_fallback(&std::env::vars().collect())?;
+    let config_value = vmctl_config::resolve_toml_value(
+        raw.parse().context("failed to parse vmctl TOML")?,
+        &process_env,
+    )?;
+    let config = Config::from_value(config_value.clone())?;
+
+    let workspace_root = std::env::current_dir().context("failed to read current directory")?;
+    let resolver = DefaultSourceResolver;
+    let repo_manager = GitRepoManager::new(workspace_root.join("backend/cache/git"));
+    let refs = resolve_git_refs(&config, None, &resolver)?;
+    let mut git = Vec::new();
+    for repo in refs {
+        let resolved = repo_manager.ensure_repo(&repo, false).with_context(|| {
+            format!(
+                "failed to resolve git source {}@{} while writing lockfile",
+                repo.repo_url, repo.ref_
+            )
+        })?;
+        git.push(LockedGitSource {
+            repo_url: resolved.repo.repo_url,
+            r#ref: resolved.repo.ref_,
+            commit: resolved.commit,
+        });
+    }
+    git.sort_by(|a, b| {
+        a.repo_url
+            .cmp(&b.repo_url)
+            .then_with(|| a.r#ref.cmp(&b.r#ref))
+            .then_with(|| a.commit.cmp(&b.commit))
+    });
+    git.dedup_by(|left, right| {
+        left.repo_url == right.repo_url && left.r#ref == right.r#ref && left.commit == right.commit
+    });
+
+    let mut inline = collect_inline_sources(&config_value);
+    inline.sort_by(|a, b| a.config_path.cmp(&b.config_path));
+    inline.dedup_by(|left, right| {
+        left.config_path == right.config_path && left.digest == right.digest
+    });
+
+    let _ = (resources_path, services_path); // retained for CLI signature symmetry.
+    Ok(LockedSources { git, inline })
+}
+
+fn collect_inline_sources(root: &Value) -> Vec<LockedInlineSource> {
+    let mut out = Vec::new();
+    collect_inline_sources_in_value(root, String::new(), &mut out);
+    out
+}
+
+fn collect_inline_sources_in_value(value: &Value, path: String, out: &mut Vec<LockedInlineSource>) {
+    match value {
+        Value::Table(table) => {
+            if table
+                .get("source")
+                .and_then(Value::as_str)
+                .is_some_and(|source| source == "inline")
+            {
+                let digest = digest_toml_value(value);
+                out.push(LockedInlineSource {
+                    config_path: if path.is_empty() {
+                        "root".to_string()
+                    } else {
+                        path.clone()
+                    },
+                    digest,
+                });
+            }
+            for (key, nested) in table {
+                let nested_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                collect_inline_sources_in_value(nested, nested_path, out);
+            }
+        }
+        Value::Array(items) => {
+            for (idx, nested) in items.iter().enumerate() {
+                let nested_path = if path.is_empty() {
+                    idx.to_string()
+                } else {
+                    format!("{path}.{idx}")
+                };
+                collect_inline_sources_in_value(nested, nested_path, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn digest_toml_value(value: &Value) -> String {
+    let rendered = toml::to_string(value).unwrap_or_else(|_| value.to_string());
+    let digest = Sha256::digest(rendered.as_bytes());
+    format!("sha256:{digest:x}")
 }
 
 fn init_workspace(
@@ -2561,10 +3114,11 @@ fn run_provision(
     workspace: &Workspace,
     desired: &DesiredState,
     registry: &ResourceRegistry,
+    service_registry: &ServiceRegistry,
     executor: &dyn vmctl_provision::SshExecutor,
     progress: &ApplyProgress,
 ) -> Result<vmctl_provision::ProvisionResult> {
-    refresh_rendered_workspace(workspace, desired, registry)?;
+    refresh_rendered_workspace(workspace, desired, registry, service_registry)?;
     let plan = vmctl_provision::build_provision_plan(workspace, desired)?;
     if plan.steps.is_empty() {
         return Ok(vmctl_provision::ProvisionResult {
@@ -2663,8 +3217,9 @@ fn refresh_rendered_workspace(
     workspace: &Workspace,
     desired: &DesiredState,
     registry: &ResourceRegistry,
+    service_registry: &ServiceRegistry,
 ) -> Result<()> {
-    TerraformBackend.render(workspace, desired, registry)?;
+    TerraformBackend.render(workspace, desired, registry, service_registry)?;
     Ok(())
 }
 
@@ -2684,26 +3239,46 @@ fn script_name(step: &vmctl_provision::ProvisionStep) -> String {
         .to_string()
 }
 
-fn ensure_lockfile(workspace: &Workspace, desired: &DesiredState) -> Result<Lockfile> {
+fn ensure_lockfile(
+    workspace: &Workspace,
+    desired: &DesiredState,
+    config_path: Option<&Path>,
+    resources_path: &Path,
+    services_path: &Path,
+) -> Result<Lockfile> {
     let path = workspace.root.join("vmctl.lock");
     match Lockfile::read_optional_from_path(&path)? {
         Some(lockfile) => Ok(lockfile),
         None => {
-            let lockfile = write_lockfile(workspace, desired)?;
+            let lockfile = write_lockfile(
+                workspace,
+                desired,
+                config_path,
+                resources_path,
+                services_path,
+            )?;
             eprintln!("vmctl.lock was missing; regenerated {}", path.display());
             Ok(lockfile)
         }
     }
 }
 
-fn write_lockfile(workspace: &Workspace, desired: &DesiredState) -> Result<Lockfile> {
+fn write_lockfile(
+    workspace: &Workspace,
+    desired: &DesiredState,
+    config_path: Option<&Path>,
+    resources_path: &Path,
+    services_path: &Path,
+) -> Result<Lockfile> {
     let generated = workspace.root.join(&workspace.generated_dir);
     let artifacts = if generated.exists() {
         list_absolute_files(&generated)?
     } else {
         Vec::new()
     };
-    let mut lockfile = Lockfile::from_desired_with_artifacts(desired, &generated, &artifacts)?;
+    let sources = collect_locked_sources(config_path, resources_path, services_path)?;
+    let mut lockfile = Lockfile::from_desired_with_artifacts(desired, &generated, &artifacts)?
+        .with_sources(sources);
     let state_path = generated.join("terraform.tfstate");
     if state_path.exists() {
         let reconciliation = vmctl_import::reconcile_terraform_state(&state_path, &lockfile)?;
@@ -3569,6 +4144,8 @@ Interface: vmbr0
             r#"{"resources":[]}"#,
         )
         .unwrap();
+        let config_path = root.join("vmctl.toml");
+        std::fs::write(&config_path, "").unwrap();
         let workspace = Workspace {
             root: root.clone(),
             generated_dir,
@@ -3592,7 +4169,14 @@ Interface: vmbr0
             ..DesiredState::default()
         };
 
-        let lockfile = write_lockfile(&workspace, &desired).unwrap();
+        let lockfile = write_lockfile(
+            &workspace,
+            &desired,
+            Some(&config_path),
+            Path::new("resources"),
+            Path::new("services"),
+        )
+        .unwrap();
 
         assert!(!lockfile.resources[0].exists);
 
@@ -3656,8 +4240,7 @@ Interface: vmbr0
 
         let first = workspace_source_fingerprint(
             &root.join("vmctl.toml"),
-            &root.join("resources"),
-            &root.join("services"),
+            &[root.join("resources"), root.join("services")],
         )
         .unwrap();
 
@@ -3669,8 +4252,7 @@ Interface: vmbr0
 
         let second = workspace_source_fingerprint(
             &root.join("vmctl.toml"),
-            &root.join("resources"),
-            &root.join("services"),
+            &[root.join("resources"), root.join("services")],
         )
         .unwrap();
 
@@ -3687,7 +4269,7 @@ Interface: vmbr0
         std::env::set_current_dir(&temp_root).unwrap();
 
         let result = (|| -> Result<()> {
-            let (workspace, desired, registry) = load_workspace(
+            let (workspace, desired, registry, service_registry) = load_workspace(
                 Some(&repo_root.join("vmctl.toml")),
                 &repo_root.join("resources"),
                 &repo_root.join("services"),
@@ -3700,7 +4282,7 @@ Interface: vmbr0
             std::fs::create_dir_all(stale_media_env.parent().unwrap())?;
             std::fs::write(&stale_media_env, "RADARR_DEFAULT_QUALITY_PROFILE=\"\"\n")?;
 
-            refresh_rendered_workspace(&workspace, &desired, &registry)?;
+            refresh_rendered_workspace(&workspace, &desired, &registry, &service_registry)?;
 
             let rendered = std::fs::read_to_string(&stale_media_env)?;
             assert!(

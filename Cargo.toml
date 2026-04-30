@@ -27,6 +27,7 @@ vmctl-hooks = { path = "crates/hooks" }
 vmctl-domain = { path = "crates/domain" }
 vmctl-import = { path = "crates/import" }
 vmctl-lockfile = { path = "crates/lockfile" }
+vmctl-modules = { path = "crates/modules" }
 vmctl-services = { path = "crates/services" }
 vmctl-resources = { path = "crates/resources" }
 vmctl-planner = { path = "crates/planner" }

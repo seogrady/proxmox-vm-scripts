@@ -490,6 +490,7 @@ dependencies = [
  "vmctl-hooks",
  "vmctl-import",
  "vmctl-lockfile",
+ "vmctl-modules",
  "vmctl-planner",
  "vmctl-provision",
  "vmctl-render",
@@ -506,6 +507,7 @@ dependencies = [
  "serde",
  "vmctl-domain",
  "vmctl-resources",
+ "vmctl-services",
 ]
 
 [[package]]
@@ -516,6 +518,7 @@ dependencies = [
  "vmctl-backend",
  "vmctl-domain",
  "vmctl-resources",
+ "vmctl-services",
 ]
 
 [[package]]
@@ -609,6 +612,17 @@ dependencies = [
  "sha2",
  "toml",
  "vmctl-domain",
+]
+
+[[package]]
+name = "vmctl-modules"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "sha2",
+ "toml",
+ "vmctl-util",
 ]
 
 [[package]]

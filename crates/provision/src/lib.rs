@@ -170,7 +170,11 @@ pub fn build_provision_plan(
     desired: &DesiredState,
 ) -> Result<ProvisionPlan> {
     let mut steps = Vec::new();
-    for resource in desired.resources.iter().filter(|resource| resource.applies()) {
+    for resource in desired
+        .resources
+        .iter()
+        .filter(|resource| resource.applies())
+    {
         let normalized = desired
             .normalized_resources
             .get(&resource.name)
@@ -611,7 +615,9 @@ mod tests {
             expansions: BTreeMap::from([(
                 "media-stack".to_string(),
                 Expansion {
-                    bootstrap_steps: vec!["hooks/jellyfin/scripts/bootstrap-jellyfin.sh".to_string()],
+                    bootstrap_steps: vec![
+                        "hooks/jellyfin/scripts/bootstrap-jellyfin.sh".to_string()
+                    ],
                     ..Expansion::default()
                 },
             )]),

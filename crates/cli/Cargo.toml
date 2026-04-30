@@ -22,6 +22,7 @@ vmctl-hooks.workspace = true
 vmctl-domain.workspace = true
 vmctl-import.workspace = true
 vmctl-lockfile.workspace = true
+vmctl-modules.workspace = true
 vmctl-services.workspace = true
 vmctl-resources.workspace = true
 vmctl-planner.workspace = true

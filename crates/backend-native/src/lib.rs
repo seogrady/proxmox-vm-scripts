@@ -2,6 +2,7 @@ use anyhow::{bail, Result};
 use vmctl_backend::{EngineBackend, RenderResult};
 use vmctl_domain::{DesiredState, Workspace};
 use vmctl_resources::ResourceRegistry;
+use vmctl_services::ServiceRegistry;
 
 #[derive(Debug, Default)]
 pub struct NativeBackend;
@@ -16,6 +17,7 @@ impl EngineBackend for NativeBackend {
         _workspace: &Workspace,
         _desired: &DesiredState,
         _registry: &ResourceRegistry,
+        _service_registry: &ServiceRegistry,
     ) -> Result<RenderResult> {
         bail!("native backend rendering is not implemented yet")
     }
