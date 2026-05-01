@@ -32,9 +32,24 @@ jobs:
           DEFAULT_SSH_PRIVATE_KEY: ${{ secrets.DEFAULT_SSH_PRIVATE_KEY }}
           DEFAULT_SSH_PUBLIC_KEY: ${{ secrets.DEFAULT_SSH_PUBLIC_KEY }}
         run: |
+          set -euo pipefail
           install -d -m 0700 /root/.ssh
-          printf '%s\n' "$DEFAULT_SSH_PRIVATE_KEY" > /root/.ssh/id_ed25519
-          printf '%s\n' "$DEFAULT_SSH_PUBLIC_KEY" > /root/.ssh/id_ed25519.pub
+          if printf '%s' "$DEFAULT_SSH_PRIVATE_KEY" | grep -q 'BEGIN OPENSSH PRIVATE KEY'; then
+            printf '%s\n' "$DEFAULT_SSH_PRIVATE_KEY" > /root/.ssh/id_ed25519
+          elif printf '%s' "$DEFAULT_SSH_PRIVATE_KEY" | grep -q '\\n'; then
+            printf '%s' "$DEFAULT_SSH_PRIVATE_KEY" | sed 's/\\n/\n/g' > /root/.ssh/id_ed25519
+          else
+            printf '%s' "$DEFAULT_SSH_PRIVATE_KEY" | base64 -d > /root/.ssh/id_ed25519
+          fi
+
+          if printf '%s' "$DEFAULT_SSH_PUBLIC_KEY" | grep -q '^ssh-'; then
+            printf '%s\n' "$DEFAULT_SSH_PUBLIC_KEY" > /root/.ssh/id_ed25519.pub
+          elif printf '%s' "$DEFAULT_SSH_PUBLIC_KEY" | grep -q '\\n'; then
+            printf '%s' "$DEFAULT_SSH_PUBLIC_KEY" | sed 's/\\n/\n/g' > /root/.ssh/id_ed25519.pub
+          else
+            printf '%s' "$DEFAULT_SSH_PUBLIC_KEY" | base64 -d > /root/.ssh/id_ed25519.pub
+          fi
+
           chmod 0600 /root/.ssh/id_ed25519
 
       - name: Apply On Proxmox Host
@@ -42,9 +57,10 @@ jobs:
           PROXMOX_TOKEN_ID: ${{ secrets.PROXMOX_TOKEN_ID }}
           PROXMOX_TOKEN_SECRET: ${{ secrets.PROXMOX_TOKEN_SECRET }}
           TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
-          VMCTL_HOST: 100.92.58.15
+          VMCTL_HOST: ${{ secrets.VMCTL_APPLY_HOST }}
         run: |
           set -euo pipefail
+          VMCTL_HOST="${VMCTL_HOST:-proxmox-mini}"
           tar -czf /tmp/vmctl-src.tgz .
           scp -i /root/.ssh/id_ed25519 -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
             /tmp/vmctl-src.tgz "root@${VMCTL_HOST}:/tmp/vmctl-src.tgz"
