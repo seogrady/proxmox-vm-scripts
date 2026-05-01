@@ -59,7 +59,7 @@ jobs:
           DEFAULT_SSH_PRIVATE_KEY_FILE: /root/.ssh/id_ed25519
           TF_VAR_proxmox_api_token: ${{ secrets.PROXMOX_TOKEN_ID }}=${{ secrets.PROXMOX_TOKEN_SECRET }}
         run: |
-          cargo run -q -p vmctl -- apply
+          cargo run -q -p vmctl -- apply --no-image-ensure
 
       - name: Collect debug artifacts
         if: failure()

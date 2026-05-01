@@ -22,5 +22,11 @@ jobs:
           git checkout -q --detach FETCH_HEAD
 
       - name: Run tests
+        env:
+          PROXMOX_TOKEN_ID: test-token-id
+          PROXMOX_TOKEN_SECRET: test-token-secret
+          TAILSCALE_AUTH_KEY: test-tailscale-auth-key
+          DEFAULT_SSH_KEY_FILE: /tmp/id_ed25519.pub
+          DEFAULT_SSH_PRIVATE_KEY_FILE: /tmp/id_ed25519
         run: |
           cargo test --locked
