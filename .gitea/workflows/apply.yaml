@@ -27,19 +27,6 @@ jobs:
           git -c http.extraHeader="Authorization: token ${GITHUB_TOKEN}" fetch --depth 1 origin "${GITHUB_SHA}"
           git checkout -q --detach FETCH_HEAD
 
-      - name: Install runtime dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            ca-certificates curl git jq openssh-client unzip
-
-      - name: Install OpenTofu
-        run: |
-          TOFU_VERSION="1.9.1"
-          curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.tar.gz" -o /tmp/tofu.tgz
-          tar -C /usr/local/bin -xzf /tmp/tofu.tgz tofu
-          tofu version
-
       - name: Prepare SSH key files
         env:
           DEFAULT_SSH_PRIVATE_KEY: ${{ secrets.DEFAULT_SSH_PRIVATE_KEY }}
@@ -50,16 +37,31 @@ jobs:
           printf '%s\n' "$DEFAULT_SSH_PUBLIC_KEY" > /root/.ssh/id_ed25519.pub
           chmod 0600 /root/.ssh/id_ed25519
 
-      - name: Apply
+      - name: Apply On Proxmox Host
         env:
           PROXMOX_TOKEN_ID: ${{ secrets.PROXMOX_TOKEN_ID }}
           PROXMOX_TOKEN_SECRET: ${{ secrets.PROXMOX_TOKEN_SECRET }}
           TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
-          DEFAULT_SSH_KEY_FILE: /root/.ssh/id_ed25519.pub
-          DEFAULT_SSH_PRIVATE_KEY_FILE: /root/.ssh/id_ed25519
-          TF_VAR_proxmox_api_token: ${{ secrets.PROXMOX_TOKEN_ID }}=${{ secrets.PROXMOX_TOKEN_SECRET }}
+          VMCTL_HOST: mini
         run: |
-          cargo run -q -p vmctl -- apply --no-image-ensure
+          set -euo pipefail
+          tar -czf /tmp/vmctl-src.tgz .
+          scp -i /root/.ssh/id_ed25519 -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
+            /tmp/vmctl-src.tgz "root@${VMCTL_HOST}:/tmp/vmctl-src.tgz"
+          ssh -i /root/.ssh/id_ed25519 -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
+            "root@${VMCTL_HOST}" "\
+              set -euo pipefail; \
+              rm -rf /tmp/vmctl-ci && mkdir -p /tmp/vmctl-ci; \
+              tar -xzf /tmp/vmctl-src.tgz -C /tmp/vmctl-ci; \
+              cd /tmp/vmctl-ci; \
+              export PROXMOX_TOKEN_ID='${PROXMOX_TOKEN_ID}'; \
+              export PROXMOX_TOKEN_SECRET='${PROXMOX_TOKEN_SECRET}'; \
+              export TAILSCALE_AUTH_KEY='${TAILSCALE_AUTH_KEY}'; \
+              export DEFAULT_SSH_KEY_FILE='/root/.ssh/id_ed25519.pub'; \
+              export DEFAULT_SSH_PRIVATE_KEY_FILE='/root/.ssh/id_ed25519'; \
+              export TF_VAR_proxmox_api_token='${PROXMOX_TOKEN_ID}=${PROXMOX_TOKEN_SECRET}'; \
+              cargo run -q -p vmctl -- apply --no-image-ensure; \
+            "
 
       - name: Collect debug artifacts
         if: failure()
