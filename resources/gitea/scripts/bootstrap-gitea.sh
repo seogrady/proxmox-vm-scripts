@@ -351,6 +351,11 @@ if is_truthy "$GITEA_BOOTSTRAP_REPO_ENABLED"; then
       cat "$raw"
       return 0
     fi
+    if [[ "$raw" == /* ]]; then
+      # Ignore path-like values that don't exist inside the gitea container.
+      printf ''
+      return 0
+    fi
     printf '%s' "$raw"
   }
 
@@ -434,13 +439,9 @@ secrets = {
     "DEFAULT_SSH_PUBLIC_KEY": ssh_public_key,
 }
 
-missing = [name for name, value in secrets.items() if not value]
-if missing:
-    raise SystemExit(
-        "missing Gitea bootstrap secret values for: " + ", ".join(sorted(missing))
-    )
-
 for name, value in secrets.items():
+    if not str(value or "").strip():
+        continue
     encoded_name = urllib.parse.quote(name, safe="")
     secret_path = f"{repo_path}/actions/secrets/{encoded_name}"
     status, body = request("PUT", secret_path, {"data": value})

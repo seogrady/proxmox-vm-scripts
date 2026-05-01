@@ -36,16 +36,26 @@ jobs:
           install -d -m 0700 /root/.ssh
           if printf '%s' "$DEFAULT_SSH_PRIVATE_KEY" | grep -q 'BEGIN OPENSSH PRIVATE KEY'; then
             printf '%s\n' "$DEFAULT_SSH_PRIVATE_KEY" > /root/.ssh/id_ed25519
+          elif [ -f "$DEFAULT_SSH_PRIVATE_KEY" ]; then
+            cp "$DEFAULT_SSH_PRIVATE_KEY" /root/.ssh/id_ed25519
           elif printf '%s' "$DEFAULT_SSH_PRIVATE_KEY" | grep -q '\\n'; then
             printf '%s' "$DEFAULT_SSH_PRIVATE_KEY" | sed 's/\\n/\n/g' > /root/.ssh/id_ed25519
+          elif [[ "$DEFAULT_SSH_PRIVATE_KEY" == /* ]]; then
+            echo "DEFAULT_SSH_PRIVATE_KEY points to a missing path: $DEFAULT_SSH_PRIVATE_KEY" >&2
+            exit 1
           else
             printf '%s' "$DEFAULT_SSH_PRIVATE_KEY" | base64 -d > /root/.ssh/id_ed25519
           fi
 
           if printf '%s' "$DEFAULT_SSH_PUBLIC_KEY" | grep -q '^ssh-'; then
             printf '%s\n' "$DEFAULT_SSH_PUBLIC_KEY" > /root/.ssh/id_ed25519.pub
+          elif [ -f "$DEFAULT_SSH_PUBLIC_KEY" ]; then
+            cp "$DEFAULT_SSH_PUBLIC_KEY" /root/.ssh/id_ed25519.pub
           elif printf '%s' "$DEFAULT_SSH_PUBLIC_KEY" | grep -q '\\n'; then
             printf '%s' "$DEFAULT_SSH_PUBLIC_KEY" | sed 's/\\n/\n/g' > /root/.ssh/id_ed25519.pub
+          elif [[ "$DEFAULT_SSH_PUBLIC_KEY" == /* ]]; then
+            echo "DEFAULT_SSH_PUBLIC_KEY points to a missing path: $DEFAULT_SSH_PUBLIC_KEY" >&2
+            exit 1
           else
             printf '%s' "$DEFAULT_SSH_PUBLIC_KEY" | base64 -d > /root/.ssh/id_ed25519.pub
           fi
