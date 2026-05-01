@@ -28,6 +28,16 @@ GITEA_BASE_URL = ""
 GITEA_SSH_HOST = ""
 GITEA_TAILSCALE_HTTPS_ENABLED = "true"
 GITEA_TAILSCALE_HTTPS_TARGET = ""
+GITEA_ACTIONS_ENABLED = "true"
+GITEA_BOOTSTRAP_REPO_ENABLED = "true"
+GITEA_BOOTSTRAP_REPO_NAME = "vmctl"
+GITEA_BOOTSTRAP_REPO_PRIVATE = "true"
+GITEA_BOOTSTRAP_SECRETS_ENABLED = "false"
+GITEA_BOOTSTRAP_SECRET_PROXMOX_TOKEN_ID = "${env.PROXMOX_TOKEN_ID}"
+GITEA_BOOTSTRAP_SECRET_PROXMOX_TOKEN_SECRET = "${env.PROXMOX_TOKEN_SECRET}"
+GITEA_BOOTSTRAP_SECRET_TAILSCALE_AUTH_KEY = "${env.TAILSCALE_AUTH_KEY}"
+GITEA_BOOTSTRAP_SECRET_DEFAULT_SSH_PRIVATE_KEY = ""
+GITEA_BOOTSTRAP_SECRET_DEFAULT_SSH_PUBLIC_KEY = ""
 
 [features.lxc]
 nesting = true
@@ -53,6 +63,16 @@ base_url = "${env.GITEA_BASE_URL}"
 ssh_host = "${env.GITEA_SSH_HOST}"
 tailscale_https_enabled = "${env.GITEA_TAILSCALE_HTTPS_ENABLED}"
 tailscale_https_target = "${env.GITEA_TAILSCALE_HTTPS_TARGET}"
+actions_enabled = "${env.GITEA_ACTIONS_ENABLED}"
+bootstrap_repo_enabled = "${env.GITEA_BOOTSTRAP_REPO_ENABLED}"
+bootstrap_repo_name = "${env.GITEA_BOOTSTRAP_REPO_NAME}"
+bootstrap_repo_private = "${env.GITEA_BOOTSTRAP_REPO_PRIVATE}"
+bootstrap_secrets_enabled = "${env.GITEA_BOOTSTRAP_SECRETS_ENABLED}"
+bootstrap_secret_proxmox_token_id = "${env.GITEA_BOOTSTRAP_SECRET_PROXMOX_TOKEN_ID}"
+bootstrap_secret_proxmox_token_secret = "${env.GITEA_BOOTSTRAP_SECRET_PROXMOX_TOKEN_SECRET}"
+bootstrap_secret_tailscale_auth_key = "${env.GITEA_BOOTSTRAP_SECRET_TAILSCALE_AUTH_KEY}"
+bootstrap_secret_default_ssh_private_key = "${env.GITEA_BOOTSTRAP_SECRET_DEFAULT_SSH_PRIVATE_KEY}"
+bootstrap_secret_default_ssh_public_key = "${env.GITEA_BOOTSTRAP_SECRET_DEFAULT_SSH_PUBLIC_KEY}"
 
 [features.gitea_bundle]
 services = ["gitea"]

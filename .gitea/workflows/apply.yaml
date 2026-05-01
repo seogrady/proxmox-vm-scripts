@@ -1,0 +1,69 @@
+name: Apply (vmctl)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+concurrency:
+  group: vmctl-apply-main
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: ${{ github.event_name == 'push' || github.event.pull_request.merged == true }}
+    runs-on: vmctl
+    steps:
+      - name: Checkout
+        uses: https://gitea.com/actions/checkout@v4
+
+      - name: Install runtime dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git jq openssh-client unzip
+
+      - name: Install OpenTofu
+        run: |
+          TOFU_VERSION="1.9.1"
+          curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.tar.gz" -o /tmp/tofu.tgz
+          tar -C /usr/local/bin -xzf /tmp/tofu.tgz tofu
+          tofu version
+
+      - name: Prepare SSH key files
+        env:
+          DEFAULT_SSH_PRIVATE_KEY: ${{ secrets.DEFAULT_SSH_PRIVATE_KEY }}
+          DEFAULT_SSH_PUBLIC_KEY: ${{ secrets.DEFAULT_SSH_PUBLIC_KEY }}
+        run: |
+          install -d -m 0700 /root/.ssh
+          printf '%s\n' "$DEFAULT_SSH_PRIVATE_KEY" > /root/.ssh/id_ed25519
+          printf '%s\n' "$DEFAULT_SSH_PUBLIC_KEY" > /root/.ssh/id_ed25519.pub
+          chmod 0600 /root/.ssh/id_ed25519
+
+      - name: Apply
+        env:
+          PROXMOX_TOKEN_ID: ${{ secrets.PROXMOX_TOKEN_ID }}
+          PROXMOX_TOKEN_SECRET: ${{ secrets.PROXMOX_TOKEN_SECRET }}
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          DEFAULT_SSH_KEY_FILE: /root/.ssh/id_ed25519.pub
+          DEFAULT_SSH_PRIVATE_KEY_FILE: /root/.ssh/id_ed25519
+          TF_VAR_proxmox_api_token: ${{ secrets.PROXMOX_TOKEN_ID }}=${{ secrets.PROXMOX_TOKEN_SECRET }}
+        run: |
+          cargo run -q -p vmctl -- apply
+
+      - name: Collect debug artifacts
+        if: failure()
+        run: |
+          mkdir -p /tmp/vmctl-debug
+          cp -f vmctl.lock /tmp/vmctl-debug/vmctl.lock 2>/dev/null || true
+          cp -rf backend/generated/workspace /tmp/vmctl-debug/workspace 2>/dev/null || true
+          tar -czf /tmp/vmctl-debug.tar.gz -C /tmp vmctl-debug
+
+      - name: Upload debug artifacts
+        if: failure()
+        uses: https://gitea.com/actions/upload-artifact@v4
+        with:
+          name: vmctl-debug
+          path: /tmp/vmctl-debug.tar.gz

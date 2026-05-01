@@ -2582,10 +2582,13 @@ mod tests {
         assert!(script.contains("START_SSH_SERVER = true"));
         assert!(script.contains("SSH_LISTEN_PORT = ${GITEA_SSH_PORT}"));
         assert!(script.contains("ROOT_URL = ${gitea_root_url}"));
+        assert!(script.contains("[actions]"));
+        assert!(script.contains("DEFAULT_ACTIONS_URL = github"));
         assert!(script.contains("run_gitea_admin_user_command create"));
         assert!(script.contains("run_gitea_admin_user_command change-password"));
         assert!(script.contains("\"$api_base/user\""));
         assert!(script.contains("\"/user/keys\""));
+        assert!(script.contains("/actions/secrets/"));
     }
 
     #[test]
@@ -2605,6 +2608,47 @@ mod tests {
         assert!(service.contains("targets = [\"lxc\", \"vm\"]"));
         assert!(service.contains("default_target = \"lxc\""));
         assert!(service.contains("fallback_target = \"vm\""));
+    }
+
+    #[test]
+    fn gitea_runner_resource_defaults_to_lxc_and_depends_on_gitea() {
+        let resource = include_str!("../../../resources/gitea-runner/resource.toml");
+        assert!(resource.contains("kind = \"lxc\""));
+        assert!(resource.contains("role = \"gitea_runner\""));
+        assert!(resource.contains("depends_on = [\"gitea\"]"));
+        assert!(resource.contains("services = [\"gitea-runner\"]"));
+        assert!(resource.contains("bootstrap-gitea-runner.sh"));
+        assert!(resource.contains("validate-gitea-runner.sh"));
+    }
+
+    #[test]
+    fn gitea_runner_bootstrap_registers_runner_idempotently() {
+        let script = include_str!("../../../resources/gitea-runner/scripts/bootstrap-gitea-runner.sh");
+        assert!(script.contains("register_args=("));
+        assert!(script.contains("--no-interactive"));
+        assert!(script.contains("if [[ ! -s \"${instance_dir}/.runner\" ]]"));
+        assert!(script.contains("valid_volumes: []"));
+        assert!(script.contains("docker_host: \"-\""));
+        assert!(script.contains("act_runner@.service"));
+        assert!(script.contains("/actions/runners/registration-token"));
+    }
+
+    #[test]
+    fn gitea_runner_validate_checks_systemd_state_and_online_status() {
+        let script =
+            include_str!("../../../resources/gitea-runner/scripts/validate-gitea-runner.sh");
+        assert!(script.contains("systemctl is-active --quiet"));
+        assert!(script.contains("runner registration file missing"));
+        assert!(script.contains("actions/runners"));
+        assert!(script.contains("runner '${runner_name}' is missing or not online"));
+    }
+
+    #[test]
+    fn gitea_runner_service_definition_supports_lxc_and_vm_targets() {
+        let service = include_str!("../../../services/gitea-runner/service.toml");
+        assert!(service.contains("targets = [\"lxc\", \"vm\"]"));
+        assert!(service.contains("scope = \"resource\""));
+        assert!(service.contains("state_root = \"/var/lib/act_runner\""));
     }
 
     #[test]

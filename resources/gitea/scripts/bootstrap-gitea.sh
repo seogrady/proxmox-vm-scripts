@@ -170,6 +170,10 @@ DISABLE_REGISTRATION = true
 REQUIRE_SIGNIN_VIEW = false
 ENABLE_CAPTCHA = false
 
+[actions]
+ENABLED = ${GITEA_ACTIONS_ENABLED}
+DEFAULT_ACTIONS_URL = github
+
 [security]
 INSTALL_LOCK = true
 SECRET_KEY = ${secret_key}
@@ -330,6 +334,104 @@ for key in keys:
 PY
 fi
 rm -f "$key_file"
+
+if is_truthy "$GITEA_BOOTSTRAP_REPO_ENABLED"; then
+  bootstrap_repo_private="false"
+  if is_truthy "$GITEA_BOOTSTRAP_REPO_PRIVATE"; then
+    bootstrap_repo_private="true"
+  fi
+
+  python3 - "$api_base" "$GITEA_ADMIN_USER" "$GITEA_ADMIN_PASSWORD" \
+    "$GITEA_BOOTSTRAP_REPO_NAME" "$bootstrap_repo_private" "$GITEA_BOOTSTRAP_SECRETS_ENABLED" \
+    "$GITEA_BOOTSTRAP_SECRET_PROXMOX_TOKEN_ID" \
+    "$GITEA_BOOTSTRAP_SECRET_PROXMOX_TOKEN_SECRET" \
+    "$GITEA_BOOTSTRAP_SECRET_TAILSCALE_AUTH_KEY" \
+    "$GITEA_BOOTSTRAP_SECRET_DEFAULT_SSH_PRIVATE_KEY" \
+    "$GITEA_BOOTSTRAP_SECRET_DEFAULT_SSH_PUBLIC_KEY" <<'PY'
+import base64
+import json
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+(
+    api_base,
+    owner,
+    password,
+    repo_name,
+    repo_private_raw,
+    bootstrap_secrets_raw,
+    proxmox_token_id,
+    proxmox_token_secret,
+    tailscale_auth_key,
+    ssh_private_key,
+    ssh_public_key,
+) = sys.argv[1:12]
+
+auth = base64.b64encode(f"{owner}:{password}".encode("utf-8")).decode("utf-8")
+repo_private = repo_private_raw.strip().lower() in {"1", "true", "yes", "on"}
+bootstrap_secrets = bootstrap_secrets_raw.strip().lower() in {"1", "true", "yes", "on"}
+
+if not repo_name.strip():
+    raise SystemExit("GITEA_BOOTSTRAP_REPO_NAME is empty")
+
+def request(method, path, payload=None):
+    data = None
+    headers = {
+        "Authorization": f"Basic {auth}",
+        "Accept": "application/json",
+    }
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(api_base + path, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            return resp.status, body
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", errors="replace")
+
+
+repo_path = f"/repos/{urllib.parse.quote(owner, safe='')}/{urllib.parse.quote(repo_name, safe='')}"
+status, body = request("GET", repo_path)
+if status == 404:
+    status, body = request(
+        "POST",
+        "/user/repos",
+        {"name": repo_name, "private": repo_private, "auto_init": False},
+    )
+    if status not in (200, 201, 409, 422):
+        raise SystemExit(f"failed to create bootstrap repo: {status} {body}")
+elif status != 200:
+    raise SystemExit(f"failed to check bootstrap repo: {status} {body}")
+
+if not bootstrap_secrets:
+    raise SystemExit(0)
+
+secrets = {
+    "PROXMOX_TOKEN_ID": proxmox_token_id,
+    "PROXMOX_TOKEN_SECRET": proxmox_token_secret,
+    "TAILSCALE_AUTH_KEY": tailscale_auth_key,
+    "DEFAULT_SSH_PRIVATE_KEY": ssh_private_key,
+    "DEFAULT_SSH_PUBLIC_KEY": ssh_public_key,
+}
+
+missing = [name for name, value in secrets.items() if not value]
+if missing:
+    raise SystemExit(
+        "missing Gitea bootstrap secret values for: " + ", ".join(sorted(missing))
+    )
+
+for name, value in secrets.items():
+    encoded_name = urllib.parse.quote(name, safe="")
+    secret_path = f"{repo_path}/actions/secrets/{encoded_name}"
+    status, body = request("PUT", secret_path, {"data": value})
+    if status not in (201, 204):
+        raise SystemExit(f"failed to upsert action secret {name}: {status} {body}")
+PY
+fi
 
 echo "gitea bootstrap complete"
 echo "web: ${gitea_root_url}"

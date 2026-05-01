@@ -1,0 +1,78 @@
+name = "gitea-runner"
+kind = "lxc"
+image = "debian_12_lxc"
+role = "gitea_runner"
+vmid = 213
+rootfs_gb = 24
+memory = 3072
+cores = 2
+description = "Dedicated Gitea Actions runner (Docker mode)"
+depends_on = ["gitea"]
+
+[network]
+mode = "dhcp"
+
+[provision]
+user = "root"
+private_key_file = "${env.DEFAULT_SSH_PRIVATE_KEY_FILE}"
+retries = 20
+retry_delay_seconds = 15
+
+[env]
+GITEA_RUNNER_ENABLED = "true"
+GITEA_RUNNER_ACT_VERSION = "0.2.11"
+GITEA_RUNNER_INSTANCE_0_NAME = "gitea"
+GITEA_RUNNER_INSTANCE_0_BASE_URL = "${env.GITEA_BASE_URL}"
+GITEA_RUNNER_INSTANCE_0_SCOPE = "repo"
+GITEA_RUNNER_INSTANCE_0_REPO = "admin/vmctl"
+GITEA_RUNNER_INSTANCE_0_ORG = ""
+GITEA_RUNNER_INSTANCE_0_RUNNER_NAME = "vmctl-runner-1"
+GITEA_RUNNER_INSTANCE_0_LABELS = "vmctl:docker://rust:1.78-bookworm"
+GITEA_RUNNER_INSTANCE_0_CAPACITY = "1"
+GITEA_RUNNER_INSTANCE_0_ADMIN_USER = "${env.GITEA_ADMIN_USER}"
+GITEA_RUNNER_INSTANCE_0_ADMIN_PASSWORD = "${env.GITEA_ADMIN_PASSWORD}"
+GITEA_RUNNER_INSTANCE_0_EPHEMERAL = "false"
+GITEA_RUNNER_REGISTRATION_RETRIES = "60"
+GITEA_RUNNER_REGISTRATION_RETRY_DELAY_SECONDS = "5"
+
+[features.lxc]
+nesting = true
+
+[features.tailscale]
+enabled = true
+mode = "client"
+auth_key = "${env.TAILSCALE_AUTH_KEY}"
+tags = ["tag:homelab"]
+
+[features.gitea_runner]
+enabled = "${env.GITEA_RUNNER_ENABLED}"
+act_version = "${env.GITEA_RUNNER_ACT_VERSION}"
+registration_retries = "${env.GITEA_RUNNER_REGISTRATION_RETRIES}"
+registration_retry_delay_seconds = "${env.GITEA_RUNNER_REGISTRATION_RETRY_DELAY_SECONDS}"
+
+[[features.gitea_runner.instances]]
+name = "${env.GITEA_RUNNER_INSTANCE_0_NAME}"
+base_url = "${env.GITEA_RUNNER_INSTANCE_0_BASE_URL}"
+scope = "${env.GITEA_RUNNER_INSTANCE_0_SCOPE}"
+repo = "${env.GITEA_RUNNER_INSTANCE_0_REPO}"
+org = "${env.GITEA_RUNNER_INSTANCE_0_ORG}"
+runner_name = "${env.GITEA_RUNNER_INSTANCE_0_RUNNER_NAME}"
+runner_labels = "${env.GITEA_RUNNER_INSTANCE_0_LABELS}"
+runner_capacity = "${env.GITEA_RUNNER_INSTANCE_0_CAPACITY}"
+admin_user = "${env.GITEA_RUNNER_INSTANCE_0_ADMIN_USER}"
+admin_password = "${env.GITEA_RUNNER_INSTANCE_0_ADMIN_PASSWORD}"
+ephemeral = "${env.GITEA_RUNNER_INSTANCE_0_EPHEMERAL}"
+
+[features.gitea_runner_bundle]
+services = ["gitea-runner"]
+
+[render]
+templates = ["tailscale-setup.sh.hbs", "gitea-runner.env.hbs"]
+
+[hooks]
+bootstrap = [
+    "scripts/bootstrap-node.sh",
+    "scripts/bootstrap-tailscale.sh",
+    "scripts/bootstrap-gitea-runner.sh"
+]
+validate = ["scripts/validate-gitea-runner.sh"]

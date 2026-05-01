@@ -56,6 +56,18 @@ fi
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 
+if is_truthy "$GITEA_BOOTSTRAP_REPO_ENABLED"; then
+  bootstrap_repo="${GITEA_BOOTSTRAP_REPO_NAME:-vmctl}"
+  repo_status="$(curl -sS -o "$work_dir/repo-bootstrap.json" -w '%{http_code}' \
+    -u "$GITEA_ADMIN_USER:$GITEA_ADMIN_PASSWORD" \
+    "$api_base/repos/${GITEA_ADMIN_USER}/${bootstrap_repo}")"
+  if [[ "$repo_status" != "200" ]]; then
+    echo "gitea bootstrap repo missing: ${GITEA_ADMIN_USER}/${bootstrap_repo}"
+    cat "$work_dir/repo-bootstrap.json" >&2 || true
+    exit 1
+  fi
+fi
+
 ssh_key="$work_dir/vmctl-gitea-smoke"
 ssh-keygen -q -t ed25519 -N '' -f "$ssh_key" >/dev/null
 
