@@ -334,8 +334,9 @@ EOF_CFG
     chown act_runner:act_runner "${instance_dir}/.runner"
   fi
 
+  # Don't restart the runner from inside a running runner job.
+  # A restart here can deadlock while systemd waits for the active job to exit.
   systemctl enable --now "act_runner@${instance_slug}.service"
-  systemctl restart "act_runner@${instance_slug}.service"
 done < <(instance_indexes)
 
 echo "gitea runner bootstrap complete"
