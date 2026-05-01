@@ -10,8 +10,16 @@ jobs:
   test:
     runs-on: vmctl
     steps:
-      - name: Checkout
-        uses: https://gitea.com/actions/checkout@v4
+      - name: Checkout (git)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REPO_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git init -q .
+          git remote add origin "$REPO_URL"
+          git -c http.extraHeader="Authorization: token ${GITHUB_TOKEN}" fetch --depth 1 origin "${GITHUB_SHA}"
+          git checkout -q --detach FETCH_HEAD
 
       - name: Run tests
         run: |
