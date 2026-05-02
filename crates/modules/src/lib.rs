@@ -5,6 +5,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
+use glob::Pattern;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use toml::Value;
@@ -628,6 +629,37 @@ pub struct ModuleRegistryBuilder {
     services: BTreeMap<String, LocatedModule>,
 }
 
+pub fn filter_modules_by_name(
+    modules: Vec<IndexedModule>,
+    include: &[String],
+    exclude: &[String],
+) -> Result<Vec<IndexedModule>> {
+    let include_patterns = compile_name_patterns(include, "include")?;
+    let exclude_patterns = compile_name_patterns(exclude, "exclude")?;
+    Ok(modules
+        .into_iter()
+        .filter(|module| matches_any_name_pattern(&module.name, &include_patterns))
+        .filter(|module| !matches_any_name_pattern(&module.name, &exclude_patterns))
+        .collect())
+}
+
+fn compile_name_patterns(patterns: &[String], label: &str) -> Result<Vec<Pattern>> {
+    let mut compiled = Vec::with_capacity(patterns.len());
+    for (idx, pattern) in patterns.iter().enumerate() {
+        if pattern.trim().is_empty() {
+            bail!("{label}[{idx}] glob pattern cannot be empty");
+        }
+        let parsed = Pattern::new(pattern)
+            .map_err(|error| anyhow!("{label}[{idx}] invalid glob pattern `{pattern}`: {error}"))?;
+        compiled.push(parsed);
+    }
+    Ok(compiled)
+}
+
+fn matches_any_name_pattern(name: &str, patterns: &[Pattern]) -> bool {
+    patterns.iter().any(|pattern| pattern.matches(name))
+}
+
 impl ModuleRegistryBuilder {
     pub fn add_indexed(&mut self, modules: Vec<IndexedModule>, layer: ModuleLayer) -> Result<()> {
         for indexed in modules {
@@ -971,6 +1003,145 @@ mod tests {
         assert_eq!(offline.commit, second.commit);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn filter_modules_include_only() {
+        let modules = vec![
+            test_module("devbox-a"),
+            test_module("node"),
+            test_module("devbox-b"),
+        ];
+        let filtered = filter_modules_by_name(modules, &["devbox-*".to_string()], &[]).unwrap();
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered
+            .iter()
+            .all(|module| module.name.starts_with("devbox-")));
+    }
+
+    #[test]
+    fn filter_modules_exclude_only() {
+        let modules = vec![
+            test_module("devbox-a"),
+            test_module("legacy-a"),
+            test_module("legacy-b"),
+        ];
+        let filtered =
+            filter_modules_by_name(modules, &["*".to_string()], &["legacy-*".to_string()]).unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].name, "devbox-a");
+    }
+
+    #[test]
+    fn filter_modules_include_then_exclude_precedence() {
+        let modules = vec![
+            test_module("devbox-service"),
+            test_module("devbox-node"),
+            test_module("other-service"),
+        ];
+        let filtered = filter_modules_by_name(
+            modules,
+            &["devbox-*".to_string()],
+            &["*-service".to_string()],
+        )
+        .unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].name, "devbox-node");
+    }
+
+    #[test]
+    fn filter_modules_glob_matching() {
+        let modules = vec![
+            test_module("foo-service"),
+            test_module("service-foo"),
+            test_module("other"),
+        ];
+        let filtered =
+            filter_modules_by_name(modules, &["*".to_string()], &["*-service".to_string()])
+                .unwrap();
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().any(|module| module.name == "service-foo"));
+        assert!(filtered.iter().any(|module| module.name == "other"));
+    }
+
+    #[test]
+    fn filter_modules_rejects_invalid_glob() {
+        let err =
+            filter_modules_by_name(vec![test_module("foo")], &["[".to_string()], &[]).unwrap_err();
+        assert!(err.to_string().contains("invalid glob pattern"));
+    }
+
+    #[test]
+    fn filter_modules_is_origin_agnostic() {
+        let local_modules = vec![
+            test_module_with_origin(
+                "devbox-a",
+                ModuleOrigin::Local {
+                    collection_root: PathBuf::from("resources"),
+                    module_dir: PathBuf::from("resources/devbox-a"),
+                },
+            ),
+            test_module_with_origin(
+                "legacy-a",
+                ModuleOrigin::Local {
+                    collection_root: PathBuf::from("resources"),
+                    module_dir: PathBuf::from("resources/legacy-a"),
+                },
+            ),
+        ];
+        let git_modules = vec![
+            test_module_with_origin(
+                "devbox-a",
+                ModuleOrigin::Git {
+                    repo_url: "https://example/repo".to_string(),
+                    ref_: "main".to_string(),
+                    commit: "abc".to_string(),
+                    checkout_root: PathBuf::from("/tmp/repo"),
+                    module_dir: PathBuf::from("/tmp/repo/devbox-a"),
+                },
+            ),
+            test_module_with_origin(
+                "legacy-a",
+                ModuleOrigin::Git {
+                    repo_url: "https://example/repo".to_string(),
+                    ref_: "main".to_string(),
+                    commit: "abc".to_string(),
+                    checkout_root: PathBuf::from("/tmp/repo"),
+                    module_dir: PathBuf::from("/tmp/repo/legacy-a"),
+                },
+            ),
+        ];
+        let include = vec!["*".to_string()];
+        let exclude = vec!["legacy-*".to_string()];
+
+        let local_filtered = filter_modules_by_name(local_modules, &include, &exclude).unwrap();
+        let git_filtered = filter_modules_by_name(git_modules, &include, &exclude).unwrap();
+
+        assert_eq!(local_filtered.len(), 1);
+        assert_eq!(git_filtered.len(), 1);
+        assert_eq!(local_filtered[0].name, "devbox-a");
+        assert_eq!(git_filtered[0].name, "devbox-a");
+    }
+
+    fn test_module(name: &str) -> IndexedModule {
+        test_module_with_origin(
+            name,
+            ModuleOrigin::Local {
+                collection_root: PathBuf::from("resources"),
+                module_dir: PathBuf::from(format!("resources/{name}")),
+            },
+        )
+    }
+
+    fn test_module_with_origin(name: &str, origin: ModuleOrigin) -> IndexedModule {
+        IndexedModule {
+            kind: ModuleKind::Resource,
+            name: name.to_string(),
+            module_dir: PathBuf::from(format!("resources/{name}")),
+            manifest_path: PathBuf::from(format!("resources/{name}/resource.toml")),
+            origin,
+            version: None,
+        }
     }
 
     fn unique_temp_dir(label: &str) -> PathBuf {

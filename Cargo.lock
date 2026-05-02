@@ -543,6 +543,7 @@ name = "vmctl-config"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "glob",
  "serde",
  "toml",
  "vmctl-domain",
@@ -619,6 +620,7 @@ name = "vmctl-modules"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "glob",
  "serde",
  "sha2",
  "toml",

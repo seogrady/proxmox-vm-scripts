@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
+use glob::Pattern;
 use serde::{Deserialize, Serialize};
 use toml::Value;
 use vmctl_domain::{
@@ -11,22 +12,90 @@ use vmctl_domain::{
 const SUPPORTED_CONFIG_MAJOR: u64 = 2;
 const GENERIC_CONFIG_VERSION_ERROR: &str = "unsupported config format";
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceCatalogConfig {
     #[serde(
         default = "default_local_sources",
-        deserialize_with = "deserialize_source_paths"
+        deserialize_with = "deserialize_local_sources"
     )]
-    pub local: Vec<PathBuf>,
+    pub local: Vec<LocalSourceConfig>,
+    #[serde(default, deserialize_with = "deserialize_git_sources")]
+    pub git: Vec<GitSourceConfig>,
+}
+
+impl Default for SourceCatalogConfig {
+    fn default() -> Self {
+        Self {
+            local: default_local_sources(),
+            git: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalSourceConfig {
+    pub path: String,
+    #[serde(default = "default_include_patterns")]
+    pub include: Vec<String>,
     #[serde(default)]
-    pub git: Vec<String>,
+    pub exclude: Vec<String>,
 }
 
-fn default_local_sources() -> Vec<PathBuf> {
-    vec![PathBuf::from("./resources"), PathBuf::from("./services")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitSourceConfig {
+    pub repo: String,
+    #[serde(default = "default_include_patterns")]
+    pub include: Vec<String>,
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
 
-fn deserialize_source_paths<'de, D>(deserializer: D) -> std::result::Result<Vec<PathBuf>, D::Error>
+impl LocalSourceConfig {
+    fn short(path: String) -> Self {
+        Self {
+            path,
+            include: default_include_patterns(),
+            exclude: Vec::new(),
+        }
+    }
+}
+
+impl GitSourceConfig {
+    fn short(repo: String) -> Self {
+        Self {
+            repo,
+            include: default_include_patterns(),
+            exclude: Vec::new(),
+        }
+    }
+}
+
+impl SourceCatalogConfig {
+    pub fn normalized_local(&self) -> Vec<LocalSourceConfig> {
+        self.local.clone()
+    }
+
+    pub fn normalized_git(&self) -> Vec<GitSourceConfig> {
+        self.git.clone()
+    }
+}
+
+fn default_include_patterns() -> Vec<String> {
+    vec!["*".to_string()]
+}
+
+fn default_local_sources() -> Vec<LocalSourceConfig> {
+    vec![
+        LocalSourceConfig::short("./resources".to_string()),
+        LocalSourceConfig::short("./services".to_string()),
+    ]
+}
+
+fn deserialize_local_sources<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<LocalSourceConfig>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -38,18 +107,96 @@ where
 
     let mut out = Vec::new();
     match value {
-        Value::String(path) => out.push(PathBuf::from(path)),
+        Value::String(path) => out.push(LocalSourceConfig::short(path)),
+        Value::Table(table) => {
+            let parsed: LocalSourceConfig =
+                Value::Table(table)
+                    .try_into()
+                    .map_err(|error: toml::de::Error| {
+                        D::Error::custom(format!("invalid sources.local entry: {error}"))
+                    })?;
+            out.push(parsed);
+        }
         Value::Array(items) => {
             for item in items {
-                let path = item
-                    .as_str()
-                    .ok_or_else(|| D::Error::custom("sources.local items must be strings"))?;
-                out.push(PathBuf::from(path));
+                match item {
+                    Value::String(path) => out.push(LocalSourceConfig::short(path)),
+                    Value::Table(table) => {
+                        let parsed: LocalSourceConfig =
+                            Value::Table(table)
+                                .try_into()
+                                .map_err(|error: toml::de::Error| {
+                                    D::Error::custom(format!(
+                                        "invalid sources.local entry: {error}"
+                                    ))
+                                })?;
+                        out.push(parsed);
+                    }
+                    _ => {
+                        return Err(D::Error::custom(
+                            "sources.local items must be strings or tables",
+                        ));
+                    }
+                }
             }
         }
         _ => {
             return Err(D::Error::custom(
-                "sources.local must be a string or array of strings",
+                "sources.local must be a string, table, or array of strings/tables",
+            ));
+        }
+    }
+    Ok(out)
+}
+
+fn deserialize_git_sources<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<GitSourceConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+    let value = Option::<Value>::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+
+    let mut out = Vec::new();
+    match value {
+        Value::String(repo) => out.push(GitSourceConfig::short(repo)),
+        Value::Table(table) => {
+            let parsed: GitSourceConfig =
+                Value::Table(table)
+                    .try_into()
+                    .map_err(|error: toml::de::Error| {
+                        D::Error::custom(format!("invalid sources.git entry: {error}"))
+                    })?;
+            out.push(parsed);
+        }
+        Value::Array(items) => {
+            for item in items {
+                match item {
+                    Value::String(repo) => out.push(GitSourceConfig::short(repo)),
+                    Value::Table(table) => {
+                        let parsed: GitSourceConfig =
+                            Value::Table(table)
+                                .try_into()
+                                .map_err(|error: toml::de::Error| {
+                                    D::Error::custom(format!("invalid sources.git entry: {error}"))
+                                })?;
+                        out.push(parsed);
+                    }
+                    _ => {
+                        return Err(D::Error::custom(
+                            "sources.git items must be strings or tables",
+                        ));
+                    }
+                }
+            }
+        }
+        _ => {
+            return Err(D::Error::custom(
+                "sources.git must be a string, table, or array of strings/tables",
             ));
         }
     }
@@ -242,8 +389,27 @@ impl Config {
                 bail!("group `{group}` contains an empty member");
             }
         }
+        self.validate_sources()?;
         self.validate_images()?;
         self.validate_runtime()?;
+        Ok(())
+    }
+
+    fn validate_sources(&self) -> Result<()> {
+        for (idx, source) in self.sources.local.iter().enumerate() {
+            if source.path.trim().is_empty() {
+                bail!("sources.local[{idx}].path cannot be empty");
+            }
+            validate_source_patterns(&source.include, &format!("sources.local[{idx}].include"))?;
+            validate_source_patterns(&source.exclude, &format!("sources.local[{idx}].exclude"))?;
+        }
+        for (idx, source) in self.sources.git.iter().enumerate() {
+            if source.repo.trim().is_empty() {
+                bail!("sources.git[{idx}].repo cannot be empty");
+            }
+            validate_source_patterns(&source.include, &format!("sources.git[{idx}].include"))?;
+            validate_source_patterns(&source.exclude, &format!("sources.git[{idx}].exclude"))?;
+        }
         Ok(())
     }
 
@@ -324,6 +490,18 @@ impl Config {
         }
         Ok(())
     }
+}
+
+fn validate_source_patterns(patterns: &[String], context: &str) -> Result<()> {
+    for (idx, pattern) in patterns.iter().enumerate() {
+        if pattern.trim().is_empty() {
+            bail!("{context}[{idx}] cannot be empty");
+        }
+        Pattern::new(pattern).map_err(|error| {
+            anyhow!("{context}[{idx}] invalid glob pattern `{pattern}`: {error}")
+        })?;
+    }
+    Ok(())
 }
 
 fn validate_config_version(value: &Value) -> Result<()> {
@@ -987,7 +1165,84 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(cfg.sources.local, vec![PathBuf::from("./modules")]);
+        assert_eq!(cfg.sources.local.len(), 1);
+        assert_eq!(cfg.sources.local[0].path, "./modules");
+        assert_eq!(cfg.sources.local[0].include, vec!["*"]);
+        assert!(cfg.sources.local[0].exclude.is_empty());
+    }
+
+    #[test]
+    fn sources_local_accepts_expanded_entries() {
+        let cfg = Config::from_toml(
+            &with_version(
+                r#"
+            [sources]
+            local = [
+              { path = "./resources", include = ["devbox-*"], exclude = ["legacy-*"] },
+              "./services"
+            ]
+            "#,
+            ),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(cfg.sources.local.len(), 2);
+        assert_eq!(cfg.sources.local[0].path, "./resources");
+        assert_eq!(cfg.sources.local[0].include, vec!["devbox-*"]);
+        assert_eq!(cfg.sources.local[0].exclude, vec!["legacy-*"]);
+        assert_eq!(cfg.sources.local[1].path, "./services");
+        assert_eq!(cfg.sources.local[1].include, vec!["*"]);
+        assert!(cfg.sources.local[1].exclude.is_empty());
+    }
+
+    #[test]
+    fn sources_git_accepts_short_and_expanded_entries() {
+        let cfg = Config::from_toml(
+            &with_version(
+                r#"
+            [sources]
+            git = [
+              "git::https://github.com/example/vmctl-modules?ref=main",
+              { repo = "https://github.com/example/vmctl-modules", include = ["devbox-*"] }
+            ]
+            "#,
+            ),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(cfg.sources.git.len(), 2);
+        assert_eq!(
+            cfg.sources.git[0].repo,
+            "git::https://github.com/example/vmctl-modules?ref=main"
+        );
+        assert_eq!(cfg.sources.git[0].include, vec!["*"]);
+        assert!(cfg.sources.git[0].exclude.is_empty());
+        assert_eq!(
+            cfg.sources.git[1],
+            GitSourceConfig {
+                repo: "https://github.com/example/vmctl-modules".to_string(),
+                include: vec!["devbox-*".to_string()],
+                exclude: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_source_glob() {
+        let err = Config::from_toml(
+            &with_version(
+                r#"
+            [sources]
+            local = [{ path = "./resources", include = ["[broken"] }]
+            "#,
+            ),
+            &BTreeMap::new(),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("invalid glob pattern"));
     }
 
     #[test]

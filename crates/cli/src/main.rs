@@ -21,9 +21,9 @@ use vmctl_domain::{DesiredState, ImageKind, ImageSource, ResolvedImage, Workspac
 use vmctl_hooks::{run_hooks, HookRunRequest};
 use vmctl_lockfile::{LockedGitSource, LockedInlineSource, LockedSources, Lockfile};
 use vmctl_modules::{
-    DefaultSourceResolver, FsModuleIndexer, GitRepoManager, ModuleIndexer, ModuleLayer,
-    ModuleOrigin, ModuleRegistry as ResolvedModuleRegistry, ModuleRegistryBuilder, RepoManager,
-    SourceResolver, SourceSpec,
+    filter_modules_by_name, DefaultSourceResolver, FsModuleIndexer, GitRepoManager, ModuleIndexer,
+    ModuleLayer, ModuleOrigin, ModuleRegistry as ResolvedModuleRegistry, ModuleRegistryBuilder,
+    RepoManager, SourceResolver, SourceSpec,
 };
 use vmctl_resources::ResourceRegistry;
 use vmctl_services::ServiceRegistry;
@@ -2640,24 +2640,25 @@ fn build_module_registry(
 ) -> Result<ResolvedModuleRegistry> {
     let mut registry_builder = ModuleRegistryBuilder::default();
 
-    for root in &config.sources.local {
-        let SourceSpec::LocalPath { path: source_path } =
-            resolver.parse(&root.to_string_lossy())?
-        else {
-            bail!("sources.local entries must resolve to local paths");
-        };
-        let path = resolve_workspace_path(&workspace_root, &source_path);
+    let local_sources = normalize_local_sources(config, resolver)?;
+    for source in local_sources {
+        let path = resolve_workspace_path(&workspace_root, &source.path);
         scanned_roots.push(path.clone());
-        registry_builder.add_indexed(
-            indexer.index_collection(
-                &path,
-                &ModuleOrigin::Local {
-                    collection_root: path.clone(),
-                    module_dir: PathBuf::new(),
-                },
-            )?,
-            ModuleLayer::Local,
+        let modules = indexer.index_collection(
+            &path,
+            &ModuleOrigin::Local {
+                collection_root: path.clone(),
+                module_dir: PathBuf::new(),
+            },
         )?;
+        let filtered = filter_modules_by_name(modules, &source.include, &source.exclude)
+            .with_context(|| {
+                format!(
+                    "failed to filter modules from local source `{}`",
+                    path.display()
+                )
+            })?;
+        registry_builder.add_indexed(filtered, ModuleLayer::Local)?;
     }
 
     // Keep CLI overrides as explicit high-priority local collections.
@@ -2678,43 +2679,116 @@ fn build_module_registry(
         }
     }
 
-    for git_source in &config.sources.git {
-        let SourceSpec::Git {
-            repo_url,
-            ref_,
-            subdir,
-        } = resolver.parse(git_source)?
-        else {
-            bail!("sources.git entry must be a git URL, got `{git_source}`");
+    let git_sources = normalize_git_sources(config, resolver)?;
+    let mut resolved_git = BTreeMap::<(String, String), (String, PathBuf)>::new();
+    for source in git_sources {
+        let key = (source.repo_url.clone(), source.ref_.clone());
+        let (commit, checkout_root) = if let Some(existing) = resolved_git.get(&key) {
+            existing.clone()
+        } else {
+            let resolved = repo_manager.ensure_repo(
+                &vmctl_modules::RepoRef {
+                    repo_url: source.repo_url.clone(),
+                    ref_: source.ref_.clone(),
+                },
+                offline,
+            )?;
+            let value = (resolved.commit, resolved.checkout_root);
+            resolved_git.insert(key.clone(), value.clone());
+            value
         };
-        let resolved = repo_manager.ensure_repo(
-            &vmctl_modules::RepoRef {
-                repo_url: repo_url.clone(),
-                ref_: ref_.clone(),
-            },
-            offline,
-        )?;
-        let collection_root = match subdir {
-            Some(subdir) => resolved.checkout_root.join(subdir),
-            None => resolved.checkout_root.clone(),
+
+        let collection_root = match source.subdir {
+            Some(subdir) => checkout_root.join(subdir),
+            None => checkout_root.clone(),
         };
         scanned_roots.push(collection_root.clone());
-        registry_builder.add_indexed(
-            indexer.index_collection(
-                &collection_root,
-                &ModuleOrigin::Git {
-                    repo_url,
-                    ref_,
-                    commit: resolved.commit,
-                    checkout_root: resolved.checkout_root,
-                    module_dir: PathBuf::new(),
-                },
-            )?,
-            ModuleLayer::Remote,
+        let modules = indexer.index_collection(
+            &collection_root,
+            &ModuleOrigin::Git {
+                repo_url: source.repo_url,
+                ref_: source.ref_,
+                commit,
+                checkout_root,
+                module_dir: PathBuf::new(),
+            },
         )?;
+        let filtered = filter_modules_by_name(modules, &source.include, &source.exclude)
+            .with_context(|| {
+                format!(
+                    "failed to filter modules from git source root `{}`",
+                    collection_root.display()
+                )
+            })?;
+        registry_builder.add_indexed(filtered, ModuleLayer::Remote)?;
     }
 
     Ok(registry_builder.build())
+}
+
+#[derive(Debug, Clone)]
+struct NormalizedLocalSource {
+    path: PathBuf,
+    include: Vec<String>,
+    exclude: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct NormalizedGitSource {
+    repo_url: String,
+    ref_: String,
+    subdir: Option<String>,
+    include: Vec<String>,
+    exclude: Vec<String>,
+}
+
+fn normalize_local_sources(
+    config: &Config,
+    resolver: &impl SourceResolver,
+) -> Result<Vec<NormalizedLocalSource>> {
+    config
+        .sources
+        .normalized_local()
+        .into_iter()
+        .map(|entry| {
+            let SourceSpec::LocalPath { path } = resolver.parse(&entry.path)? else {
+                bail!("sources.local entries must resolve to local paths");
+            };
+            Ok(NormalizedLocalSource {
+                path,
+                include: entry.include,
+                exclude: entry.exclude,
+            })
+        })
+        .collect()
+}
+
+fn normalize_git_sources(
+    config: &Config,
+    resolver: &impl SourceResolver,
+) -> Result<Vec<NormalizedGitSource>> {
+    config
+        .sources
+        .normalized_git()
+        .into_iter()
+        .map(|entry| {
+            let SourceSpec::Git {
+                repo_url,
+                ref_,
+                subdir,
+            } = resolver.parse(&entry.repo)?
+            else {
+                bail!("sources.git entry must be a git URL, got `{}`", entry.repo);
+            };
+            Ok(NormalizedGitSource {
+                repo_url,
+                ref_,
+                subdir,
+                include: entry.include,
+                exclude: entry.exclude,
+            })
+        })
+        .collect()
 }
 
 fn unique_parent_dirs<I>(dirs: I) -> Vec<PathBuf>
@@ -2961,16 +3035,19 @@ fn resolve_git_refs(
 ) -> Result<Vec<vmctl_modules::RepoRef>> {
     let mut refs = config
         .sources
-        .git
+        .normalized_git()
         .iter()
-        .map(|source| {
+        .map(|source_entry| {
             let SourceSpec::Git {
                 repo_url,
                 ref_,
                 subdir: _,
-            } = resolver.parse(source)?
+            } = resolver.parse(&source_entry.repo)?
             else {
-                bail!("sources.git entry must be a git URL, got `{source}`");
+                bail!(
+                    "sources.git entry must be a git URL, got `{}`",
+                    source_entry.repo
+                );
             };
             Ok(vmctl_modules::RepoRef { repo_url, ref_ })
         })
@@ -4301,6 +4378,50 @@ Interface: vmbr0
         std::env::set_current_dir(&original_cwd).unwrap();
         std::fs::remove_dir_all(&temp_root).unwrap();
         result.unwrap();
+    }
+
+    #[test]
+    fn resolve_git_refs_dedupes_mixed_git_source_entries() {
+        let raw = r#"
+version = "2.0.0"
+
+[sources]
+git = [
+  "https://github.com/example/vmctl-modules",
+  { repo = "https://github.com/example/vmctl-modules", include = ["devbox-*"] },
+  "git::https://github.com/example/vmctl-modules?ref=main"
+]
+"#;
+        let config = Config::from_toml(raw, &BTreeMap::new()).unwrap();
+        let refs = resolve_git_refs(&config, None, &DefaultSourceResolver).unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].repo_url, "https://github.com/example/vmctl-modules");
+        assert_eq!(refs[0].ref_, "main");
+    }
+
+    #[test]
+    fn normalize_sources_preserves_filters() {
+        let raw = r#"
+version = "2.0.0"
+
+[sources]
+local = [
+  { path = "./resources", include = ["devbox-*"], exclude = ["legacy-*"] }
+]
+git = [
+  { repo = "https://github.com/example/vmctl-modules", include = ["devbox-*"], exclude = ["legacy-*"] }
+]
+"#;
+        let config = Config::from_toml(raw, &BTreeMap::new()).unwrap();
+        let local = normalize_local_sources(&config, &DefaultSourceResolver).unwrap();
+        let git = normalize_git_sources(&config, &DefaultSourceResolver).unwrap();
+
+        assert_eq!(local.len(), 1);
+        assert_eq!(local[0].include, vec!["devbox-*"]);
+        assert_eq!(local[0].exclude, vec!["legacy-*"]);
+        assert_eq!(git.len(), 1);
+        assert_eq!(git[0].include, vec!["devbox-*"]);
+        assert_eq!(git[0].exclude, vec!["legacy-*"]);
     }
 
     fn unique_temp_dir() -> PathBuf {
